@@ -3,7 +3,6 @@ services:
     image: postgis/postgis:15-3.4
     # postgis/postgis:15-3.4 is amd64-only; Apple Silicon must run via emulation
     platform: linux/amd64
-    container_name: sentinel-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: sentinel
