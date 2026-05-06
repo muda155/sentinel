@@ -1,0 +1,475 @@
+ [!IMPORTANT]
+> **AI CODING AGENT DIRECTIVE:**
+> If you are an AI Agent (e.g., Claude Code, Cursor, Copilot) reading this SDD to implement the system, you **MUST** review the architecture philosophy of "World Monitor" before writing any code.
+> **Reference URL:** https://www.worldmonitor.app/docs/documentation
+> **Key Concepts to Mimic:** 
+> 1. *Geographic Convergence Detection* (Grouping unstructured signals into Spatio-Temporal hotspots).
+> 2. *Attributed AI Briefs* (LLM MUST cite sources for every claim, absolutely no hallucinations).
+> Your implementation of clustering (Section 4.2) and LLM verification (Section 4.4) must strictly reflect the methodology described in that documentation.
+
+# Sentinel – Technical Specification Document
+
+**Document Version:** 1.0  
+**Date:** 2026‑05‑05  
+**Author:** FYP Candidate (role: Senior Software Architect & Technical Project Manager)  
+**Status:** Approved for Development  
+
+---
+
+## Table of Contents
+
+1. [Introduction](#1-introduction)  
+2. [Overall Description](#2-overall-description)  
+3. [System Architecture](#3-system-architecture)  
+4. [Functional Requirements](#4-functional-requirements)  
+5. [Non‑Functional Requirements](#5-non‑functional-requirements)  
+6. [Detailed Design](#6-detailed-design)  
+7. [Testing Strategy](#7-testing-strategy)  
+8. [Implementation Plan](#8-implementation-plan)  
+9. [Risk Management](#9-risk-management)  
+10. [Appendices](#10-appendices)  
+
+---
+
+## 1. Introduction
+
+### 1.1 Purpose
+This Software Requirements Specification (SRS) defines the complete technical blueprint for **Sentinel: An OSINT Data Pipeline with Multi‑Source Consensus Scoring and LLM Consistency Verification**. It serves as the single source of truth for **specification‑driven development** across both the Proof of Concept (PoC) and the production‑ready Final Year Project (FYP). All implementation decisions—from database schema to microservice boundaries—must reference this document.
+
+### 1.2 Scope
+Sentinel is heavily inspired by the core mechanisms of **World Monitor (https://www.worldmonitor.app)**. It ingests global event data from the **GDELT 2.0** project, filters military‑relevant events, and applies **Geographic Convergence Detection** to cluster them spatio‑temporally into "Convergence Zones" (Hotspots). 
+
+It computes a **Consensus Confidence Score** based on source density and geopolitical diversity. Finally, it leverages an **LLM (Llama‑3‑70B via NVIDIA NIM)** to verify information consistency and generate a strictly source‑attributed Situation Report (SITREP) known as an "AI Intelligence Brief".
+
+The system includes:
+- A Python‑based data pipeline.
+- PostgreSQL + PostGIS for persistent storage and spatial queries (from Day 1 of PoC).
+- A Streamlit dashboard (PoC) → React/Next.js + Mapbox (production).
+- FastAPI microservices for production scalability.
+
+
+### 1.3 Definitions & Acronyms
+
+| Term | Definition |
+|------|------------|
+| GDELT | Global Database of Events, Language, and Tone |
+| CAMEO | Conflict and Mediation Event Observations (event taxonomy) |
+| DBSCAN | Density‑Based Spatial Clustering of Applications with Noise |
+| HDBSCAN | Hierarchical DBSCAN (adaptive density clustering) |
+| Convergence Zone | A spatio‑temporal cluster of events forming a “hotspot” |
+| NIM | NVIDIA Inference Microservice |
+| SITREP | Situation Report |
+| PoC | Proof of Concept |
+| WBS | Work Breakdown Structure |
+
+### 1.4 Document Conventions
+
+- All functional requirements follow the pattern `FR‑N‑<title>`.
+- Non‑functional requirements are tagged `NFR‑N`.
+- Technical decisions are accompanied by **acceptance criteria** clearly marked with ☑.
+- Database objects use `code_style`; APIs use `POST /endpoint`.
+
+---
+
+## 2. Overall Description
+
+### 2.1 Product Perspective
+Sentinel is a standalone, automated OSINT enrichment pipeline. It fits into the broader military intelligence workflow as a **watch‑centre augmentation tool**, providing analysts with near‑real‑time validated event summaries. The system does not replace human judgment but shortens the time from raw event to verified insight.
+
+### 2.2 User Characteristics
+
+- **PoC Phase:** Academic supervisor, examiners, and the developer himself. Single‑user Streamlit dashboard.
+- **Production Phase:** Multiple analysts (read‑only), an admin user (configuration). Authentication via JWT.
+
+### 2.3 Constraints
+
+- GDELT 2.0 updates every 15 minutes; the pipeline must stay in sync.
+- NVIDIA NIM API may impose rate limits; PoC budget is limited by free tier credits.
+- PoC hardware: single developer machine with 16 GB RAM; production target is a cloud VM with 4 vCPUs, 8 GB RAM.
+- PostgreSQL + PostGIS must be used from Sprint 1 to eliminate migration risk.
+
+### 2.4 Assumptions
+
+- Internet connectivity is continuous.
+- GDELT 2.0 data format remains stable.
+- LLM responses are deterministic enough for evaluation (temperature = 0).
+
+---
+
+## 3. System Architecture
+
+### 3.1 High‑Level Architecture
+
+Sentinel follows a **pipeline‑based microservices architecture** in production, but a monolithic Python process during PoC to reduce complexity.
+
+| Layer | Component | Technology (PoC) | Technology (Production) |
+|-------|-----------|------------------|--------------------------|
+| Ingestion | GDELT Fetcher & Filter | Python (`requests`, `pandas`) | same, containerized |
+| Storage | Events, Sources, Hotspots, Summaries | PostgreSQL 15 + PostGIS (Docker) | Managed PostgreSQL + PgBouncer |
+| Processing | Clustering Engine | Python, scikit‑learn | same, stateless worker |
+| AI Services | LLM Verifier | Python + NVIDIA NIM API | same, async with `httpx` |
+| API Gateway | – | Streamlit direct DB access | FastAPI REST + SSE |
+| Frontend | Dashboard | Streamlit + Folium | Next.js + Mapbox GL JS |
+| Message Bus | – | Not needed (synchronous) | Redis Streams / RabbitMQ |
+
+### 3.2 Data Flow Diagram (DFD)
+
+```mermaid
+flowchart LR
+    User((Analyst)) -->|opens| Dashboard
+    GDELT[(GDELT 2.0\nCSV API)] -->|1. poll every 15 min| Ingest[Ingestion\n& CAMEO Filter]
+    Ingest -->|raw filtered events| Dedup[Event Dedup\nby GlobalEventID]
+    Dedup -->|unique events| EventStore[(Events Table\nPostgreSQL + PostGIS)]
+    EventStore -->|windowed events| Clustering[DBSCAN\nSpatio-Temporal Clustering]
+    Clustering -->|hotspot clusters| Consensus[Consensus Scoring\nDensity + Diversity]
+    Consensus -->|scored clusters| LLM_Trigger{Confidence\n> 40%?}
+    LLM_Trigger -->|yes| PromptBuild[Build Prompt\nCluster Headlines]
+    PromptBuild -->|prompt| NIM[NVIDIA NIM\nLlama-3-70b]
+    NIM -->|SITREP + conflict flag| Summaries[(LLM_Summaries)]
+    LLM_Trigger -->|no| Skip[Skip LLM]
+    Summaries -->|publish| Dashboard[Dashboard\nStreamlit/React]
+    EventStore --> Dashboard
+    Consensus --> Dashboard
+```
+
+*Note: All persistent data flows through PostgreSQL. The PoC dashboard polls the database; production pushes updates via SSE.*
+
+---
+
+## 4. Functional Requirements
+
+### 4.1 Ingestion & Filtering
+
+**FR‑1‑GDELT_FETCH**  
+The system shall fetch the latest GDELT 2.0 export CSV every 15 minutes using the `lastupdate.txt` index.  
+**Input:** URL from `http://data.gdeltproject.org/gdeltv2/lastupdate.txt`.  
+**Output:** A `pandas.DataFrame` containing all columns.  
+**Acceptance Criteria:**  
+☑ The full CSV is downloaded within 30 seconds (timeout = 30 s).  
+☑ On network failure, retries are attempted up to 3 times with exponential backoff.
+
+**FR‑2‑CAMEO_FILTER**  
+The system shall retain only rows where `EventRootCode` is between 14 and 19 (inclusive), covering “Use of conventional military force”.  
+**Acceptance Criteria:**  
+☑ A synthetic CSV with 100 mixed events is filtered correctly: only military rows remain.  
+☑ Events with missing `EventRootCode` are discarded.
+
+**FR‑3‑DEDUP_STORAGE**  
+The system shall insert events into the `events` table using `INSERT ... ON CONFLICT (gdelt_global_event_id) DO NOTHING` to guarantee idempotency.  
+**Acceptance Criteria:**  
+☑ After two consecutive identical fetches, `events` row count remains unchanged.  
+☑ The `point_geom` column is populated as `ST_SetSRID(ST_MakePoint(lon, lat), 4326)` for every valid coordinate pair.
+
+### 4.2 Spatio‑Temporal Clustering
+*Architecture Note: This module implements the "Geographic Convergence Detection" logic as described in the World Monitor Documentation. It transforms unstructured noise into actionable geographic hotspots.*
+
+
+**FR‑4‑CLUSTER_WINDOW**  
+The clustering module shall retrieve all events from the current UTC time minus a configurable **look‑back window** (default 2 hours), supplemented by the newest ingestion batch.  
+**Acceptance Criteria:**  
+☑ No future or duplicate events are included.
+
+**FR‑5‑DBSCAN_CLUSTER**  
+The system shall group events using DBSCAN (or HDBSCAN) with a Haversine distance metric and a temporal penalty function.  
+`eps` (spatial) = **50 km** (configurable), `min_samples` = **3**.  
+Temporal penalty: two events more than **1 hour apart** are assigned infinite distance, preventing cross‑window clustering.  
+**Acceptance Criteria:**  
+☑ Two events 10 km and 30 min apart are clustered; two events 60 km apart are separated.  
+☑ Noise points are registered in `events` but not included in any hotspot.
+
+**FR‑6‑HOTSPOT_STORAGE**  
+Each cluster shall be stored in the `hotspots` table with:  
+- `centroid_geom` computed as the mean of member coordinates.  
+- `radius_km` = maximum Haversine distance from centroid to any member.  
+- `start_window` and `end_window` = min/max `event_date`.  
+- `event_count`, `unique_sources`.  
+A many‑to‑many link table `event_hotspot` shall associate events to their cluster.  
+**Acceptance Criteria:**  
+☑ After clustering, `SELECT COUNT(*) FROM hotspots` > 0 for a high‑density real dataset (e.g., Ukraine).  
+☑ Every non‑noise event appears in exactly one hotspot.
+
+### 4.3 Consensus Scoring
+
+**FR‑7‑SOURCE_DENSITY**  
+For each hotspot, compute `source_density = tanh( n_unique_domains / 10 )`, where `n_unique_domains` is the number of distinct source domains among member events.  
+**Acceptance Criteria:**  
+☑ With 20 unique domains, `source_density ≈ 0.96`; with 1 domain, `≈ 0.099`.
+
+**FR‑8‑GEOPOLITICAL_DIVERSITY**  
+Compute diversity using Shannon entropy over country codes (from `sources` table):  
+`diversity = entropy / log2( N )` where N = number of unique countries present.  
+**Acceptance Criteria:**  
+☑ All events from one country → diversity = 0.  
+☑ Events from 4 countries equally → diversity ≈ 1.0.
+
+**FR‑9‑CONFIDENCE_SCORE**  
+`conf_score = 0.6 * source_density + 0.4 * geopolitical_diversity` (scaled 0‑100). Store in `hotspots.conf_score`.  
+**Acceptance Criteria:**  
+☑ A hotspot with high density and low diversity gets ~60; low density and high diversity ~40.
+
+### 4.4 LLM Verification & Summarization
+
+**FR‑10‑THRESHOLD_GATE**  
+Only hotspots with `conf_score > 40` (configurable) are sent to the LLM.  
+**Acceptance Criteria:**  
+☑ No LLM call for a cluster with score 35.
+
+**FR‑11‑PROMPT_GENERATION (Attributed AI Intelligence Briefs)**  
+For each qualifying hotspot, construct a prompt containing:  
+- List of article headlines, URLs, and source domains.  
+- Instruction: "Act as an intelligence analyst. Detect any factual conflicts. Summarise in 3‑4 sentences. **CRITICAL:** You must follow the 'Attributed AI Briefs' methodology. Every single claim in your summary MUST end with a citation bracket containing the index or URL of the source (e.g., 'Forces advanced 5km [1]'). Do not hallucinate."  
+- Output JSON: `{conflict_detected: bool, conflict_detail: str, summary: str, sources_cited: [str]}`  
+**Acceptance Criteria:**  
+☑ Prompt fits within glm-4.7 context window.
+☑ If the LLM generates a claim without a `[source]` citation, the validation layer (Pydantic) must flag it or reject it.
+
+**FR‑12‑NIM_API_CALL**  
+The system shall POST the prompt to the NVIDIA NIM API endpoint with `temperature=0`, `max_tokens=500`, and retry on `429 Too Many Requests` up to 3 times.  
+**Acceptance Criteria:**  
+☑ Successful response in < 15 s for 90 % of calls.  
+☑ Parsed JSON is stored in `llm_summaries`.
+
+### 4.5 Dashboard (PoC)
+
+**FR‑13‑STREAMLIT_MAP**  
+The Streamlit app shall display a Folium/Deck.gl map centered on the user’s region, with markers for each hotspot colored by confidence (green >70, yellow 40‑70, grey <40). Clicking a marker shows the SITREP.  
+**Acceptance Criteria:**  
+☑ Map updates after manual “Refresh” or automated 15‑minute trigger.
+
+---
+
+## 5. Non‑Functional Requirements
+
+| ID | Category | Requirement | Measurement |
+|----|----------|-------------|-------------|
+| NFR‑1 | Performance | Ingestion + clustering + LLM verification for a single 15‑min batch must complete within 5 minutes on reference hardware. | Wall‑clock time |
+| NFR‑2 | Scalability | Production system must handle 10k events per batch with linear scaling (horizontal workers). | Time complexity O(n log n) |
+| NFR‑3 | Availability | The pipeline shall tolerate GDELT or NIM API downtime for up to 2 hours without data loss (catch‑up replay). | Log analysis |
+| NFR‑4 | Maintainability | All components must be containerized (Docker) and described in a single `docker‑compose.yml` for local dev. | Deploy time < 5 min |
+| NFR‑5 | Security | Production dashboard must enforce JWT authentication. API endpoints require `Authorization` header. | OWASP basic checks |
+| NFR‑6 | Observability | Structured logging (JSON format) for every pipeline step; metrics for cluster count, LLM latency. | Grafana dashboard (optional) |
+| NFR‑7 | Data Integrity | `gdelt_global_event_id` uniqueness constraint enforced at DB level. All foreign keys have indexes. | Zero duplicates |
+
+---
+
+## 6. Detailed Design
+
+### 6.1 Component Design
+
+#### 6.1.1 Ingestion Module (`ingestion.py`)
+- Class `GDELT2Ingestor`
+  - `fetch_latest_url()` → returns CSV URL.
+  - `download_csv(url)` → returns `DataFrame`.
+  - `filter_military(df)` → returns filtered `DataFrame`.
+  - `insert_to_db(df, conn)` → uses `execute_values` with `ON CONFLICT`.
+- Dependencies: `requests`, `pandas`, `psycopg2`.
+
+#### 6.1.2 Clustering Engine (`clustering.py`)
+- Function `build_distance_matrix(events_df, max_time_diff_h=1)`:  
+  Creates a precomputed distance matrix where entry (i,j) = Haversine km if time diff < 1 h else `np.inf`.
+- Function `cluster_dbscan(dist_matrix, eps_km=50, min_samples=3)` → returns labels.
+- Class `ClusterRepository` to write hotspots and event‑hotspot links.
+
+#### 6.1.3 Consensus Scorer (`scoring.py`)
+- `compute_source_density(domains: List[str])` → float.
+- `geopolitical_diversity(country_codes: List[str])` → float using `scipy.stats.entropy`.
+- `score_hotspot(hotspot_id, db)` → updates `conf_score`.
+
+#### 6.1.4 LLM Verifier (`llm_verifier.py`)
+- Function `build_prompt(hotspot_data: dict)` → str.
+- Function `call_nim_api(prompt: str)` → dict (parsed JSON) using `requests.post`.
+- Class `LLMRepository` to store results.
+
+#### 6.1.5 Frontend (PoC: `app.py`)
+- Single file Streamlit application.
+- Automatic reload via `st.rerun` inside a `while True` loop with `time.sleep(900)`.
+
+### 6.2 Database Schema (PostgreSQL + PostGIS)
+
+```mermaid
+erDiagram
+    EVENTS ||--o{ EVENT_HOTSPOT : "belongs to"
+    HOTSPOTS ||--|{ EVENT_HOTSPOT : "contains"
+    EVENTS }o--|| SOURCES : "published by"
+    HOTSPOTS ||--o| LLM_SUMMARIES : "has one"
+
+    EVENTS {
+        int event_id PK "SERIAL"
+        bigint gdelt_global_event_id UK "UNIQUE NOT NULL"
+        geometry point_geom "GEOMETRY(Point, 4326)"
+        timestamptz event_date "NOT NULL"
+        text cameo_code
+        int source_id FK
+        text url
+        text title
+    }
+
+    SOURCES {
+        int source_id PK "SERIAL"
+        text domain UK
+        text country_code
+        text country_name
+    }
+
+    HOTSPOTS {
+        int hotspot_id PK "SERIAL"
+        geometry centroid_geom "GEOMETRY(Point, 4326)"
+        float radius_km
+        timestamptz start_window
+        timestamptz end_window
+        int event_count
+        int unique_sources
+        float source_density
+        float geopolitical_diversity
+        float conf_score
+        boolean llm_verified DEFAULT false
+    }
+
+    EVENT_HOTSPOT {
+        int event_id FK
+        int hotspot_id FK
+        primary_key(event_id, hotspot_id)
+    }
+
+    LLM_SUMMARIES {
+        int summary_id PK "SERIAL"
+        int hotspot_id FK UK
+        text summary_text
+        boolean conflict_detected
+        text conflict_detail
+        text sources_cited
+        text llm_model_version
+        timestamptz created_at DEFAULT now()
+    }
+```
+
+**DDL Snippets (Critical):**  
+```sql
+CREATE EXTENSION IF NOT EXISTS postgis;
+CREATE INDEX idx_events_geom ON events USING GIST (point_geom);
+CREATE INDEX idx_events_date ON events (event_date);
+CREATE INDEX idx_hotspots_geom ON hotspots USING GIST (centroid_geom);
+```
+
+### 6.3 API Specifications (Phase 2 – FastAPI)
+
+| Endpoint | Method | Description | Request | Response |
+|----------|--------|-------------|---------|----------|
+| `/events` | GET | Query events within a polygon/time | `?sw_lat=&sw_lon=&ne_lat=&ne_lon=&start=&end=` | GeoJSON FeatureCollection |
+| `/hotspots` | GET | Latest hotspots with confidence | `?limit=50&min_conf=40` | JSON array of hotspot objects |
+| `/hotspots/{id}/summary` | GET | Get SITREP for a hotspot | – | `{summary, conflict_detected, sources_cited}` |
+| `/hotspots/stream` | GET (SSE) | Real‑time hotspot updates | – | `data: {hotspot_id, lat, lon, conf_score}\n\n` |
+
+### 6.4 Data Flow – Processing Sequence (Phase 2 Asynchronous)
+
+1. **Ingestion Worker:** Fetch GDELT → filter → insert into DB → publish event IDs to Redis Stream `ingested_events`.
+2. **Clustering Worker:** Consume stream, batch events in a sliding window, run DBSCAN, write `hotspots`, publish `hotspot_created` with ID.
+3. **Consensus Worker:** Listen to `hotspot_created`, compute confidence, update DB, if score > threshold publish `llm_needed`.
+4. **LLM Worker:** Consume `llm_needed`, call NIM API, store summary, publish `summary_ready`.
+5. **API Server:** Listen to all streams, push updates to SSE clients.
+
+*(For PoC, these are executed synchronously in a single script: `pipeline.py`.)*
+
+---
+
+## 7. Testing Strategy
+
+| Test Type | Scope | Tools | Target |
+|-----------|-------|-------|--------|
+| Unit Tests | Every function in ingestion, clustering, scoring | `pytest`, `unittest.mock` | 90% line coverage |
+| Integration Tests | End‑to‑end pipeline with a synthetic GDELT CSV and mock NIM | `pytest`, test DB Docker container | All FRs pass |
+| Regression Tests | Re‑run on a fixed historical dataset (e.g., 2024‑02‑24 Ukraine escalation) | Scripted pipeline run | Cluster count & scores match expected values |
+| Performance Tests | Measure batch processing time with 5k events | `time` CLI, `cProfile` | NFR‑1 compliance |
+| Acceptance Tests | Supervised demo with live GDELT data | Manual | Streamlit shows real hotspots with SITREP |
+
+---
+
+## 8. Implementation Plan
+
+### Phase 1 – Proof of Concept (4 Weeks, Sprint‑based)
+
+| Sprint | Goals | Deliverables |
+|--------|-------|--------------|
+| **Sprint 1** | PostgreSQL setup, GDELT ingestion + CAMEO filter | Working ingestion script, Docker Compose, `events` table populated |
+| **Sprint 2** | DBSCAN clustering + hotspot storage | `clustering.py`, `hotspots` and `event_hotspot` tables, test with synthetic clusters |
+| **Sprint 3** | Consensus scoring + NVIDIA NIM integration | Scoring engine, `llm_summaries` table, mock API tests |
+| **Sprint 4** | Streamlit dashboard + integration | `app.py` with map, end‑to‑end demo, system design document |
+
+### Phase 2 – Productionisation (12 Weeks, Milestone‑based)
+
+| Milestone | Weeks | Key Activities |
+|-----------|-------|----------------|
+| M1: Production Database | 5‑6 | Migrate to managed PostgreSQL, add partitioning, PgBouncer |
+| M2: Microservices | 7‑9 | Split pipeline into workers, add Redis Streams, FastAPI REST & SSE, containerize |
+| M3: React Frontend | 10‑12 | Next.js + Mapbox, JWT auth, CI/CD pipeline, live demo deployment |
+| Thesis Write‑up | 13‑16 | Overlap with M3; evaluation, documentation, defense |
+
+---
+
+## 9. Risk Management
+
+| # | Risk | Impact | Mitigation |
+|---|------|--------|------------|
+| R1 | GDELT data noise & duplicates | High | DB unique constraint + URL normalisation; source trust scoring |
+| R2 | NVIDIA NIM latency / rate limit | Medium | Batched requests, local fallback Llama‑3‑8B, threshold gating |
+| R3 | Clustering parameter sensitivity | High | HDBSCAN adaptive option; manual validation set; PostGIS pre‑filtering |
+| R4 | PostgreSQL operational burden | Low | Docker Compose for PoC; connection pooling from start |
+
+---
+
+## 10. Appendices
+
+### A. GDELT 2.0 CAMEO Military Codes (subset)
+
+| Code | Description |
+|------|-------------|
+| 14 | Engage in unconventional mass violence |
+| 15 | Engage in violent acts for political reasons |
+| 16 | Reduced relations (non‑violent) |
+| 17 | Coercive actions (non‑military) |
+| 18 | Assault |
+| 19 | Fight (large‑scale military) |
+
+*Full table: [CAMEO Manual](https://www.gdeltproject.org/data.html#documentation)*
+
+### B. Environment Variables (`sentinel.env`)
+
+```ini
+PGHOST=localhost
+PGPORT=5432
+PGDATABASE=sentinel
+PGUSER=sentinel_user
+PGPASSWORD=sentinel_pass
+NVIDIA_NIM_API_KEY=your_key_here
+NVIDIA_NIM_ENDPOINT=https://api.nvcf.nvidia.com/v2/your-model
+LOG_LEVEL=INFO
+```
+
+### C. Repository Structure (Monorepo)
+
+```
+sentinel/
+├── docker-compose.yml
+├── sentinel.env
+├── requirements.txt
+├── README.md
+├── docs/
+│   └── spec.md
+├── pipeline/
+│   ├── __init__.py
+│   ├── db.py
+│   ├── ingestion.py
+│   ├── clustering.py
+│   ├── scoring.py
+│   └── llm_verifier.py
+├── frontend/
+│   └── app.py          # Streamlit PoC
+└── tests/
+    ├── conftest.py
+    ├── test_ingestion.py
+    └── ...
+```
+
+---
+
+*This specification is now frozen for Phase 1 development. Any changes must be raised as a Spec Change Request and documented in the revision history. Spec‑driven development ensures every line of code directly fulfills a documented requirement.*

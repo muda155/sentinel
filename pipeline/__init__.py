@@ -1,0 +1,2 @@
+"""Sentinel pipeline package."""
+
