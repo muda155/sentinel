@@ -5,8 +5,15 @@ from __future__ import annotations
 import streamlit as st
 import pydeck as pdk
 import pandas as pd
+import time
 from pipeline.dashboard_data import confidence_to_color, fetch_dashboard_hotspots
 from pipeline.db import get_connection
+from frontend.refresh_utils import (
+    initialize_refresh_state,
+    should_refresh,
+    trigger_manual_refresh,
+    format_last_refresh_display,
+)
 
 
 def format_hotspots_for_pydeck(hotspots: list[dict]) -> list[dict]:
@@ -149,19 +156,50 @@ def render_dashboard():
         unsafe_allow_html=True,
     )
 
-    # Initialize session state for selected hotspot
+    # Initialize session state for selected hotspot and refresh tracking
     if "selected_hotspot" not in st.session_state:
         st.session_state.selected_hotspot = None
+    
+    initialize_refresh_state(st.session_state)
 
     # Title
     st.title("🛰️ Sentinel OSINT Dashboard")
     st.subheader("Real-time Geopolitical Threat Monitoring")
 
+    # Sidebar controls: Manual refresh and status
+    with st.sidebar:
+        st.markdown("### 🔄 Refresh Controls")
+        
+        # Manual refresh button
+        if st.button("🔄 Refresh Now", use_container_width=True):
+            st.session_state["last_refresh"] = trigger_manual_refresh()
+            st.session_state["refresh_in_progress"] = True
+            st.rerun()
+        
+        # Display last refresh time
+        refresh_time_text = format_last_refresh_display(st.session_state.get("last_refresh"))
+        st.text(f"Last refresh: {refresh_time_text}")
+        st.text(f"Auto-refresh interval: 15 minutes")
+        
+        st.markdown("---")
+
     try:
+        # Check if auto-refresh is needed (15-minute interval)
+        auto_refresh_needed = should_refresh(
+            st.session_state.get("last_refresh"),
+            interval_minutes=15
+        )
+        
+        if auto_refresh_needed and not st.session_state.get("refresh_in_progress", False):
+            st.session_state["last_refresh"] = trigger_manual_refresh()
+
         # Fetch hotspots from database
         conn = get_connection()
         hotspots = fetch_dashboard_hotspots(conn, limit=100)
         conn.close()
+        
+        # Mark refresh as complete
+        st.session_state["refresh_in_progress"] = False
 
         if not hotspots:
             st.warning("No hotspots found in database.")
