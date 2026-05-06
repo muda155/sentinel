@@ -9,8 +9,8 @@
 
 # Sentinel – Technical Specification Document
 
-**Document Version:** 1.0  
-**Date:** 2026‑05‑05  
+**Document Version:** 1.0.1  
+**Date:** 2026‑05‑06  
 **Author:** FYP Candidate (role: Senior Software Architect & Technical Project Manager)  
 **Status:** Approved for Development  
 
@@ -28,6 +28,7 @@
 8. [Implementation Plan](#8-implementation-plan)  
 9. [Risk Management](#9-risk-management)  
 10. [Appendices](#10-appendices)  
+11. [Revision History](#11-revision-history)  
 
 ---
 
@@ -44,7 +45,7 @@ It computes a **Consensus Confidence Score** based on source density and geopoli
 The system includes:
 - A Python‑based data pipeline.
 - PostgreSQL + PostGIS for persistent storage and spatial queries (from Day 1 of PoC).
-- A Streamlit dashboard (PoC) → React/Next.js + Mapbox (production).
+- A Streamlit dashboard (PoC) → React/Next.js + dual map engine (globe.gl + deck.gl + MapLibre GL) in production, matching World Monitor’s implementation.
 - FastAPI microservices for production scalability.
 
 
@@ -109,7 +110,7 @@ Sentinel follows a **pipeline‑based microservices architecture** in production
 | Processing | Clustering Engine | Python, scikit‑learn | same, stateless worker |
 | AI Services | LLM Verifier | Python + NVIDIA NIM API | same, async with `httpx` |
 | API Gateway | – | Streamlit direct DB access | FastAPI REST + SSE |
-| Frontend | Dashboard | Streamlit + Folium | Next.js + Mapbox GL JS |
+| Frontend | Dashboard | Streamlit + pydeck (Deck.gl) | Next.js + globe.gl + deck.gl + MapLibre GL |
 | Message Bus | – | Not needed (synchronous) | Redis Streams / RabbitMQ |
 
 ### 3.2 Data Flow Diagram (DFD)
@@ -232,7 +233,7 @@ The system shall POST the prompt to the NVIDIA NIM API endpoint with `temperatur
 ### 4.5 Dashboard (PoC)
 
 **FR‑13‑STREAMLIT_MAP**  
-The Streamlit app shall display a Folium/Deck.gl map centered on the user’s region, with markers for each hotspot colored by confidence (green >70, yellow 40‑70, grey <40). Clicking a marker shows the SITREP.  
+The Streamlit app shall display a pydeck (Deck.gl) map centered on the user’s region, with markers for each hotspot colored by confidence (green >70, yellow 40‑70, grey <40). Clicking a marker shows the SITREP.  
 **Acceptance Criteria:**  
 ☑ Map updates after manual “Refresh” or automated 15‑minute trigger.
 
@@ -401,7 +402,7 @@ CREATE INDEX idx_hotspots_geom ON hotspots USING GIST (centroid_geom);
 |-----------|-------|----------------|
 | M1: Production Database | 5‑6 | Migrate to managed PostgreSQL, add partitioning, PgBouncer |
 | M2: Microservices | 7‑9 | Split pipeline into workers, add Redis Streams, FastAPI REST & SSE, containerize |
-| M3: React Frontend | 10‑12 | Next.js + Mapbox, JWT auth, CI/CD pipeline, live demo deployment |
+| M3: React Frontend | 10‑12 | Next.js + globe.gl + deck.gl + MapLibre GL, JWT auth, CI/CD pipeline, live demo deployment |
 | Thesis Write‑up | 13‑16 | Overlap with M3; evaluation, documentation, defense |
 
 ---
@@ -469,6 +470,14 @@ sentinel/
     ├── test_ingestion.py
     └── ...
 ```
+
+---
+
+## 11. Revision History
+
+| Version | Date | Change | Reason |
+|---|---|---|---|
+| 1.0.1 | 2026-05-06 | Updated production map stack references from Mapbox to World Monitor-aligned dual engine (`globe.gl + deck.gl + MapLibre GL`); clarified PoC map wording to Streamlit + pydeck (Deck.gl). | Keep Sentinel specification aligned with the referenced World Monitor implementation. |
 
 ---
 
