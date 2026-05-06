@@ -84,6 +84,8 @@ class GDELT2Ingestor:
     timeout_seconds: int = 30
     max_retries: int = 3
     backoff_base_seconds: float = 1.0
+    latest_export_retries: int = 12
+    latest_export_backoff_seconds: float = 10.0
 
     def fetch_latest_url(self) -> str:
         response = self._get_with_retry(LASTUPDATE_URL)
@@ -95,7 +97,8 @@ class GDELT2Ingestor:
         raise ValueError("No export CSV URL found in lastupdate index")
 
     def download_csv(self, url: str) -> pd.DataFrame:
-        response = self._get_with_retry(url)
+        response = self._download_latest_export(url)
+
         raw_df = pd.read_csv(
             io.BytesIO(response.content),
             sep="\t",
@@ -136,6 +139,7 @@ class GDELT2Ingestor:
                     gdelt_global_event_id,
                     event_date,
                     cameo_code,
+                    country_code,
                     url,
                     title,
                     point_geom
@@ -145,7 +149,7 @@ class GDELT2Ingestor:
                 """,
                 records,
                 template=(
-                    "(%s, %s, %s, %s, %s, "
+                    "(%s, %s, %s, %s, %s, %s, "
                     "ST_SetSRID(ST_MakePoint(%s, %s), 4326))"
                 ),
             )
@@ -201,6 +205,9 @@ class GDELT2Ingestor:
                 int(row["GlobalEventID"]),
                 pd.to_datetime(str(int(row["SQLDATE"])), format="%Y%m%d", utc=True),
                 str(row["EventCode"]) if pd.notna(row["EventCode"]) else None,
+                str(row["ActionGeo_CountryCode"])
+                if "ActionGeo_CountryCode" in row and pd.notna(row["ActionGeo_CountryCode"])
+                else None,
                 str(row["SOURCEURL"]) if pd.notna(row["SOURCEURL"]) else None,
                 str(row["Actor1Name"]) if pd.notna(row["Actor1Name"]) else None,
                 float(row["ActionGeo_Long"]),
@@ -218,6 +225,7 @@ class GDELT2Ingestor:
             "actor1name": "Actor1Name",
             "actiongeolat": "ActionGeo_Lat",
             "actiongeolong": "ActionGeo_Long",
+            "actiongeocountrycode": "ActionGeo_CountryCode",
         }
         rename_map = {}
         for column in df.columns:
@@ -225,6 +233,24 @@ class GDELT2Ingestor:
             if token in canonical_by_token:
                 rename_map[column] = canonical_by_token[token]
         return df.rename(columns=rename_map)
+
+    def _download_latest_export(self, url: str) -> requests.Response:
+        last_error: requests.RequestException | None = None
+        for attempt in range(1, self.latest_export_retries + 1):
+            try:
+                return self._get_with_retry(url)
+            except requests.HTTPError as error:
+                status_code = (
+                    error.response.status_code if error.response is not None else None
+                )
+                last_error = error
+                if status_code != 404 or attempt == self.latest_export_retries:
+                    raise
+                time.sleep(self.latest_export_backoff_seconds)
+
+        if last_error is None:
+            raise RuntimeError("Retry loop ended unexpectedly without an error")
+        raise last_error
 
 
 def _build_parser() -> argparse.ArgumentParser:

@@ -107,3 +107,31 @@ def test_run_once_supports_headerless_gdelt_export(monkeypatch: pytest.MonkeyPat
 
     assert filtered["GlobalEventID"].tolist() == [1]
     assert filtered["EventRootCode"].tolist() == [14]
+
+
+def test_download_csv_retries_same_latest_url_on_404_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    latest_url = "http://data.gdeltproject.org/gdeltv2/20260506003000.export.CSV.zip"
+
+    not_found_response = Mock()
+    not_found_response.status_code = 404
+    not_found_response.raise_for_status.side_effect = requests.HTTPError(response=not_found_response)
+
+    compressed = _zip_tsv("GlobalEventID\tEventRootCode\n1\t14\n")
+    ok_response = Mock()
+    ok_response.raise_for_status.return_value = None
+    ok_response.content = compressed
+
+    get_mock = Mock(side_effect=[not_found_response, ok_response])
+    monkeypatch.setattr("pipeline.ingestion.requests.get", get_mock)
+    monkeypatch.setattr("pipeline.ingestion.time.sleep", Mock())
+
+    ingestor = GDELT2Ingestor(max_retries=1)
+    df = ingestor.download_csv(latest_url)
+
+    assert len(df) == 1
+    assert df["EventRootCode"].tolist() == [14]
+    assert get_mock.call_count == 2
+    assert get_mock.call_args_list[0].args[0] == latest_url
+    assert get_mock.call_args_list[1].args[0] == latest_url

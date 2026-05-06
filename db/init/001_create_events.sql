@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS events (
     point_geom geometry(Point, 4326) NOT NULL,
     event_date timestamptz NOT NULL,
     cameo_code text,
+    country_code text,
     url text,
     title text,
     created_at timestamptz NOT NULL DEFAULT now()
