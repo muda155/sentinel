@@ -1,4 +1,5 @@
-from pipeline.db import get_connection
+# Note: dashboard_data.py functions take a connection object as parameter
+# to maintain flexibility. Callers are responsible for managing the connection.
 
 
 def confidence_to_color(conf_score: float | None) -> list[int]:

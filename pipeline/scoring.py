@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 
 import pandas as pd
 
-from pipeline.db import get_connection
+from pipeline.db import get_pooled_connection
 
 
 def _extract_domain(url: str | None) -> str | None:
@@ -108,7 +108,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _build_parser().parse_args()
-    with get_connection() as conn:
+    conn, pool = get_pooled_connection()
+    try:
         repo = ScoringRepository(conn)
         if args.hotspot_id is not None:
             result = repo.score_hotspot(args.hotspot_id)
@@ -116,6 +117,8 @@ def main() -> int:
             return 0
         results = repo.score_all_hotspots()
         print(f"Scored {len(results)} hotspots")
+    finally:
+        pool.return_connection(conn)
     return 0
 
 

@@ -7,13 +7,75 @@ import pydeck as pdk
 import pandas as pd
 import time
 from pipeline.dashboard_data import confidence_to_color, fetch_dashboard_hotspots
-from pipeline.db import get_connection
+from pipeline.db import get_pooled_connection
 from frontend.refresh_utils import (
     initialize_refresh_state,
     should_refresh,
     trigger_manual_refresh,
     format_last_refresh_display,
 )
+
+# Vietnamese translations
+TRANSLATIONS = {
+    "en": {
+        "title": "Sentinel OSINT Dashboard",
+        "subtitle": "Real-time Geopolitical Threat Monitoring",
+        "refresh_controls": "Refresh Controls",
+        "refresh_now": "Refresh Now",
+        "last_refresh": "Last refresh",
+        "auto_refresh_interval": "Auto-refresh interval",
+        "minutes": "minutes",
+        "hotspot_map": "Hotspot Map",
+        "sitrep_details": "SITREP Details",
+        "select_hotspot": "Select hotspot",
+        "conflict_type": "Conflict Type",
+        "conflict": "Conflict",
+        "no_conflict": "No Conflict",
+        "confidence": "Confidence",
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High",
+        "location": "Location",
+        "events": "Events",
+        "time_window": "Time Window",
+        "summary": "Summary",
+        "no_summary": "No summary available",
+        "no_hotspots": "No hotspots found in database.",
+        "high_confidence": "High Confidence",
+        "total_hotspots": "Total Hotspots",
+        "total_events": "Total Events",
+        "language": "Language",
+    },
+    "vi": {
+        "title": "Bảng Điều Khiển OSINT Sentinel",
+        "subtitle": "Giám Sát Đe Dọa Địa-Chính Trị Thời Gian Thực",
+        "refresh_controls": "Điều Khiển Làm Mới",
+        "refresh_now": "Làm Mới Ngay",
+        "last_refresh": "Lần làm mới cuối",
+        "auto_refresh_interval": "Khoảng làm mới tự động",
+        "minutes": "phút",
+        "hotspot_map": "Bản Đồ Điểm Nóng",
+        "sitrep_details": "Chi Tiết SITREP",
+        "select_hotspot": "Chọn điểm nóng",
+        "conflict_type": "Loại Xung Đột",
+        "conflict": "Xung Đột",
+        "no_conflict": "Không Xung Đột",
+        "confidence": "Độ Tin Cậy",
+        "low": "Thấp",
+        "medium": "Trung Bình",
+        "high": "Cao",
+        "location": "Vị Trí",
+        "events": "Sự Kiện",
+        "time_window": "Khoảng Thời Gian",
+        "summary": "Tóm Tắt",
+        "no_summary": "Không có tóm tắt",
+        "no_hotspots": "Không tìm thấy điểm nóng trong cơ sở dữ liệu.",
+        "high_confidence": "Độ Tin Cậy Cao",
+        "total_hotspots": "Tổng Điểm Nóng",
+        "total_events": "Tổng Sự Kiện",
+        "language": "Ngôn Ngữ",
+    },
+}
 
 
 def format_hotspots_for_pydeck(hotspots: list[dict]) -> list[dict]:
@@ -34,45 +96,52 @@ def format_hotspots_for_pydeck(hotspots: list[dict]) -> list[dict]:
     return formatted
 
 
-def get_confidence_category(conf_score: float) -> str:
+def get_confidence_category(conf_score: float, locale: str = "en") -> str:
     """
     Classify confidence score into category.
-    
+
     Args:
         conf_score: Confidence score (0-100)
-    
+        locale: 'en' or 'vi'
+
     Returns:
-        Category: "High" (>70), "Medium" (40-70), or "Low" (<40)
+        Category: locale "high" (>70), locale "medium" (40-70), or locale "low" (<40)
     """
+    if locale not in TRANSLATIONS:
+        locale = "en"
     score = float(conf_score or 0)
     if score > 70:
-        return "High"
+        return TRANSLATIONS[locale]["high"]
     if score >= 40:
-        return "Medium"
-    return "Low"
+        return TRANSLATIONS[locale]["medium"]
+    return TRANSLATIONS[locale]["low"]
 
 
-def extract_sitrep_details(hotspot: dict) -> dict:
+def extract_sitrep_details(hotspot: dict, locale: str = "en") -> dict:
     """
     Extract SITREP (Situation Report) details from a hotspot.
-    
+
     Args:
         hotspot: Hotspot dictionary
-    
+        locale: 'en' or 'vi'
+
     Returns:
-        Dict with: conflict_type, key_locations, participants, confidence, 
+        Dict with: conflict_type, key_locations, participants, confidence,
         confidence_category, timestamp, llm_summary, event_count
     """
+    if locale not in TRANSLATIONS:
+        locale = "en"
     conf_score = hotspot.get("conf_score", 0)
-    
+    t = TRANSLATIONS[locale]
+
     return {
-        "conflict_type": "Conflict" if hotspot.get("conflict_detected") else "No Conflict",
+        "conflict_type": t["conflict"] if hotspot.get("conflict_detected") else t["no_conflict"],
         "key_locations": f"({hotspot.get('latitude', 0):.2f}, {hotspot.get('longitude', 0):.2f})",
         "participants": "Unknown",
         "confidence": conf_score,
-        "confidence_category": get_confidence_category(conf_score),
+        "confidence_category": get_confidence_category(conf_score, locale),
         "timestamp": f"{hotspot.get('start_window', '')} to {hotspot.get('end_window', '')}",
-        "llm_summary": hotspot.get("summary_text", "No summary available"),
+        "llm_summary": hotspot.get("summary_text", t["no_summary"]),
         "event_count": hotspot.get("event_count", 0),
     }
 
@@ -141,15 +210,58 @@ def render_dashboard():
         initial_sidebar_state="expanded",
     )
 
-    # Dark theme styling
+    # Dark theme styling with light text for visibility
     st.markdown(
         """
         <style>
+        /* Dark background */
         [data-testid="stAppViewContainer"] {
-            background-color: #1a1a1a;
+            background-color: #0d0d0d;
         }
         [data-testid="stSidebar"] {
-            background-color: #0d0d0d;
+            background-color: #141414;
+        }
+        /* Light text for visibility */
+        [data-testid="stAppViewContainer"] h1,
+        [data-testid="stAppViewContainer"] h2,
+        [data-testid="stAppViewContainer"] h3,
+        [data-testid="stAppViewContainer"] p,
+        [data-testid="stAppViewContainer"] label,
+        [data-testid="stAppViewContainer"] span {
+            color: #e0e0e0 !important;
+        }
+        /* Light text in sidebar */
+        [data-testid="stSidebar"] h1,
+        [data-testid="stSidebar"] h2,
+        [data-testid="stSidebar"] h3,
+        [data-testid="stSidebar"] p,
+        [data-testid="stSidebar"] label {
+            color: #e0e0e0 !important;
+        }
+        /* Light text for metric values */
+        [data-testid="stMetricValue"] {
+            color: #ffffff !important;
+        }
+        [data-testid="stMetricLabel"] {
+            color: #cccccc !important;
+        }
+        /* Light text for markdown */
+        .stApp p, .stApp span {
+            color: #e0e0e0 !important;
+        }
+        /* Refresh button text */
+        .stButton > button {
+            color: #ffffff;
+            background-color: #2563eb;
+        }
+        /* Make map container visible */
+        [data-testid="stDeckGlChart"] {
+            background-color: transparent !important;
+            min-height: 500px;
+        }
+        /* Ensure column layout works */
+        [data-testid="column"] {
+            background-color: transparent;
         }
         </style>
         """,
@@ -159,28 +271,36 @@ def render_dashboard():
     # Initialize session state for selected hotspot and refresh tracking
     if "selected_hotspot" not in st.session_state:
         st.session_state.selected_hotspot = None
-    
+
     initialize_refresh_state(st.session_state)
 
+    # Language selector (sidebar)
+    with st.sidebar:
+        lang_options = list(TRANSLATIONS.keys())
+        lang_labels = {"en": "English", "vi": "Tiếng Việt"}
+        selected_lang = st.selectbox("Language / Ngôn Ngữ", lang_options, format_func=lambda x: lang_labels[x])
+        locale = selected_lang
+        t = TRANSLATIONS[locale]
+
     # Title
-    st.title("🛰️ Sentinel OSINT Dashboard")
-    st.subheader("Real-time Geopolitical Threat Monitoring")
+    st.title(f"🛰️ {t['title']}")
+    st.subheader(t["subtitle"])
 
     # Sidebar controls: Manual refresh and status
     with st.sidebar:
-        st.markdown("### 🔄 Refresh Controls")
-        
+        st.markdown(f"### 🔄 {t['refresh_controls']}")
+
         # Manual refresh button
-        if st.button("🔄 Refresh Now", use_container_width=True):
+        if st.button(f"🔄 {t['refresh_now']}", use_container_width=True):
             st.session_state["last_refresh"] = trigger_manual_refresh()
             st.session_state["refresh_in_progress"] = True
             st.rerun()
-        
+
         # Display last refresh time
         refresh_time_text = format_last_refresh_display(st.session_state.get("last_refresh"))
-        st.text(f"Last refresh: {refresh_time_text}")
-        st.text(f"Auto-refresh interval: 15 minutes")
-        
+        st.text(f"{t['last_refresh']}: {refresh_time_text}")
+        st.text(f"{t['auto_refresh_interval']}: 15 {t['minutes']}")
+
         st.markdown("---")
 
     try:
@@ -194,15 +314,15 @@ def render_dashboard():
             st.session_state["last_refresh"] = trigger_manual_refresh()
 
         # Fetch hotspots from database
-        conn = get_connection()
+        conn, conn_pool = get_pooled_connection()
         hotspots = fetch_dashboard_hotspots(conn, limit=100)
-        conn.close()
+        conn_pool.return_connection(conn)
         
         # Mark refresh as complete
         st.session_state["refresh_in_progress"] = False
 
         if not hotspots:
-            st.warning("No hotspots found in database.")
+            st.warning(t["no_hotspots"])
             return
 
         # Format hotspots for pydeck
@@ -212,7 +332,7 @@ def render_dashboard():
         col1, col2 = st.columns([0.70, 0.30])
 
         with col1:
-            st.subheader("📍 Hotspot Map")
+            st.subheader(f"📍 {t['hotspot_map']}")
             
             # Convert formatted hotspots to DataFrame for pydeck
             df = pd.DataFrame(formatted_hotspots)
@@ -225,60 +345,60 @@ def render_dashboard():
                 zoom=map_config["viewport"]["zoom"],
             )
             
-            # Create and display map
+            # Create and display map (use CARTO free style instead of Mapbox)
             deck = pdk.Deck(
-                map_style="mapbox://styles/mapbox/dark-v10",
+                map_style=pdk.map_styles.CARTO_DARK,
                 initial_view_state=viewport,
                 layers=map_config["layers"],
                 tooltip={
-                    "html": "<b>Event Count:</b> {event_count} "
-                            "<br/><b>Confidence:</b> {conf_score}% "
-                            "<br/><b>Category:</b> "
-                            "{start_window} to {end_window}",
-                    "style": {"backgroundColor": "steelblue", "color": "white"},
+                    "html": f"<b>{t['events']}:</b> {{event_count}} "
+                            f"<br/><b>{t['confidence']}:</b> {{conf_score}}% "
+                            f"<br/><b>{t['time_window']}:</b> "
+                            "{{start_window}} to {{end_window}}",
+                    "style": {"backgroundColor": "#1e3a5f", "color": "white"},
                 },
             )
-            st.pydeck_chart(deck)
+            st.pydeck_chart(deck, use_container_width=True)
 
         with col2:
-            st.subheader("📋 SITREP Details")
-            
+            st.subheader(f"📋 {t['sitrep_details']}")
+
             # Hotspot selector
             hotspot_labels = [
                 f"Hotspot {h.get('hotspot_id')} "
                 f"(Conf: {h.get('conf_score', 0):.0f}%)"
                 for h in hotspots
             ]
-            selected_idx = st.selectbox("Select hotspot:", range(len(hotspots)), 
+            selected_idx = st.selectbox(f"{t['select_hotspot']}:", range(len(hotspots)),
                                        format_func=lambda i: hotspot_labels[i])
-            
+
             if selected_idx is not None:
                 selected_hotspot = hotspots[selected_idx]
-                sitrep = extract_sitrep_details(selected_hotspot)
-                
+                sitrep = extract_sitrep_details(selected_hotspot, locale)
+
                 st.session_state.selected_hotspot = selected_hotspot
 
                 # Display SITREP details with high-contrast styling
                 st.markdown("---")
-                st.markdown(f"**Conflict Type:** {sitrep['conflict_type']}")
-                st.markdown(f"**Confidence:** {sitrep['confidence']:.0f}% ({sitrep['confidence_category']})")
-                st.markdown(f"**Location:** {sitrep['key_locations']}")
-                st.markdown(f"**Events:** {sitrep['event_count']}")
-                st.markdown(f"**Time Window:** {sitrep['timestamp']}")
+                st.markdown(f"**{t['conflict_type']}:** {sitrep['conflict_type']}")
+                st.markdown(f"**{t['confidence']}:** {sitrep['confidence']:.0f}% ({sitrep['confidence_category']})")
+                st.markdown(f"**{t['location']}:** {sitrep['key_locations']}")
+                st.markdown(f"**{t['events']}:** {sitrep['event_count']}")
+                st.markdown(f"**{t['time_window']}:** {sitrep['timestamp']}")
                 st.markdown("---")
-                st.markdown(f"**Summary:**\n\n{sitrep['llm_summary']}")
+                st.markdown(f"**{t['summary']}:**\n\n{sitrep['llm_summary']}")
 
         # Statistics footer
         st.markdown("---")
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Total Hotspots", len(hotspots))
+            st.metric(t["total_hotspots"], len(hotspots))
         with col2:
             high_conf = len([h for h in hotspots if h.get("conf_score", 0) > 70])
-            st.metric("High Confidence", high_conf)
+            st.metric(t["high_confidence"], high_conf)
         with col3:
             total_events = sum(h.get("event_count", 0) for h in hotspots)
-            st.metric("Total Events", total_events)
+            st.metric(t["total_events"], total_events)
 
     except Exception as e:
         st.error(f"Error loading dashboard: {str(e)}")

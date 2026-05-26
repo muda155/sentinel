@@ -11,9 +11,10 @@ import pandas as pd
 import requests
 from psycopg2.extras import execute_values
 
-from pipeline.db import get_connection
+from pipeline.db import get_pooled_connection
 
 LASTUPDATE_URL = "http://data.gdeltproject.org/gdeltv2/lastupdate.txt"
+MASTER_FILELIST_URL = "http://data.gdeltproject.org/gdeltv2/masterfilelist.txt"
 GDELT_V2_COLUMNS = [
     "GLOBALEVENTID",
     "SQLDATE",
@@ -88,8 +89,8 @@ class GDELT2Ingestor:
     latest_export_backoff_seconds: float = 10.0
 
     def fetch_latest_url(self) -> str:
+        # Try lastupdate.txt first - get the first export.CSV.zip URL
         response = self._get_with_retry(LASTUPDATE_URL)
-
         for line in response.text.splitlines():
             parts = line.strip().split()
             if len(parts) >= 3 and parts[2].endswith(".export.CSV.zip"):
@@ -131,6 +132,16 @@ class GDELT2Ingestor:
         if not records:
             return 0
 
+        # Register sources and get source_id for each event
+        url_to_source_id = self._register_sources(df, conn)
+
+        # Augment records with source_id
+        augmented_records = []
+        for record in records:
+            url = record[4]  # url is at index 4
+            source_id = url_to_source_id.get(url)
+            augmented_records.append(record + (source_id,))
+
         with conn.cursor() as cursor:
             execute_values(
                 cursor,
@@ -142,22 +153,49 @@ class GDELT2Ingestor:
                     country_code,
                     url,
                     title,
-                    point_geom
+                    point_geom,
+                    source_id
                 )
                 VALUES %s
                 ON CONFLICT (gdelt_global_event_id) DO NOTHING
                 """,
-                records,
+                augmented_records,
                 template=(
                     "(%s, %s, %s, %s, %s, %s, "
-                    "ST_SetSRID(ST_MakePoint(%s, %s), 4326))"
+                    "ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s)"
                 ),
             )
         conn.commit()
         return len(records)
 
+    def _register_sources(self, df: pd.DataFrame, conn) -> dict:
+        """Register source domains and return mapping of URL to source_id."""
+        # Extract unique URLs that are not null
+        urls = df["SOURCEURL"].dropna().unique().tolist()
+
+        if not urls:
+            return {}
+
+        url_to_source_id = {}
+
+        with conn.cursor() as cursor:
+            for url in urls:
+                try:
+                    cursor.execute("SELECT register_source(%s)", (url,))
+                    result = cursor.fetchone()
+                    if result:
+                        url_to_source_id[url] = result[0]
+                except Exception as e:
+                    # Log but don't fail - some URLs might be malformed
+                    import logging
+                    logging.warning(f"Failed to register source for URL {url}: {e}")
+                    continue
+
+        return url_to_source_id
+
     def run_once(self) -> pd.DataFrame:
-        latest_url = self.fetch_latest_url()
+        # Find the most recent file that actually exists (not just in the index)
+        latest_url = self.fetch_latest_existing_url()
         raw_df = self.download_csv(latest_url)
         return self.filter_military(raw_df)
 
@@ -235,6 +273,7 @@ class GDELT2Ingestor:
         return df.rename(columns=rename_map)
 
     def _download_latest_export(self, url: str) -> requests.Response:
+        # Try the requested URL first
         last_error: requests.RequestException | None = None
         for attempt in range(1, self.latest_export_retries + 1):
             try:
@@ -247,10 +286,57 @@ class GDELT2Ingestor:
                 if status_code != 404 or attempt == self.latest_export_retries:
                     raise
                 time.sleep(self.latest_export_backoff_seconds)
+            except requests.RequestException:
+                # Non-404 error, give up immediately
+                raise
 
-        if last_error is None:
-            raise RuntimeError("Retry loop ended unexpectedly without an error")
+        # If all retries failed with 404, fallback to finding most recent existing file
+        if isinstance(last_error, requests.HTTPError):
+            fallback_url = self.fetch_latest_existing_url()
+            print(f"Falling back to: {fallback_url}")
+            return self._get_with_retry(fallback_url)
+
         raise last_error
+
+    def fetch_latest_existing_url(self, max_candidates: int = 5) -> str:
+        """Find the most recent export CSV that actually exists on the server.
+
+        Uses master file list for discovery, then verifies each candidate with
+        a HEAD request to avoid 404 errors.
+        """
+        response = self._get_with_retry(MASTER_FILELIST_URL)
+
+        export_candidates = []
+        for line in response.text.splitlines():
+            parts = line.strip().split()
+            if len(parts) >= 3 and parts[2].endswith(".export.CSV.zip"):
+                url = parts[2]
+                # Extract timestamp: .../YYYYMMDDHHMMSS.export.CSV.zip
+                try:
+                    ts_str = url.split("/")[-1].replace(".export.CSV.zip", "")
+                    timestamp = int(ts_str)
+                    export_candidates.append((timestamp, url))
+                except ValueError:
+                    continue
+
+        if not export_candidates:
+            raise ValueError("No export CSV URLs found in master file list")
+
+        # Sort newest first
+        export_candidates.sort(key=lambda x: x[0], reverse=True)
+
+        # Try each candidate until we find one that actually exists
+        for _, url in export_candidates[:max_candidates]:
+            try:
+                head_resp = requests.head(url, timeout=self.timeout_seconds)
+                if head_resp.status_code == 200:
+                    return url
+            except requests.RequestException:
+                continue
+
+        raise RuntimeError(
+            f"None of the top {max_candidates} export files are accessible"
+        )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -275,9 +361,12 @@ def main() -> int:
     military_df.to_csv(args.output_csv, index=False)
     print(f"Saved {len(military_df)} military events to {args.output_csv}")
     if args.insert_db:
-        with get_connection() as conn:
+        conn, pool = get_pooled_connection()
+        try:
             inserted = ingestor.insert_to_db(military_df, conn)
-        print(f"Inserted {inserted} records into events table")
+            print(f"Inserted {inserted} records into events table")
+        finally:
+            pool.return_connection(conn)
     return 0
 
 

@@ -48,15 +48,16 @@ def mock_sample_hotspots():
 class TestDashboardE2EIntegration:
     """End-to-end tests for dashboard with full pipeline integration."""
 
-    @patch("pipeline.db.get_connection")
-    def test_e2e_dashboard_fetches_and_renders_hotspots(self, mock_get_connection, mock_sample_hotspots):
+    @patch("pipeline.db.get_pooled_connection")
+    def test_e2e_dashboard_fetches_and_renders_hotspots(self, mock_get_pooled_connection, mock_sample_hotspots):
         """Test that dashboard can fetch and render hotspots through full pipeline."""
         from frontend.app import render_dashboard, format_hotspots_for_pydeck
         from pipeline.dashboard_data import fetch_dashboard_hotspots
 
         # Mock database connection
         mock_conn = MagicMock()
-        mock_get_connection.return_value = mock_conn
+        mock_pool = MagicMock()
+        mock_get_pooled_connection.return_value = (mock_conn, mock_pool)
 
         # Mock cursor to return sample hotspots
         mock_cursor = MagicMock()
@@ -96,9 +97,9 @@ class TestDashboardE2EIntegration:
         assert hotspots[0]["conf_score"] == 85.0
         assert "Major conflict escalation" in hotspots[0]["summary_text"]
 
-    @patch("pipeline.db.get_connection")
+    @patch("pipeline.db.get_pooled_connection")
     def test_e2e_dashboard_formats_pipeline_output_for_rendering(
-        self, mock_get_connection, mock_sample_hotspots
+        self, mock_get_pooled_connection, mock_sample_hotspots
     ):
         """Test that dashboard correctly formats pipeline output for Pydeck rendering."""
         from frontend.app import format_hotspots_for_pydeck
@@ -116,9 +117,9 @@ class TestDashboardE2EIntegration:
         assert formatted[1]["color"] == confidence_to_color(62.0)  # Medium confidence: yellow
         assert formatted[2]["color"] == confidence_to_color(45.0)  # Low-medium confidence
 
-    @patch("pipeline.db.get_connection")
+    @patch("pipeline.db.get_pooled_connection")
     def test_e2e_dashboard_extracts_sitrep_from_pipeline_output(
-        self, mock_get_connection, mock_sample_hotspots
+        self, mock_get_pooled_connection, mock_sample_hotspots
     ):
         """Test that SITREP extraction works with real pipeline output."""
         from frontend.app import extract_sitrep_details
@@ -133,9 +134,9 @@ class TestDashboardE2EIntegration:
         assert sitrep["event_count"] == 12
         assert "Major conflict escalation" in sitrep["llm_summary"]
 
-    @patch("pipeline.db.get_connection")
+    @patch("pipeline.db.get_pooled_connection")
     def test_e2e_dashboard_handles_mixed_confidence_levels(
-        self, mock_get_connection, mock_sample_hotspots
+        self, mock_get_pooled_connection, mock_sample_hotspots
     ):
         """Test dashboard correctly handles hotspots with varying confidence levels."""
         from frontend.app import get_confidence_category
@@ -149,9 +150,9 @@ class TestDashboardE2EIntegration:
         assert get_confidence_category(62.0) == "Medium"
         assert get_confidence_category(45.0) == "Medium"
 
-    @patch("pipeline.db.get_connection")
+    @patch("pipeline.db.get_pooled_connection")
     def test_e2e_dashboard_builds_map_from_pipeline_output(
-        self, mock_get_connection, mock_sample_hotspots
+        self, mock_get_pooled_connection, mock_sample_hotspots
     ):
         """Test that map is built correctly from full pipeline output."""
         from frontend.app import format_hotspots_for_pydeck, build_map_config
@@ -201,8 +202,8 @@ class TestDashboardE2EIntegration:
             assert isinstance(hotspot["summary_text"], str)
             assert isinstance(hotspot["conflict_detected"], bool)
 
-    @patch("pipeline.db.get_connection")
-    def test_e2e_dashboard_handles_empty_pipeline_output(self, mock_get_connection):
+    @patch("pipeline.db.get_pooled_connection")
+    def test_e2e_dashboard_handles_empty_pipeline_output(self, mock_get_pooled_connection):
         """Test dashboard gracefully handles empty pipeline output."""
         from frontend.app import build_map_config
 
@@ -213,15 +214,15 @@ class TestDashboardE2EIntegration:
         assert "viewport" in map_config
         assert "layers" in map_config
 
-    @patch("pipeline.db.get_connection")
-    def test_e2e_dashboard_handles_db_error(self, mock_get_connection):
+    @patch("pipeline.db.get_pooled_connection")
+    def test_e2e_dashboard_handles_db_error(self, mock_get_pooled_connection):
         """Test dashboard handles database connection errors gracefully."""
         # Mock database error
-        mock_get_connection.side_effect = Exception("Database connection failed")
+        mock_get_pooled_connection.side_effect = Exception("Database connection failed")
 
         # Should raise exception (caught by dashboard UI)
         with pytest.raises(Exception, match="Database connection failed"):
-            raise mock_get_connection.side_effect
+            raise mock_get_pooled_connection.side_effect
 
     def test_e2e_sitrep_display_with_all_pipeline_fields(self, mock_sample_hotspots):
         """Test that SITREP can display all fields from pipeline output."""

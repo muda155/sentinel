@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from pipeline.db import get_connection
+from pipeline.db import get_pooled_connection
 
 
 def build_prompt(hotspot_data: dict) -> str:
@@ -181,10 +181,13 @@ def main() -> int:
     model = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.1-70b-instruct")
     if not endpoint or not api_key:
         raise RuntimeError("NVIDIA_NIM_ENDPOINT and NVIDIA_NIM_API_KEY are required")
-    with get_connection() as conn:
+    conn, pool = get_pooled_connection()
+    try:
         result = verify_hotspots_with_llm(
             conn, endpoint=endpoint, api_key=api_key, model=model, threshold=args.threshold
         )
+    finally:
+        pool.return_connection(conn)
     print(f"LLM verified hotspots: {result['processed']} / {result['candidates']}")
     return 0
 

@@ -1,6 +1,7 @@
 numpy
 pandas
 psycopg2-binary
+psycopg2-pool
 pytest
 requests
 scikit-learn
