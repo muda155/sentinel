@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import io
+import logging
+import math
 import re
 import time
 from dataclasses import dataclass
@@ -80,6 +82,94 @@ GDELT_V2_COLUMNS = [
 ]
 
 
+# Mapping of GDELT 2.0 column names to expected pandas dtypes.
+# Used for schema validation before further processing (FR-1).
+GDELT_V2_COLUMN_TYPES: dict[str, str] = {
+    "GLOBALEVENTID": "int64",
+    "SQLDATE": "int64",
+    "MonthYear": "int64",
+    "Year": "int64",
+    "FractionDate": "float64",
+    "IsRootEvent": "int64",
+    "EventCode": "object",
+    "EventBaseCode": "object",
+    "EventRootCode": "int64",
+    "QuadClass": "int64",
+    "GoldsteinScale": "float64",
+    "NumMentions": "int64",
+    "NumSources": "int64",
+    "NumArticles": "int64",
+    "AvgTone": "float64",
+    "Actor1Geo_Type": "int64",
+    "Actor1Geo_Lat": "float64",
+    "Actor1Geo_Long": "float64",
+    "Actor2Geo_Type": "int64",
+    "Actor2Geo_Lat": "float64",
+    "Actor2Geo_Long": "float64",
+    "ActionGeo_Type": "int64",
+    "ActionGeo_Lat": "float64",
+    "ActionGeo_Long": "float64",
+    "DATEADDED": "int64",
+}
+
+
+class SchemaError(ValueError):
+    """Raised when GDELT CSV columns mismatch the expected schema (FR-1)."""
+    pass
+
+
+class GDELTColumnSchema:
+    """Validates GDELT 2.0 export column presence before processing (FR-1)."""
+
+    # Columns required for CAMEO filtering and event record building
+    REQUIRED_COLUMNS: set[str] = {
+        "GLOBALEVENTID",
+        "SQLDATE",
+        "EventRootCode",
+        "EventCode",
+        "Actor1Name",
+        "ActionGeo_Lat",
+        "ActionGeo_Long",
+        "SOURCEURL",
+    }
+
+    @staticmethod
+    def validate(df: pd.DataFrame) -> None:
+        """Validate that all required columns are present in the DataFrame.
+
+        Args:
+            df: The GDELT 2.0 export DataFrame to validate.
+
+        Raises:
+            SchemaError: If any required columns are missing.
+        """
+        missing = GDELTColumnSchema.REQUIRED_COLUMNS - set(df.columns)
+        if missing:
+            raise SchemaError(
+                f"Missing required GDELT columns: {sorted(missing)}. "
+                f"Available columns: {sorted(df.columns)}"
+            )
+
+
+def assign_grid_cell(lat: float, lon: float, grid_size: float = 1.0) -> str:
+    """Assign a 1x1 degree grid cell ID based on lat/lon coordinates.
+
+    Cell ID format: '1x1_LAT{floor_lat}_LON{floor_lon}'
+    Example: assign_grid_cell(48.85, 2.35) -> '1x1_LAT48_LON2'
+
+    Args:
+        lat: Latitude in decimal degrees.
+        lon: Longitude in decimal degrees.
+        grid_size: Grid cell size in degrees (default 1.0).
+
+    Returns:
+        Grid cell ID string.
+    """
+    grid_lat = int(math.floor(lat / grid_size) * grid_size)
+    grid_lon = int(math.floor(lon / grid_size) * grid_size)
+    return f"1x1_LAT{grid_lat}_LON{grid_lon}"
+
+
 @dataclass(slots=True)
 class GDELT2Ingestor:
     timeout_seconds: int = 30
@@ -128,6 +218,9 @@ class GDELT2Ingestor:
         return filtered
 
     def insert_to_db(self, df: pd.DataFrame, conn) -> int:
+        # Validate schema before processing (FR-1)
+        GDELTColumnSchema.validate(df)
+
         records = list(self._build_event_records(df))
         if not records:
             return 0
@@ -135,38 +228,68 @@ class GDELT2Ingestor:
         # Register sources and get source_id for each event
         url_to_source_id = self._register_sources(df, conn)
 
-        # Augment records with source_id
+        # Augment records with source_system, external_event_id, grid_cell_id, source_id
+        # Record layout from _build_event_records:
+        #   [0]=global_event_id, [1]=event_date, [2]=cameo_code, [3]=country_code,
+        #   [4]=url, [5]=title, [6]=lon, [7]=lat
         augmented_records = []
         for record in records:
-            url = record[4]  # url is at index 4
+            global_event_id = record[0]
+            url = record[4]
+            lat = record[7]
+            lon = record[6]
+
+            # Coordinate validation: skip events with out-of-range coordinates (FR-3)
+            if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+                logging.warning(
+                    f"Skipping event {global_event_id}: "
+                    f"out-of-range coordinates (lat={lat}, lon={lon})"
+                )
+                continue
+
             source_id = url_to_source_id.get(url)
-            augmented_records.append(record + (source_id,))
+            grid_cell_id = assign_grid_cell(lat, lon)
+            augmented_records.append((
+                "GDELT",                 # source_system
+                str(global_event_id),    # external_event_id
+                record[1],               # event_date
+                record[2],               # cameo_code
+                record[3],               # country_code
+                record[4],               # url
+                record[5],               # title
+                record[6],               # lon (for ST_MakePoint)
+                record[7],               # lat (for ST_MakePoint)
+                source_id,
+                grid_cell_id,
+            ))
 
         with conn.cursor() as cursor:
             execute_values(
                 cursor,
                 """
                 INSERT INTO events (
-                    gdelt_global_event_id,
+                    source_system,
+                    external_event_id,
                     event_date,
                     cameo_code,
                     country_code,
                     url,
                     title,
                     point_geom,
-                    source_id
+                    source_id,
+                    grid_cell_id
                 )
                 VALUES %s
-                ON CONFLICT (gdelt_global_event_id) DO NOTHING
+                ON CONFLICT (source_system, external_event_id) DO NOTHING
                 """,
                 augmented_records,
                 template=(
-                    "(%s, %s, %s, %s, %s, %s, "
-                    "ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s)"
+                    "(%s, %s, %s, %s, %s, %s, %s, "
+                    "ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s, %s)"
                 ),
             )
         conn.commit()
-        return len(records)
+        return len(augmented_records)
 
     def _register_sources(self, df: pd.DataFrame, conn) -> dict:
         """Register source domains and return mapping of URL to source_id."""
@@ -187,7 +310,6 @@ class GDELT2Ingestor:
                         url_to_source_id[url] = result[0]
                 except Exception as e:
                     # Log but don't fail - some URLs might be malformed
-                    import logging
                     logging.warning(f"Failed to register source for URL {url}: {e}")
                     continue
 
@@ -239,8 +361,20 @@ class GDELT2Ingestor:
         ]
 
         for _, row in valid_coords.iterrows():
+            lat = float(row["ActionGeo_Lat"])
+            lon = float(row["ActionGeo_Long"])
+            event_id = int(row["GlobalEventID"])
+
+            # Coordinate validation: skip events with out-of-range coordinates (FR-3)
+            if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+                logging.warning(
+                    f"Skipping event {event_id}: "
+                    f"out-of-range coordinates (lat={lat}, lon={lon})"
+                )
+                continue
+
             yield (
-                int(row["GlobalEventID"]),
+                event_id,
                 pd.to_datetime(str(int(row["SQLDATE"])), format="%Y%m%d", utc=True),
                 str(row["EventCode"]) if pd.notna(row["EventCode"]) else None,
                 str(row["ActionGeo_CountryCode"])

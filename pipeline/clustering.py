@@ -9,7 +9,7 @@ import pandas as pd
 from psycopg2.extras import execute_values
 from sklearn.cluster import DBSCAN
 
-from pipeline.db import get_connection
+from pipeline.db import get_pooled_connection
 from pipeline.llm_verifier import verify_hotspots_with_llm
 from pipeline.scoring import ScoringRepository
 
@@ -202,7 +202,8 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _build_parser().parse_args()
-    with get_connection() as conn:
+    conn, pool = get_pooled_connection()
+    try:
         events_df = load_recent_events(conn, lookback_hours=args.lookback_hours)
         repo = ClusterRepository(conn)
         summary = run_clustering_pipeline(
@@ -232,6 +233,8 @@ def main() -> int:
                 threshold=args.llm_threshold,
             )
             llm_processed = llm_result["processed"]
+    finally:
+        pool.return_connection(conn)
     print(
         "Hotspots: {hotspot_count}, linked events: {linked_events}, noise: {noise_count}".format(
             **summary
