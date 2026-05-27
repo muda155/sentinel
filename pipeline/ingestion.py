@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import io
 import logging
-import math
 import re
 import time
 from dataclasses import dataclass
@@ -13,7 +12,26 @@ import pandas as pd
 import requests
 from psycopg2.extras import execute_values
 
+import json
+import os
+from datetime import datetime, timedelta
+
+from pipeline.clustering import assign_grid_cell
 from pipeline.db import get_pooled_connection
+
+try:
+    import redis as _redis_lib
+
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    _redis_lib = None  # type: ignore[assignment]
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
 LASTUPDATE_URL = "http://data.gdeltproject.org/gdeltv2/lastupdate.txt"
 MASTER_FILELIST_URL = "http://data.gdeltproject.org/gdeltv2/masterfilelist.txt"
@@ -149,25 +167,6 @@ class GDELTColumnSchema:
                 f"Missing required GDELT columns: {sorted(missing)}. "
                 f"Available columns: {sorted(df.columns)}"
             )
-
-
-def assign_grid_cell(lat: float, lon: float, grid_size: float = 1.0) -> str:
-    """Assign a 1x1 degree grid cell ID based on lat/lon coordinates.
-
-    Cell ID format: '1x1_LAT{floor_lat}_LON{floor_lon}'
-    Example: assign_grid_cell(48.85, 2.35) -> '1x1_LAT48_LON2'
-
-    Args:
-        lat: Latitude in decimal degrees.
-        lon: Longitude in decimal degrees.
-        grid_size: Grid cell size in degrees (default 1.0).
-
-    Returns:
-        Grid cell ID string.
-    """
-    grid_lat = int(math.floor(lat / grid_size) * grid_size)
-    grid_lon = int(math.floor(lon / grid_size) * grid_size)
-    return f"1x1_LAT{grid_lat}_LON{grid_lon}"
 
 
 @dataclass(slots=True)
@@ -473,6 +472,434 @@ class GDELT2Ingestor:
         )
 
 
+# ---------------------------------------------------------------------------
+# ACLED event type mapping and source helpers (FR-1b)
+# ---------------------------------------------------------------------------
+
+
+def _map_acled_event_type(acled_type: str) -> str:
+    """Map ACLED event types to Sentinel event_type_label.
+
+    ACLED event categories:
+    - Battles, Explosions/Remote violence → armed_conflict
+    - Violence against civilians → civilian_violence
+    - Protests, Riots → civil_unrest
+    - Strategic developments, other → civilian_violence (default)
+
+    Args:
+        acled_type: Raw ACLED event_type string from API response.
+
+    Returns:
+        Sentinel-normalised event type label.
+    """
+    if not acled_type or not isinstance(acled_type, str):
+        return "civilian_violence"
+
+    acled_type_clean = acled_type.strip()
+    mapping = {
+        "Battles": "armed_conflict",
+        "Explosions/Remote violence": "armed_conflict",
+        "Violence against civilians": "civilian_violence",
+        "Protests": "civil_unrest",
+        "Riots": "civil_unrest",
+    }
+    for key, value in mapping.items():
+        if key.lower() == acled_type_clean.lower():
+            return value
+    return "civilian_violence"
+
+
+def _extract_acled_source_domain(source_str: str) -> str:
+    """Derive a domain-like identifier from an ACLED source string.
+
+    ACLED source values are typically organisation names (e.g. 'Agence
+    France-Presse'), not URLs. We convert them to a URL-compatible domain
+    identifier for use with the sources table.
+
+    Args:
+        source_str: ACLED source field value.
+
+    Returns:
+        Lowercase domain-compatible string.
+    """
+    if not source_str or not isinstance(source_str, str):
+        return "acleddata.com"
+
+    source = source_str.strip().lower()
+    # Replace spaces and special chars with dots for domain-like format
+    source = re.sub(r"[^a-z0-9]+", ".", source)
+    return source.strip(".") or "acleddata.com"
+
+
+def _register_acled_source(cursor, domain: str) -> int | None:
+    """Register a source domain and return its source_id.
+
+    Unlike GDELT sources (which pass full URLs to register_source()),
+    ACLED source identifiers are pre-normalised domain strings inserted
+    directly into the sources table.
+
+    Args:
+        cursor: Database cursor.
+        domain: Cleaned source domain identifier.
+
+    Returns:
+        source_id of the registered source, or None on failure.
+    """
+    cursor.execute(
+        "INSERT INTO sources (domain) VALUES (%s) ON CONFLICT (domain) DO NOTHING",
+        (domain,),
+    )
+    cursor.execute("SELECT source_id FROM sources WHERE domain = %s", (domain,))
+    result = cursor.fetchone()
+    return result[0] if result else None
+
+
+# ---------------------------------------------------------------------------
+# ACLED Ingestor (FR-1b)
+# ---------------------------------------------------------------------------
+
+
+class ACLEDIngestor:
+    """Fetch and ingest ACLED (Armed Conflict Location & Event Data) events.
+
+    Normalises ACLED events to Sentinel's events table schema with
+    ``source_system='ACLED'`` discriminator. Uses Redis cache to respect
+    ACLED's 24-hour update cadence and avoid redundant API calls.
+
+    Rate limit: 1 request/second (academic access tier).
+    """
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        email: str | None = None,
+        cache_ttl: int | None = None,
+    ):
+        self.api_key = api_key or os.getenv("ACLED_API_KEY", "")
+        self.email = email or os.getenv("ACLED_EMAIL", "")
+        poll_hours = int(os.getenv("SENTINEL_ACLED_POLL_HOURS", "24"))
+        self.cache_ttl = (
+            cache_ttl if cache_ttl is not None else poll_hours * 3600
+        )
+        self.base_url = "https://api.acleddata.com/acled/read"
+        self.rate_limit = 1.0  # 1 request per second (academic tier)
+        self.max_retries = 3
+
+        # Redis cache (graceful fallback if unavailable)
+        self._redis = None
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
+        if REDIS_AVAILABLE and _redis_lib is not None:
+            try:
+                self._redis = _redis_lib.from_url(redis_url)
+                self._redis.ping()
+            except Exception:
+                logging.warning("Redis unavailable — ACLED cache disabled")
+                self._redis = None
+
+    # ------------------------------------------------------------------
+    # Public interface
+    # ------------------------------------------------------------------
+
+    def fetch_events(self, days: int = 7) -> pd.DataFrame:
+        """Fetch ACLED events, with Redis cache.
+
+        Checks Redis cache first; on cache miss, fetches from ACLED API
+        with rate-limited pagination. Normalises to standard DataFrame
+        columns expected by downstream pipeline steps.
+
+        Args:
+            days: Number of past days to fetch (default 7).
+
+        Returns:
+            DataFrame with columns: event_id_cnty, event_date, latitude,
+            longitude, country_code, source_domain, event_type_label.
+        """
+        cache_key = f"acled:events:days_{days}"
+
+        # 1. Check Redis cache
+        if self._redis is not None:
+            try:
+                cached = self._redis.get(cache_key)
+                if cached:
+                    logging.info("ACLED cache hit for %dd window", days)
+                    return pd.read_json(
+                        io.StringIO(cached.decode("utf-8"))
+                    )
+            except Exception as exc:
+                logging.warning("Redis cache read failed: %s", exc)
+
+        # 2. Fetch from ACLED API
+        df = self._fetch_from_api(days)
+        logging.info("Fetched %d ACLED events for %dd window", len(df), days)
+
+        # 3. Store in Redis cache
+        if self._redis is not None and not df.empty:
+            try:
+                self._redis.setex(cache_key, self.cache_ttl, df.to_json())
+                logging.info("ACLED data cached (TTL=%ds)", self.cache_ttl)
+            except Exception as exc:
+                logging.warning("Redis cache write failed: %s", exc)
+
+        return df
+
+    def insert_to_db(self, df: pd.DataFrame, conn) -> int:
+        """Insert ACLED events into the events table.
+
+        Uses the same upsert pattern as GDELT2Ingestor with
+        ``source_system='ACLED'`` discriminator. Assigns ``grid_cell_id``
+        at insert time and registers source domains.
+
+        Args:
+            df: Normalised ACLED DataFrame from ``fetch_events()``.
+            conn: Database connection.
+
+        Returns:
+            Number of records submitted for insertion.
+        """
+        if df.empty:
+            return 0
+
+        # Step 1: Register source domains
+        domain_to_source_id: dict[str, int] = {}
+        if "source_domain" in df.columns:
+            with conn.cursor() as cursor:
+                for domain in df["source_domain"].dropna().unique():
+                    if not domain:
+                        continue
+                    try:
+                        source_id = _register_acled_source(
+                            cursor, str(domain)
+                        )
+                        if source_id is not None:
+                            domain_to_source_id[str(domain)] = source_id
+                    except Exception as exc:
+                        logging.warning(
+                            "Failed to register ACLED source %s: %s",
+                            domain,
+                            exc,
+                        )
+
+        # Step 2: Build insert records
+        records: list[tuple] = []
+        for _, row in df.iterrows():
+            try:
+                lat = float(row.get("latitude", 0))
+                lon = float(row.get("longitude", 0))
+
+                if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+                    logging.warning(
+                        "Skipping ACLED event %s: out-of-range coordinates",
+                        row.get("event_id_cnty"),
+                    )
+                    continue
+
+                event_id = str(row.get("event_id_cnty", ""))
+                grid_cell_id = assign_grid_cell(lat, lon)
+
+                source_domain = str(
+                    row.get("source_domain", "acleddata.com")
+                )
+                source_id = domain_to_source_id.get(source_domain)
+
+                # Parse event_date — ACLED uses "YYYY-MM-DD" format
+                event_date = row.get("event_date")
+                if isinstance(event_date, str):
+                    try:
+                        event_date = datetime.strptime(
+                            event_date, "%Y-%m-%d"
+                        )
+                    except ValueError:
+                        event_date = None
+
+                event_type_label = row.get(
+                    "event_type_label", "civilian_violence"
+                )
+                location = row.get("location", "")
+                records.append((
+                    "ACLED",                                 # source_system
+                    event_id,                                # external_event_id
+                    event_date,                              # event_date
+                    str(event_type_label),                   # cameo_code
+                    row.get("country_code"),                 # country_code
+                    str(source_domain),                      # url
+                    f"{event_type_label}: {location}",        # title
+                    lon,                                     # lon
+                    lat,                                     # lat
+                    source_id,                               # source_id
+                    grid_cell_id,                            # grid_cell_id
+                ))
+            except Exception as exc:
+                logging.warning(
+                    "Skipping ACLED event %s: %s",
+                    row.get("event_id_cnty"),
+                    exc,
+                )
+                continue
+
+        if not records:
+            return 0
+
+        # Step 3: Batch insert with idempotent upsert
+        with conn.cursor() as cursor:
+            execute_values(
+                cursor,
+                """
+                INSERT INTO events (
+                    source_system, external_event_id, event_date,
+                    cameo_code, country_code, url, title,
+                    point_geom, source_id, grid_cell_id
+                )
+                VALUES %s
+                ON CONFLICT (source_system, external_event_id) DO NOTHING
+                """,
+                records,
+                template=(
+                    "(%s, %s, %s, %s, %s, %s, %s, "
+                    "ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s, %s)"
+                ),
+            )
+        conn.commit()
+        logging.info(
+            "Submitted %d ACLED events for insertion", len(records)
+        )
+        return len(records)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _fetch_from_api(self, days: int) -> pd.DataFrame:
+        """Fetch events from ACLED API with retry and pagination."""
+        end_date = datetime.utcnow()
+        start_date = end_date - timedelta(days=days)
+
+        params: dict = {
+            "key": self.api_key,
+            "email": self.email,
+            "event_date": (
+                f"{start_date.strftime('%Y-%m-%d')}"
+                f"|{end_date.strftime('%Y-%m-%d')}"
+            ),
+            "event_date_where": "BETWEEN",
+        }
+
+        all_events: list[dict] = []
+        page = 1
+
+        while True:
+            page_params = {**params, "page": page}
+            data = self._fetch_page_with_retry(page_params)
+            if data is None:
+                logging.error(
+                    "ACLED API page %d failed after %d retries",
+                    page,
+                    self.max_retries,
+                )
+                break
+
+            events_on_page = data.get("data", [])
+            if not events_on_page:
+                break
+
+            all_events.extend(events_on_page)
+
+            # Check if more pages exist (ACLED returns max ~500 per page)
+            if len(events_on_page) < 500:
+                break
+
+            page += 1
+            time.sleep(self.rate_limit)
+
+        if not all_events:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(all_events)
+        return self._normalize_acled_columns(df)
+
+    def _fetch_page_with_retry(self, params: dict) -> dict | None:
+        """Fetch a single ACLED API page with exponential backoff retry.
+
+        Returns parsed JSON dict on success, ``None`` after exhausting retries.
+        """
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                response = requests.get(
+                    self.base_url, params=params, timeout=30
+                )
+                if response.status_code == 200:
+                    return response.json()
+                elif response.status_code == 429:
+                    backoff = 2 ** attempt
+                    logging.warning(
+                        "ACLED rate limit (429), retry %d/%d in %ds",
+                        attempt,
+                        self.max_retries,
+                        backoff,
+                    )
+                else:
+                    backoff = 2 ** attempt
+                    logging.warning(
+                        "ACLED API returned %d, retry %d/%d in %ds",
+                        response.status_code,
+                        attempt,
+                        self.max_retries,
+                        backoff,
+                    )
+                time.sleep(backoff)
+            except requests.RequestException as exc:
+                backoff = 2 ** attempt
+                logging.warning(
+                    "ACLED request error: %s, retry %d/%d in %ds",
+                    exc,
+                    attempt,
+                    self.max_retries,
+                    backoff,
+                )
+                time.sleep(backoff)
+
+        return None
+
+    @staticmethod
+    def _normalize_acled_columns(df: pd.DataFrame) -> pd.DataFrame:
+        """Normalise ACLED API response columns to Sentinel standard.
+
+        Handles column name variations and adds derived columns:
+        - ``event_type_label``: mapped from ACLED ``event_type``
+        - ``source_domain``: derived from ``source`` field
+        """
+        if df.empty:
+            return df
+
+        # Map event type labels
+        if "event_type" in df.columns:
+            df["event_type_label"] = df["event_type"].apply(
+                _map_acled_event_type
+            )
+        else:
+            df["event_type_label"] = "civilian_violence"
+
+        # Derive source domain from source field
+        if "source" in df.columns:
+            df["source_domain"] = df["source"].apply(
+                _extract_acled_source_domain
+            )
+        else:
+            df["source_domain"] = "acleddata.com"
+
+        # Ensure country_code is present
+        if "country" in df.columns and "country_code" not in df.columns:
+            df["country_code"] = df["country"]
+        elif "country_code" not in df.columns:
+            df["country_code"] = None
+
+        return df
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Fetch and filter latest GDELT 2.0 export")
     parser.add_argument(
@@ -485,7 +912,48 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Insert filtered events into PostgreSQL events table",
     )
+    parser.add_argument(
+        "--fetch-acled",
+        action="store_true",
+        help="Fetch and ingest ACLED events (FR-1b)",
+    )
+    parser.add_argument(
+        "--acled-days",
+        type=int,
+        default=7,
+        help="Number of days to fetch from ACLED API (default: 7)",
+    )
     return parser
+
+
+def main_acled(args: argparse.Namespace) -> int:
+    """Run ACLED ingestion (FR-1b)."""
+    api_key = os.getenv("ACLED_API_KEY", "")
+    email = os.getenv("ACLED_EMAIL", "")
+    if not api_key or not email:
+        print(
+            "Warning: ACLED_API_KEY or ACLED_EMAIL not set. "
+            "Skipping ACLED fetch."
+        )
+        return 0
+
+    ingestor = ACLEDIngestor(api_key=api_key, email=email)
+    print(f"Fetching ACLED events for last {args.acled_days} days...")
+    df = ingestor.fetch_events(days=args.acled_days)
+    print(f"Fetched {len(df)} ACLED events")
+
+    if not df.empty and args.insert_db:
+        conn, pool = get_pooled_connection()
+        try:
+            inserted = ingestor.insert_to_db(df, conn)
+            print(f"Inserted {inserted} ACLED events into events table")
+        finally:
+            pool.return_connection(conn)
+
+    csv_path = f"acled_events_{args.acled_days}d.csv"
+    df.to_csv(csv_path, index=False)
+    print(f"Saved ACLED events to {csv_path}")
+    return 0
 
 
 def main() -> int:
@@ -501,6 +969,10 @@ def main() -> int:
             print(f"Inserted {inserted} records into events table")
         finally:
             pool.return_connection(conn)
+
+    if args.fetch_acled:
+        return main_acled(args)
+
     return 0
 
 

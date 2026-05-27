@@ -52,14 +52,125 @@ def test_call_nim_api_retries_on_429_then_returns_json(monkeypatch: pytest.Monke
     monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
     monkeypatch.setattr("pipeline.llm_verifier.time.sleep", mock.Mock())
 
-    result = llm_verifier.call_nim_api(
+    result, model_used = llm_verifier.call_nim_api(
         prompt="test",
         endpoint="https://example.com/v1/chat/completions",
         api_key="secret",
         model="meta/llama-3.1-70b-instruct",
     )
     assert result["conflict_detected"] is False
+    assert model_used == "meta/llama-3.1-70b-instruct"
     assert post_mock.call_count == 2
+
+
+def test_ollama_fallback_triggered_on_429_exhaustion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When NIM returns 429 on every attempt, Ollama fallback is called."""
+    too_many = mock.Mock()
+    too_many.status_code = 429
+    too_many.raise_for_status.side_effect = requests.HTTPError(response=too_many)
+
+    # Mock the HTTP response for NIM (all three attempts get 429)
+    nim_post_mock = mock.Mock(side_effect=requests.HTTPError(response=too_many))
+
+    # Mock Ollama response
+    ollama_response = mock.Mock()
+    ollama_response.raise_for_status.return_value = None
+    ollama_response.json.return_value = {
+        "response": (
+            '{"conflict_detected": false, "conflict_detail": "", '
+            '"summary": "Calm conditions persisted [1].", '
+            '"sources_cited": ["https://a.com/1"]}'
+        )
+    }
+
+    # Track which endpoint was called
+    def post_side_effect(url, **kwargs):
+        if "ollama" in url or "11434" in url:
+            return ollama_response
+        raise requests.HTTPError(response=too_many)
+
+    post_mock = mock.Mock(side_effect=post_side_effect)
+    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
+    monkeypatch.setattr("pipeline.llm_verifier.time.sleep", mock.Mock())
+
+    result, model_used = llm_verifier.call_nim_api(
+        prompt="test",
+        endpoint="https://nim.example.com/v1/chat/completions",
+        api_key="secret",
+        model="meta/llama-3.1-70b-instruct",
+        retries=3,
+        ollama_endpoint="http://localhost:11434",
+    )
+    assert result["conflict_detected"] is False
+    assert model_used == "llama-3-8b-ollama"
+    # Should have been called 4+ times (3 NIM failures + 1 Ollama success)
+    assert post_mock.call_count >= 4
+
+
+def test_call_ollama_fallback_mocked() -> None:
+    """call_ollama_fallback sends correct payload to Ollama endpoint."""
+    with mock.patch("pipeline.llm_verifier.requests.post") as post_mock:
+        ollama_response = mock.Mock()
+        ollama_response.raise_for_status.return_value = None
+        ollama_response.json.return_value = {
+            "response": (
+                '{"conflict_detected": false, "conflict_detail": "", '
+                '"summary": "Calm conditions persisted [1].", '
+                '"sources_cited": ["https://a.com/1"]}'
+            )
+        }
+        post_mock.return_value = ollama_response
+
+        result, model_used = llm_verifier.call_ollama_fallback(
+            prompt="test prompt",
+            endpoint="http://localhost:11434",
+        )
+        assert result["conflict_detected"] is False
+        assert model_used == "llama-3-8b-ollama"
+
+        # Verify the correct endpoint and payload
+        call_args, call_kwargs = post_mock.call_args
+        assert call_args[0] == "http://localhost:11434/api/generate"
+        payload = call_kwargs["json"]
+        assert payload["model"] == "llama3:8b"
+        assert payload["prompt"] == "test prompt"
+        assert payload["stream"] is False
+        assert payload["options"]["temperature"] == 0
+
+
+def test_verify_hotspots_accepts_ollama_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """verify_hotspots_with_llm accepts and forwards ollama_endpoint parameter."""
+    monkeypatch.setattr(
+        "pipeline.llm_verifier.LLMRepository.candidate_hotspots",
+        lambda self, threshold: [1],
+    )
+    monkeypatch.setattr(
+        "pipeline.llm_verifier.LLMRepository.fetch_hotspot_articles",
+        lambda self, hotspot_id: [],
+    )
+    monkeypatch.setattr(
+        "pipeline.llm_verifier.LLMRepository.save_summary",
+        lambda self, hotspot_id, result, model: None,
+    )
+
+    # Track what call_nim_api receives
+    captured_kwargs = {}
+
+    def fake_call_nim_api(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return {"conflict_detected": False, "conflict_detail": "", "summary": "Test [1].", "sources_cited": []}, "test-model"
+
+    monkeypatch.setattr("pipeline.llm_verifier.call_nim_api", fake_call_nim_api)
+
+    llm_verifier.verify_hotspots_with_llm(
+        conn=object(),
+        endpoint="https://nim.example.com",
+        api_key="secret",
+        model="meta/llama-3.1-70b-instruct",
+        threshold=40,
+        ollama_endpoint="http://custom-ollama:11434",
+    )
+    assert captured_kwargs.get("ollama_endpoint") == "http://custom-ollama:11434"
 
 
 def test_verify_hotspots_with_llm_skips_below_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -79,3 +190,19 @@ def test_verify_hotspots_with_llm_skips_below_threshold(monkeypatch: pytest.Monk
     )
     assert result == {"candidates": 0, "processed": 0}
     call_mock.assert_not_called()
+
+
+def test_validate_citations_all_cited() -> None:
+    assert llm_verifier.validate_citations("Forces advanced 5km [1]. Artillery deployed [2].") is True
+
+
+def test_validate_citations_missing_citation() -> None:
+    assert llm_verifier.validate_citations("Forces advanced 5km. Artillery deployed [2].") is False
+
+
+def test_validate_citations_non_numeric_citation() -> None:
+    assert llm_verifier.validate_citations("Forces advanced [src1]. Artillery deployed [2].") is False
+
+
+def test_validate_citations_empty() -> None:
+    assert llm_verifier.validate_citations("") is False

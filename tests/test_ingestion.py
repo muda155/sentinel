@@ -135,3 +135,114 @@ def test_download_csv_retries_same_latest_url_on_404_then_succeeds(
     assert get_mock.call_count == 2
     assert get_mock.call_args_list[0].args[0] == latest_url
     assert get_mock.call_args_list[1].args[0] == latest_url
+
+
+# ---------------------------------------------------------------------------
+# ACLED tests (Phase E1)
+# ---------------------------------------------------------------------------
+
+
+def test_acled_event_type_mapping() -> None:
+    from pipeline.ingestion import _map_acled_event_type
+
+    assert _map_acled_event_type("Battles") == "armed_conflict"
+    assert _map_acled_event_type("Explosions/Remote violence") == "armed_conflict"
+    assert _map_acled_event_type("Violence against civilians") == "civilian_violence"
+    assert _map_acled_event_type("Protests") == "civil_unrest"
+    assert _map_acled_event_type("Riots") == "civil_unrest"
+    assert _map_acled_event_type("Strategic developments") == "civilian_violence"
+    assert _map_acled_event_type("") == "civilian_violence"
+    assert _map_acled_event_type(None) == "civilian_violence"
+
+
+def test_acled_extract_source_domain() -> None:
+    from pipeline.ingestion import _extract_acled_source_domain
+
+    assert _extract_acled_source_domain("Agence France-Presse") == "agence.france.presse"
+    assert _extract_acled_source_domain("Radio Free Europe/Radio Liberty") == "radio.free.europe.radio.liberty"
+    assert _extract_acled_source_domain("") == "acleddata.com"
+    assert _extract_acled_source_domain(None) == "acleddata.com"
+
+
+def test_acled_insert_to_db(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import MagicMock
+    from pipeline.ingestion import ACLEDIngestor
+
+    mock_exec = MagicMock()
+    monkeypatch.setattr("pipeline.ingestion.execute_values", mock_exec)
+    monkeypatch.setattr(
+        "pipeline.ingestion._register_acled_source",
+        MagicMock(return_value=5),
+    )
+    monkeypatch.setattr(
+        "pipeline.ingestion.assign_grid_cell",
+        MagicMock(return_value="1x1_LAT48_LON2"),
+    )
+
+    ingestor = ACLEDIngestor(api_key="test_key", email="test@test.com")
+    df = pd.DataFrame(
+        {
+            "event_id_cnty": ["TEST001"],
+            "event_date": ["2024-01-15"],
+            "latitude": [48.85],
+            "longitude": [2.35],
+            "country_code": ["FRA"],
+            "source_domain": ["example.com"],
+            "event_type_label": ["armed_conflict"],
+            "location": ["Paris"],
+        }
+    )
+
+    mock_cursor = MagicMock()
+    mock_conn = MagicMock()
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+
+    count = ingestor.insert_to_db(df, mock_conn)
+    assert count == 1
+    assert mock_exec.called
+
+    # Verify records contain 'ACLED' as source_system and grid_cell_id
+    call_args = mock_exec.call_args
+    records = call_args[0][2]  # third positional arg = records list
+    assert records[0][0] == "ACLED"
+    assert records[0][10] == "1x1_LAT48_LON2"
+
+
+def test_acled_fetch_cache_hit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify fetch_events returns cached data without calling the API."""
+    from unittest.mock import MagicMock
+    from pipeline.ingestion import ACLEDIngestor
+
+    try:
+        import redis  # noqa: F401
+    except ImportError:
+        pytest.skip("redis package not installed")
+
+    test_df = pd.DataFrame(
+        {
+            "event_id_cnty": ["CACHED001"],
+            "event_date": ["2024-01-15"],
+            "latitude": [48.85],
+            "longitude": [2.35],
+            "country_code": ["FRA"],
+            "source_domain": ["cached.com"],
+            "event_type_label": ["armed_conflict"],
+        }
+    )
+
+    mock_redis = MagicMock()
+    mock_redis.get.return_value = test_df.to_json().encode("utf-8")
+    mock_redis.ping.return_value = True
+
+    mock_redis_lib = MagicMock()
+    mock_redis_lib.from_url.return_value = mock_redis
+
+    monkeypatch.setattr("pipeline.ingestion.REDIS_AVAILABLE", True)
+    monkeypatch.setattr("pipeline.ingestion._redis_lib", mock_redis_lib)
+
+    ingestor = ACLEDIngestor(api_key="test_key", email="test@test.com")
+    df = ingestor.fetch_events(days=7)
+
+    assert len(df) == 1
+    assert df.iloc[0]["event_id_cnty"] == "CACHED001"
+    mock_redis.get.assert_called()

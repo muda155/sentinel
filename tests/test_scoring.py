@@ -7,10 +7,15 @@ from pipeline import scoring
 
 
 def test_compute_source_density_matches_expected_ranges() -> None:
-    one = scoring.compute_source_density(["a.com"])
-    twenty = scoring.compute_source_density([f"d{i}.com" for i in range(20)])
-    assert one == pytest.approx(0.099, abs=0.01)
-    assert twenty == pytest.approx(0.964, abs=0.01)
+    # 10 Tier-1 domains (weight 1.0 each): tanh(10/10) = tanh(1) ≈ 0.762
+    weights = [1.0] * 10
+    result = scoring.compute_source_density(weights)
+    assert result == pytest.approx(0.762, abs=0.01)
+
+    # 20 Tier-1 domains (weight 1.0 each): tanh(20/10) = tanh(2) ≈ 0.964
+    weights = [1.0] * 20
+    result = scoring.compute_source_density(weights)
+    assert result == pytest.approx(0.964, abs=0.01)
 
 
 def test_geopolitical_diversity_expected_values() -> None:
@@ -30,6 +35,7 @@ def test_score_hotspot_from_events_aggregates_metrics() -> None:
         {
             "url": ["https://a.com/1", "https://b.com/2", "https://a.com/3"],
             "country_code": ["US", "US", "VN"],
+            "trust_score": [1.0, 0.8, 0.6],
         }
     )
     result = scoring.score_hotspot_from_events(events_df)
@@ -48,8 +54,8 @@ def test_scoring_repository_updates_hotspot_metrics(monkeypatch: pytest.MonkeyPa
 
         def fetchall(self):
             return [
-                ("https://a.com/1", "US"),
-                ("https://b.com/2", "VN"),
+                ("https://a.com/1", "US", 1.0),
+                ("https://b.com/2", "VN", 0.8),
             ]
 
         def __enter__(self):
@@ -75,3 +81,21 @@ def test_scoring_repository_updates_hotspot_metrics(monkeypatch: pytest.MonkeyPa
     assert repo._conn.committed is True
     assert result["hotspot_id"] == 7
     assert any("UPDATE hotspots" in query for query, _ in repo._conn.cursor_obj.executed)
+
+
+def test_compute_source_density_weighted() -> None:
+    # 10 Tier-1 domains (weight 1.0 each): tanh(10/10) = tanh(1) ≈ 0.762
+    weights = [1.0] * 10
+    result = scoring.compute_source_density(weights)
+    assert 0.75 < result < 0.77
+
+
+def test_compute_source_density_mixed() -> None:
+    # 5 Tier-1 (1.0) + 5 Tier-4 (0.4) = total weight 7.0: tanh(7/10) ≈ 0.604
+    weights = [1.0] * 5 + [0.4] * 5
+    result = scoring.compute_source_density(weights)
+    assert 0.59 < result < 0.62
+
+
+def test_compute_source_density_empty() -> None:
+    assert scoring.compute_source_density([]) == 0.0

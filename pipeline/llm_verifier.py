@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import re
 import time
@@ -10,6 +11,8 @@ from urllib.parse import urlparse
 import requests
 
 from pipeline.db import get_pooled_connection
+
+logger = logging.getLogger("sentinel.llm_verifier")
 
 
 def build_prompt(hotspot_data: dict) -> str:
@@ -35,10 +38,53 @@ def build_prompt(hotspot_data: dict) -> str:
 
 
 def validate_citations(summary: str) -> bool:
-    chunks = [c.strip() for c in re.split(r"(?<=[.!?])\s+", (summary or "").strip()) if c.strip()]
-    if not chunks:
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', (summary or "").strip()) if s.strip()]
+    if not sentences:
         return False
-    return all(re.search(r"\[[^\]]+\][.!?]?$", chunk) for chunk in chunks)
+    pattern = re.compile(r'.+\[\d+\][.!?]\s*$')
+    return all(pattern.search(s) for s in sentences)
+
+
+def call_ollama_fallback(
+    prompt: str,
+    endpoint: str = "http://localhost:11434",
+    timeout: int = 60,
+) -> tuple[dict, str]:
+    """Call local Ollama as fallback when NIM is unavailable (FR-12)."""
+    payload = {
+        "model": "llama3:8b",
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "temperature": 0,
+            "num_predict": 500,
+        },
+    }
+    try:
+        response = requests.post(
+            f"{endpoint}/api/generate",
+            json=payload,
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        raw = response.json()
+        text = raw.get("response", "")
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            # Try to extract JSON from the response
+            import re as _re
+
+            match = _re.search(r"\{.*\}", text, _re.DOTALL)
+            if match:
+                parsed = json.loads(match.group())
+            else:
+                raise ValueError(f"Ollama response is not valid JSON: {text[:200]}")
+        if not validate_citations(parsed.get("summary", "")):
+            raise ValueError("Ollama summary missing required source citations")
+        return parsed, "llama-3-8b-ollama"
+    except requests.RequestException as e:
+        raise RuntimeError(f"Ollama fallback failed: {e}") from e
 
 
 def call_nim_api(
@@ -47,8 +93,9 @@ def call_nim_api(
     api_key: str,
     model: str,
     retries: int = 3,
-    timeout: int = 30,
-) -> dict:
+    timeout: int = 15,
+    ollama_endpoint: str = "http://localhost:11434",
+) -> tuple[dict, str]:
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
@@ -65,15 +112,26 @@ def call_nim_api(
             parsed = json.loads(content)
             if not validate_citations(parsed.get("summary", "")):
                 raise ValueError("LLM summary missing required source citations")
-            return parsed
+            return parsed, model
+        except requests.Timeout:
+            logger.warning("NIM API timed out after %ds, falling back to Ollama", timeout)
+            return call_ollama_fallback(prompt, ollama_endpoint)
         except requests.HTTPError as error:
             status = error.response.status_code if error.response is not None else None
             last_error = error
-            if status == 429 and attempt < retries:
-                time.sleep(2**attempt)
-                continue
+            if status == 429:
+                if attempt < retries:
+                    time.sleep(2**attempt)
+                    continue
+                logger.warning(
+                    "NIM API exhausted (429) after %d retries, falling back to Ollama", retries
+                )
+                return call_ollama_fallback(prompt, ollama_endpoint)
+            if status is not None and status >= 500:
+                logger.warning("NIM API server error (%d), falling back to Ollama", status)
+                return call_ollama_fallback(prompt, ollama_endpoint)
             raise
-        except Exception as error:  # parse/validation
+        except Exception as error:  # parse/validation errors
             last_error = error
             raise
     if last_error is not None:
@@ -148,6 +206,7 @@ def verify_hotspots_with_llm(
     api_key: str,
     model: str,
     threshold: float = 40,
+    ollama_endpoint: str = "http://localhost:11434",
 ) -> dict[str, int]:
     repo = LLMRepository(conn)
     hotspot_ids = repo.candidate_hotspots(threshold)
@@ -156,8 +215,11 @@ def verify_hotspots_with_llm(
         prompt = build_prompt(
             {"hotspot_id": hotspot_id, "articles": repo.fetch_hotspot_articles(hotspot_id)}
         )
-        result = call_nim_api(prompt, endpoint=endpoint, api_key=api_key, model=model)
-        repo.save_summary(hotspot_id, result, model=model)
+        result, model_used = call_nim_api(
+            prompt, endpoint=endpoint, api_key=api_key, model=model,
+            ollama_endpoint=ollama_endpoint,
+        )
+        repo.save_summary(hotspot_id, result, model=model_used)
         processed += 1
     return {"candidates": len(hotspot_ids), "processed": processed}
 
@@ -179,12 +241,14 @@ def main() -> int:
     endpoint = os.getenv("NVIDIA_NIM_ENDPOINT", "")
     api_key = os.getenv("NVIDIA_NIM_API_KEY", "")
     model = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.1-70b-instruct")
+    ollama_endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
     if not endpoint or not api_key:
         raise RuntimeError("NVIDIA_NIM_ENDPOINT and NVIDIA_NIM_API_KEY are required")
     conn, pool = get_pooled_connection()
     try:
         result = verify_hotspots_with_llm(
-            conn, endpoint=endpoint, api_key=api_key, model=model, threshold=args.threshold
+            conn, endpoint=endpoint, api_key=api_key, model=model,
+            threshold=args.threshold, ollama_endpoint=ollama_endpoint,
         )
     finally:
         pool.return_connection(conn)

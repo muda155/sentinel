@@ -1,6 +1,30 @@
+# Python
 .pytest_cache/
 __pycache__/
 *.pyc
+
+# Node
+node_modules/
+
+# Environment
+.env
+sentinel.env.local
+*.log
+
+# OS
+.DS_Store
+
+# Output files
+*.csv
+!test_fallback.csv
+!test_latest.csv
+*.docx
+~$*.docx
+
+# Claude internal
+.claude/
+
+# Git worktrees (legacy)
 .worktrees
 .worktrees/
 worktrees

@@ -18,9 +18,10 @@ def _extract_domain(url: str | None) -> str | None:
     return domain or None
 
 
-def compute_source_density(domains: list[str]) -> float:
-    unique_domains = len({d for d in domains if d})
-    return float(math.tanh(unique_domains / 10))
+def compute_source_density(trust_weights: list[float]) -> float:
+    if not trust_weights:
+        return 0.0
+    return float(math.tanh(sum(trust_weights) / 10))
 
 
 def geopolitical_diversity(country_codes: list[str]) -> float:
@@ -43,8 +44,9 @@ def compute_conf_score(source_density: float, diversity: float) -> float:
 
 def score_hotspot_from_events(events_df: pd.DataFrame) -> dict[str, float]:
     domains = [_extract_domain(v) for v in events_df.get("url", pd.Series(dtype=object)).tolist()]
+    trust_weights = [float(w) for w in events_df.get("trust_score", pd.Series(dtype=object)).tolist() if pd.notna(w)]
     countries = [v for v in events_df.get("country_code", pd.Series(dtype=object)).tolist()]
-    source_density = compute_source_density([d for d in domains if d])
+    source_density = compute_source_density(trust_weights)
     diversity = geopolitical_diversity(countries)
     return {
         "source_density": source_density,
@@ -61,15 +63,16 @@ class ScoringRepository:
         with self._conn.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT e.url, e.country_code
+                SELECT e.url, e.country_code, COALESCE(s.trust_score, 0.4) as trust_score
                 FROM event_hotspot eh
                 JOIN events e ON e.event_id = eh.event_id
+                LEFT JOIN sources s ON e.source_id = s.source_id
                 WHERE eh.hotspot_id = %s
                 """,
                 (hotspot_id,),
             )
             rows = cursor.fetchall()
-        return pd.DataFrame(rows, columns=["url", "country_code"])
+        return pd.DataFrame(rows, columns=["url", "country_code", "trust_score"])
 
     def score_hotspot(self, hotspot_id: int) -> dict[str, float]:
         events_df = self._fetch_hotspot_events(hotspot_id)

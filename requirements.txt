@@ -3,6 +3,8 @@ pandas
 psycopg2-binary
 psycopg2-pool
 pytest
+apscheduler
+redis
 requests
 scikit-learn
 streamlit
