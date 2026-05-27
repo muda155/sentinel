@@ -35,23 +35,7 @@ def grid_cell_alert_color(alert_level: str | None) -> list[int]:
     return [234, 179, 8, 30]         # yellow, very low opacity
 
 
-def grid_cell_alert_level(convergence_score: float, event_type_count: int) -> str:
-    """Derive alert level from convergence score and event type count.
-
-    Thresholds per spec FR-WM-CONVERGENCE:
-    - 4 types, score 80-100 → Critical
-    - 3 types, score 70-100 → Critical
-    - 2-3 types, score 50-80  → High
-    - 2 types, score 25-55    → Medium
-    """
-    cs = float(convergence_score or 0)
-    etc = int(event_type_count or 0)
-
-    if (cs >= 80 and etc >= 4) or (cs >= 70 and etc >= 3):
-        return "Critical"
-    if cs >= 50:
-        return "High"
-    return "Medium"
+from pipeline.clustering import classify_alert_level as grid_cell_alert_level
 
 
 def fetch_dashboard_hotspots(conn, limit: int = 100) -> list[dict]:
@@ -71,9 +55,8 @@ def fetch_dashboard_hotspots(conn, limit: int = 100) -> list[dict]:
            h.end_window,
            COALESCE(ls.summary_text, '') AS summary_text,
            COALESCE(ls.conflict_detected, false) AS conflict_detected,
-           COALESCE(g.convergence_score, h.convergence_score, 0)
-               AS convergence_score,
-           COALESCE(h.alert_level, 'Medium') AS alert_level
+           COALESCE(g.convergence_score, 0) AS convergence_score,
+           COALESCE(g.alert_level, 'Medium') AS alert_level
     FROM hotspots h
     LEFT JOIN llm_summaries ls ON ls.hotspot_id = h.hotspot_id
     LEFT JOIN grid_cells g ON h.cell_id = g.cell_id

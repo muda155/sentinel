@@ -74,8 +74,8 @@ def test_grid_cell_alert_level():
     assert grid_cell_alert_level(72, 3) == "Critical"
     # 2 types, score 55 → High
     assert grid_cell_alert_level(55, 2) == "High"
-    # 2 types, score 20 → Medium
-    assert grid_cell_alert_level(20, 2) == "Medium"
+    # 2 types, score 20 → None (below Medium threshold at 25)
+    assert grid_cell_alert_level(20, 2) is None
 
 
 def test_fetch_dashboard_hotspots_returns_expected_columns(fake_conn):
