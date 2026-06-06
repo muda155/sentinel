@@ -235,3 +235,13 @@ def test_llm_summary_model_rejects_uncited_summary() -> None:
             summary="Forces advanced 5km. Artillery deployed [2].",
             sources_cited=["2"],
         )
+
+
+def test_llm_summary_coerces_numeric_sources_cited() -> None:
+    model = llm_verifier.LLMSummary(
+        conflict_detected=True,
+        conflict_detail="border activity",
+        summary="Forces advanced 5km [1]. Artillery deployed [2].",
+        sources_cited=[1, 2],
+    )
+    assert model.sources_cited == ["1", "2"]

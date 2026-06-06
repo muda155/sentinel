@@ -62,6 +62,14 @@ class LLMSummary(BaseModel):
     summary: str
     sources_cited: list[str] = []
 
+    @field_validator("sources_cited", mode="before")
+    @classmethod
+    def _coerce_sources(cls, value: object) -> object:
+        # The LLM may emit numeric citation ids; the spec contract is list[str].
+        if isinstance(value, list):
+            return [str(item) for item in value]
+        return value
+
     @field_validator("summary")
     @classmethod
     def _summary_must_cite(cls, value: str) -> str:
