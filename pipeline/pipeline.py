@@ -40,16 +40,31 @@ def run_pipeline() -> None:
         })
         return  # SchemaError or other critical failure -> skip entire cycle
 
-    # Step 2: ACLED Ingestion
+    # Step 2: ACLED Ingestion (FR-1b) — failure must not abort the cycle
     try:
         step_start = time.monotonic()
-        # ACLED ingestor will be added in Phase E; skip gracefully for now
-        logger.info("Step 2: ACLED ingestion skipped (not yet implemented)", extra={
-            "step": "acled_ingestion", "duration_s": 0,
-        })
+        if not os.getenv("ACLED_API_KEY"):
+            logger.info("Step 2: ACLED ingestion skipped (no ACLED_API_KEY)", extra={
+                "step": "acled_ingestion", "duration_s": 0,
+            })
+        else:
+            from pipeline.ingestion import ACLEDIngestor
+
+            acled_days = int(os.getenv("SENTINEL_ACLED_FETCH_DAYS", "7"))
+            acled = ACLEDIngestor()
+            acled_df = acled.fetch_events(days=acled_days)
+            conn, pool = get_pooled_connection()
+            try:
+                acled_inserted = acled.insert_to_db(acled_df, conn)
+            finally:
+                pool.return_connection(conn)
+            logger.info("Step 2: ACLED ingestion complete", extra={
+                "step": "acled_ingestion", "duration_s": round(time.monotonic() - step_start, 2),
+                "events": len(acled_df), "inserted": acled_inserted,
+            })
     except Exception as e:
         logger.warning("Step 2 failed: ACLED ingestion (continuing with GDELT-only)", extra={
-            "step": "acled_ingestion", "error": str(e),
+            "step": "acled_ingestion", "error": str(e), "error_type": type(e).__name__,
         })
 
     # Step 3: Grid-cell convergence

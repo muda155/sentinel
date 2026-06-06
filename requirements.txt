@@ -2,10 +2,12 @@ numpy
 pandas
 psycopg2-binary
 psycopg2-pool
+pydantic
 pytest
 apscheduler
 redis
 requests
 scikit-learn
+scipy
 streamlit
 pydeck
