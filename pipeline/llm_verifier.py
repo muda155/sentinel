@@ -141,8 +141,8 @@ def call_nim_api(
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
             parsed = json.loads(content)
-            validate_citations(parsed.get("summary", ""))
-            return parsed, model
+            summary = LLMSummary(**parsed)  # validates citations + types, fills defaults
+            return summary.model_dump(), model
         except requests.Timeout:
             logger.warning("NIM API timed out after %ds, falling back to Ollama", timeout)
             return call_ollama_fallback(prompt, ollama_endpoint)

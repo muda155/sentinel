@@ -270,3 +270,33 @@ def test_call_ollama_fallback_returns_validated_dict(monkeypatch: pytest.MonkeyP
     assert result["conflict_detected"] is True
     assert result["conflict_detail"] == ""          # default filled by model
     assert result["sources_cited"] == ["1"]          # coerced to str
+
+
+def test_call_nim_api_returns_validated_dict(monkeypatch: pytest.MonkeyPatch) -> None:
+    ok = mock.Mock()
+    ok.raise_for_status.return_value = None
+    # No conflict_detail, numeric sources_cited -> model normalizes both.
+    ok.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": (
+                        '{"conflict_detected": false, '
+                        '"summary": "Calm conditions persisted [1].", '
+                        '"sources_cited": [1]}'
+                    )
+                }
+            }
+        ]
+    }
+    monkeypatch.setattr("pipeline.llm_verifier.requests.post", mock.Mock(return_value=ok))
+
+    result, model_used = llm_verifier.call_nim_api(
+        prompt="test",
+        endpoint="https://example.com/v1/chat/completions",
+        api_key="secret",
+        model="meta/llama-3.1-70b-instruct",
+    )
+    assert model_used == "meta/llama-3.1-70b-instruct"
+    assert result["conflict_detail"] == ""       # default filled by model
+    assert result["sources_cited"] == ["1"]       # coerced to str
