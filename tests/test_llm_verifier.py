@@ -21,11 +21,17 @@ def test_build_prompt_contains_sources_and_citation_directive() -> None:
     assert "https://b.com/2" in prompt
 
 
-def test_validate_summary_requires_citation_per_sentence() -> None:
+def test_validate_citations_passes_when_all_cited() -> None:
     valid = "Forces advanced 5km [1]. Fire was reported near the border [2]."
+    # Returns None and does not raise when every sentence is cited.
+    assert llm_verifier.validate_citations(valid) is None
+
+
+def test_validate_citations_raises_listing_uncited_sentence() -> None:
     invalid = "Forces advanced 5km. Fire was reported near the border [2]."
-    assert llm_verifier.validate_citations(valid) is True
-    assert llm_verifier.validate_citations(invalid) is False
+    with pytest.raises(ValueError) as exc:
+        llm_verifier.validate_citations(invalid)
+    assert "Forces advanced 5km." in str(exc.value)
 
 
 def test_call_nim_api_retries_on_429_then_returns_json(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -193,16 +199,39 @@ def test_verify_hotspots_with_llm_skips_below_threshold(monkeypatch: pytest.Monk
 
 
 def test_validate_citations_all_cited() -> None:
-    assert llm_verifier.validate_citations("Forces advanced 5km [1]. Artillery deployed [2].") is True
+    assert llm_verifier.validate_citations("Forces advanced 5km [1]. Artillery deployed [2].") is None
 
 
 def test_validate_citations_missing_citation() -> None:
-    assert llm_verifier.validate_citations("Forces advanced 5km. Artillery deployed [2].") is False
+    with pytest.raises(ValueError):
+        llm_verifier.validate_citations("Forces advanced 5km. Artillery deployed [2].")
 
 
 def test_validate_citations_non_numeric_citation() -> None:
-    assert llm_verifier.validate_citations("Forces advanced [src1]. Artillery deployed [2].") is False
+    with pytest.raises(ValueError):
+        llm_verifier.validate_citations("Forces advanced [src1]. Artillery deployed [2].")
 
 
 def test_validate_citations_empty() -> None:
-    assert llm_verifier.validate_citations("") is False
+    with pytest.raises(ValueError):
+        llm_verifier.validate_citations("")
+
+
+def test_llm_summary_model_accepts_valid_summary() -> None:
+    model = llm_verifier.LLMSummary(
+        conflict_detected=False,
+        conflict_detail="",
+        summary="Forces advanced 5km [1]. Artillery deployed [2].",
+        sources_cited=["1", "2"],
+    )
+    assert model.summary.endswith("[2].")
+
+
+def test_llm_summary_model_rejects_uncited_summary() -> None:
+    with pytest.raises(ValueError):
+        llm_verifier.LLMSummary(
+            conflict_detected=False,
+            conflict_detail="",
+            summary="Forces advanced 5km. Artillery deployed [2].",
+            sources_cited=["2"],
+        )

@@ -9,6 +9,7 @@ import time
 from urllib.parse import urlparse
 
 import requests
+from pydantic import BaseModel, field_validator
 
 from pipeline.db import get_pooled_connection
 
@@ -37,12 +38,35 @@ def build_prompt(hotspot_data: dict) -> str:
     return "\n".join(lines)
 
 
-def validate_citations(summary: str) -> bool:
+def validate_citations(summary: str) -> None:
+    """Validate that every sentence ends with a numeric citation (FR-11).
+
+    Splits the summary into sentences and requires each to match
+    ``r'.+\[\d+\][.!?]\s*$'``. Raises ``ValueError`` listing every
+    uncited sentence. Returns ``None`` when all sentences are cited.
+    """
     sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', (summary or "").strip()) if s.strip()]
     if not sentences:
-        return False
+        raise ValueError("Summary is empty: no cited sentences found")
     pattern = re.compile(r'.+\[\d+\][.!?]\s*$')
-    return all(pattern.search(s) for s in sentences)
+    uncited = [s for s in sentences if not pattern.search(s)]
+    if uncited:
+        raise ValueError("Uncited sentences: " + " | ".join(uncited))
+
+
+class LLMSummary(BaseModel):
+    """Validated LLM SITREP response (FR-11). Runs citation validation."""
+
+    conflict_detected: bool
+    conflict_detail: str = ""
+    summary: str
+    sources_cited: list[str] = []
+
+    @field_validator("summary")
+    @classmethod
+    def _summary_must_cite(cls, value: str) -> str:
+        validate_citations(value)  # raises ValueError on uncited sentences
+        return value
 
 
 def call_ollama_fallback(
@@ -80,8 +104,7 @@ def call_ollama_fallback(
                 parsed = json.loads(match.group())
             else:
                 raise ValueError(f"Ollama response is not valid JSON: {text[:200]}")
-        if not validate_citations(parsed.get("summary", "")):
-            raise ValueError("Ollama summary missing required source citations")
+        validate_citations(parsed.get("summary", ""))
         return parsed, "llama-3-8b-ollama"
     except requests.RequestException as e:
         raise RuntimeError(f"Ollama fallback failed: {e}") from e
@@ -110,8 +133,7 @@ def call_nim_api(
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
             parsed = json.loads(content)
-            if not validate_citations(parsed.get("summary", "")):
-                raise ValueError("LLM summary missing required source citations")
+            validate_citations(parsed.get("summary", ""))
             return parsed, model
         except requests.Timeout:
             logger.warning("NIM API timed out after %ds, falling back to Ollama", timeout)
