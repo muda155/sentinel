@@ -112,8 +112,8 @@ def call_ollama_fallback(
                 parsed = json.loads(match.group())
             else:
                 raise ValueError(f"Ollama response is not valid JSON: {text[:200]}")
-        validate_citations(parsed.get("summary", ""))
-        return parsed, "llama-3-8b-ollama"
+        summary = LLMSummary(**parsed)  # validates citations + types, fills defaults
+        return summary.model_dump(), "llama-3-8b-ollama"
     except requests.RequestException as e:
         raise RuntimeError(f"Ollama fallback failed: {e}") from e
 

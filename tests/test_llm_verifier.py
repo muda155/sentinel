@@ -245,3 +245,28 @@ def test_llm_summary_coerces_numeric_sources_cited() -> None:
         sources_cited=[1, 2],
     )
     assert model.sources_cited == ["1", "2"]
+
+
+def test_call_ollama_fallback_returns_validated_dict(monkeypatch: pytest.MonkeyPatch) -> None:
+    ollama_response = mock.Mock()
+    ollama_response.raise_for_status.return_value = None
+    # Note: no conflict_detail key, numeric sources_cited -> model must normalize both.
+    ollama_response.json.return_value = {
+        "response": (
+            '{"conflict_detected": true, '
+            '"summary": "Shelling resumed at dawn [1].", '
+            '"sources_cited": [1]}'
+        )
+    }
+    monkeypatch.setattr(
+        "pipeline.llm_verifier.requests.post",
+        mock.Mock(return_value=ollama_response),
+    )
+
+    result, model_used = llm_verifier.call_ollama_fallback(
+        prompt="test", endpoint="http://localhost:11434"
+    )
+    assert model_used == "llama-3-8b-ollama"
+    assert result["conflict_detected"] is True
+    assert result["conflict_detail"] == ""          # default filled by model
+    assert result["sources_cited"] == ["1"]          # coerced to str
