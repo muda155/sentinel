@@ -13,8 +13,8 @@
 
 # Sentinel – Technical Specification Document
 
-**Document Version:** 1.1.1  
-**Date:** 2026‑05‑27  
+**Document Version:** 1.2.1
+**Date:** 2026‑06‑07  
 **Author:** FYP Candidate (role: Senior Software Architect & Technical Project Manager)  
 **Status:** Approved for Development  
 
@@ -277,7 +277,7 @@ Alert level thresholds:
 ☑ Grid cells are stored in and queryable from `grid_cells` table with PostGIS polygon geometry.
 
 **FR‑5‑DBSCAN_MICRO_CLUSTERING**  
-Within each active grid cell (`convergence_score ≥ 1`), the system shall group events into sub-clusters using DBSCAN with a Haversine distance metric and a temporal penalty function.  
+Within each active grid cell (`convergence_score ≥ 1` and `unique_event_types ≥ 2`), the system shall group events into sub-clusters using DBSCAN with a Haversine distance metric and a temporal penalty function.  
 `eps` (spatial) = **50 km** (configurable via `SENTINEL_DBSCAN_EPS_KM`), `min_samples` = **3** (configurable via `SENTINEL_DBSCAN_MIN_SAMPLES`).  
 Temporal penalty: two events more than **1 hour apart** (configurable via `SENTINEL_MAX_TIME_DIFF_H`) are assigned infinite distance, preventing cross‑window clustering.  
 Centroid geometry shall be computed using `ST_Centroid(ST_Collect(point_geom))` via PostGIS — not Python coordinate mean — to ensure correctness near the antimeridian (±180° longitude).  
@@ -564,6 +564,16 @@ ALTER TABLE sources ADD COLUMN trust_score FLOAT GENERATED ALWAYS AS (
 ALTER TABLE event_hotspot ADD COLUMN is_noise BOOLEAN DEFAULT false;
 ```
 
+#### 6.2.1 Retention & Partitioning Model (M1)
+
+*Design note (informed by World Monitor's storage architecture): World Monitor persists almost nothing durably — it runs on Redis caches with short rolling windows (GDELT ~7 days, ACLED ~30 days) and recomputes grid-cell binning in memory every cycle. Sentinel deliberately diverges by keeping PostgreSQL + PostGIS as a **durable system of record** (required for the R7 golden-dataset regression test and `conf_score` vs `convergence_score` evaluation). To recover World Monitor's scaling discipline without losing durability, Sentinel adopts a **bounded rolling-window retention policy** and uses partitioning as the mechanism that makes retention cheap.*
+
+- **Retention policy:** The `events` table is a rolling window of `SENTINEL_RETENTION_DAYS` (default 90). Data older than the window is removed each cycle.
+- **Partition `events` by month on `event_date`** so that retention is a metadata-only `DROP TABLE events_YYYY_MM` of the oldest partition — instant and bloat-free — rather than a large `DELETE` that bloats the heap and forces `VACUUM`. This is the sole, deliberate justification for partitioning; it is not adopted for raw query speed.
+- **`hotspots` remains non-partitioned.** It is low-volume and derived; partitioning it would force `start_window` into its primary key and break `event_hotspot`'s foreign key to it for no retention benefit. Its foreign keys are retained.
+- **FK tradeoff:** Once `events` is range-partitioned, PostgreSQL cannot keep `event_id` unique on its own (a partitioned table's primary key must include the partition key, `event_date`). The `event_hotspot → events(event_id)` foreign key is therefore dropped and replaced by a B-tree index on `event_hotspot(event_id)` plus application-level integrity. The `ON DELETE CASCADE` it previously provided is moot under retention-by-partition-drop (a dropped partition removes its rows directly; orphaned `event_hotspot` rows are pruned by the same retention job).
+- **The stale `db/init/004_add_partitioning.sql`** built parallel `events_partitioned` / `hotspots_partitioned` tables against the pre-`006` schema (no `source_system`, `external_event_id`, `grid_cell_id`, `event_type`, `cell_id`, `unique_event_types`) and is unused by the pipeline. M1 retires it in favour of partitioning the live `events` table directly.
+
 ### 6.3 API Specifications (FastAPI)
 
 | Endpoint | Method | Description | Request | Response | Auth Required | Pagination | Rate Limit |
@@ -577,7 +587,7 @@ ALTER TABLE event_hotspot ADD COLUMN is_noise BOOLEAN DEFAULT false;
 
 1. **Ingestion Worker:** Fetch GDELT (+ ACLED on daily tick) → filter → insert into DB with `grid_cell_id` assignment → publish event IDs to Redis Stream `ingested_events`.
 2. **Grid-Cell Worker:** Consume stream, upsert `grid_cells` with event-type counts and total events, compute `convergence_score` (FR-WM-CONVERGENCE). Publish `convergence_zone_detected` for cells with score ≥ 1.
-3. **Clustering Worker:** Listen to `convergence_zone_detected`, run DBSCAN per cell, write `hotspots` with `cell_id` FK and `alert_level`, publish `hotspot_created`.
+3. **Clustering Worker:** Listen to `convergence_zone_detected`, run DBSCAN per cell, write `hotspots` with `cell_id` FK, publish `hotspot_created`.
 4. **Consensus Worker:** Listen to `hotspot_created`, compute `conf_score` via source-density + geopolitical-diversity, update DB; if `conf_score > SENTINEL_LLM_THRESHOLD`, publish `llm_needed`.
 5. **LLM Worker:** Consume `llm_needed`, call NIM API (with Ollama fallback), store validated summary, publish `summary_ready`.
 6. **API Server:** Listen to all streams, push updates to SSE clients.
@@ -605,7 +615,9 @@ ALTER TABLE event_hotspot ADD COLUMN is_noise BOOLEAN DEFAULT false;
 
 ## 8. Implementation Plan
 
-### Sprint-based Foundation (4 Sprints)
+### Sprint-based Foundation (4 Sprints) — ✅ Delivered
+
+The foundation epic is complete: all functional requirements FR-0 through FR-13 are implemented and covered by the automated test suite. The Streamlit dashboard, monolithic `APScheduler` pipeline, GDELT + ACLED ingestion, grid-cell convergence, per-cell DBSCAN, consensus scoring, and NIM/Ollama LLM verification are all operational.
 
 | Sprint | Goals | Deliverables |
 |--------|-------|--------------|
@@ -614,14 +626,49 @@ ALTER TABLE event_hotspot ADD COLUMN is_noise BOOLEAN DEFAULT false;
 | **Sprint 3** | Consensus scoring + NVIDIA NIM integration + Ollama fallback | `scoring.py` with trust-tier-weighted density, `llm_verifier.py` with citation regex validator + Ollama fallback, `llm_summaries` table with `sources_cited JSONB` |
 | **Sprint 4** | Streamlit dashboard + integration | `app.py` displaying both scores per hotspot, end‑to‑end integration, acceptance tests |
 
-### Productionisation (Milestone-based)
+### Productionisation Epic (Milestone-based)
 
-| Milestone | Weeks | Key Activities |
-|-----------|-------|----------------|
-| M1: Production Database | 5‑6 | Managed PostgreSQL, table partitioning, PgBouncer configuration, country polygon table for reverse-geocoding |
-| M2: Microservices | 7‑9 | Split pipeline into Redis Stream workers, FastAPI REST + SSE, containerize all services, CI/CD pipeline |
-| M3: React Frontend | 10‑12 | Next.js + globe.gl + deck.gl + MapLibre GL, JWT auth, dual-score hotspot UI, live demo deployment |
-| M4: Evaluation & Thesis | 13‑16 | Performance benchmarking, comparative analysis of `conf_score` vs `convergence_score` as intelligence signals, documentation, defense |
+The next epic takes Sentinel from the validated monolithic foundation to a production-grade, horizontally-scalable, authenticated deployment. It is organised as four milestones (M1–M4), each decomposed into delivery sprints with explicit exit criteria. The monolithic `pipeline.py` remains the canonical code path during M1; M2 refactors it into Redis Stream workers reusing the same functions (per Section 6.4).
+
+**Milestone summary**
+
+| Milestone | Weeks | Key Activities | Status |
+|-----------|-------|----------------|--------|
+| M1: Production Database | 5‑6 | Managed PostgreSQL, table partitioning, PgBouncer configuration, country polygon table for reverse-geocoding | ⬜ Planned |
+| M2: Microservices | 7‑9 | Split pipeline into Redis Stream workers, FastAPI REST + SSE, containerize all services, CI/CD pipeline | ⬜ Planned |
+| M3: React Frontend | 10‑12 | Next.js + globe.gl + deck.gl + MapLibre GL, JWT auth, dual-score hotspot UI, live demo deployment | ⬜ Planned |
+| M4: Evaluation & Thesis | 13‑16 | Performance benchmarking, comparative analysis of `conf_score` vs `convergence_score` as intelligence signals, documentation, defense | ⬜ Planned |
+
+#### M1 — Production Database (Weeks 5–6)
+
+| Sprint | Goals | Deliverables | Exit Criteria |
+|--------|-------|--------------|---------------|
+| **Sprint 5** | Migration runner + retention-driven partitioning | Idempotent migration runner with a `schema_migrations` ledger, replacing first-init-only `db/init/*.sql`; **monthly range partitioning of the live `events` table by `event_date`** (retire the stale `004` `*_partitioned` tables, which target the pre-`006` schema); ahead-of-time partition creation + retention-by-`DROP` of partitions older than `SENTINEL_RETENTION_DAYS`, wired into the scheduler; PgBouncer transaction-pooling verified (`max_client_conn`, pool sizes) | Migration runner applies cleanly to an existing volume and is a no-op on re-run; next 3 monthly partitions exist; partitions older than the retention window are dropped (not `DELETE`d); NFR-1 batch under 5 min; PgBouncer survives 100 concurrent connections |
+| **Sprint 6** | Reverse-geocoding + data integrity | `country_polygons` table (Natural Earth) with GiST index; `ST_Contains` reverse-geocode to populate `sources.country_code`/`country_name`; backfill job; verify NFR-7 composite uniqueness + index usage under load | Every event resolves a country code via PostGIS join; zero duplicate `(source_system, external_event_id)` rows under concurrent ingest; `EXPLAIN` shows index usage on hotspot/JOIN queries |
+
+#### M2 — Microservices (Weeks 7–9)
+
+| Sprint | Goals | Deliverables | Exit Criteria |
+|--------|-------|--------------|---------------|
+| **Sprint 7** | Redis Streams worker decomposition | Refactor `pipeline.py` steps into the six workers of Section 6.4 (Ingestion, Grid-Cell, Clustering, Consensus, LLM, API), each consuming/publishing Redis Streams with consumer groups + acknowledgements; idempotent replay; per-worker Dockerfile | Each worker runs standalone; a single ingested batch flows end-to-end through streams producing identical hotspots to the monolith; NFR-3 2-hour catch-up replay verified |
+| **Sprint 8** | FastAPI REST + SSE gateway | Implement `/events`, `/hotspots`, `/hotspots/{id}/summary` (Section 6.3) with cursor/limit pagination and rate limiting; SSE `/hotspots/stream` fed by the API worker; OpenAPI schema; GeoJSON serialization | All Section 6.3 endpoints return spec-conformant payloads; SSE pushes `hotspot_created`/`summary_ready` events; rate limits enforced (429 on excess) |
+| **Sprint 9** | Containerization + CI/CD | Single `docker-compose.yml` for all services (NFR-4 < 5 min deploy); GitHub Actions pipeline running lint + `pytest` + integration tests on a throwaway DB container; image build/push; structured JSON logging + metrics for cluster count, alert count, LLM latency, fallback rate (NFR-6) | `docker compose up` brings the full stack healthy; CI gates merges on green tests; metrics scrapeable; fallback-activation counter increments under simulated NIM 429 |
+
+#### M3 — React Frontend (Weeks 10–12)
+
+| Sprint | Goals | Deliverables | Exit Criteria |
+|--------|-------|--------------|---------------|
+| **Sprint 10** | Next.js dual-map scaffold | Next.js app with globe.gl + deck.gl + MapLibre GL; hotspot layer color-coded by `conf_score` with `alert_level` ring (FR-13 parity); grid-cell convergence heatmap toggle; consume REST endpoints | Map renders live hotspots from `/hotspots`; both `conf_score` and `convergence_score` shown distinctly in the detail panel; heatmap overlay toggles |
+| **Sprint 11** | JWT auth + live SSE | JWT auth (login, Bearer on all API calls, NFR-5); SSE client with exponential backoff (1s→30s, ±500ms jitter); SITREP detail view with citation rendering; role separation (analyst read-only vs admin) | Unauthenticated API/SSE access rejected; map updates in real time via SSE without manual refresh; admin can edit `sources.trust_tier`, analyst cannot |
+| **Sprint 12** | Demo deployment + hardening | Live demo deployment (managed host); secrets via secrets manager (no committed credentials, NFR-5); OWASP basic checks + input sanitization / SQL-injection tests; SSE load test (100–1000 clients) | Public demo reachable behind auth; security tests pass (zero injection vectors, auth-bypass failures); SSE load test < 1% dropped, p99 < 500 ms |
+
+#### M4 — Evaluation & Thesis (Weeks 13–16)
+
+| Sprint | Goals | Deliverables | Exit Criteria |
+|--------|-------|--------------|---------------|
+| **Sprint 13** | Performance benchmarking | `cProfile` + wall-clock benchmarks at 5k and 10k events/batch; per-cell DBSCAN scaling validation; BallTree/HDBSCAN approximate-NN comparison (NFR-2) | NFR-1 (< 5 min) and NFR-2 scaling characteristics documented with charts at both batch sizes |
+| **Sprint 14** | Comparative signal analysis | Regression run on fixed historical dataset (2024-02-24 Ukraine escalation, R7 golden set); quantitative comparison of `conf_score` vs `convergence_score` as intelligence signals; LLM citation-fidelity audit | Reproducible cluster counts and scores; written analysis distinguishing the two scores' predictive value; citation-validation pass rate reported |
+| **Sprint 15–16** | Documentation + thesis defense | Final thesis write-up, architecture/operations documentation, demo recording, defense slides | Thesis submitted; reproducible end-to-end demo; defense delivered |
 
 ---
 
@@ -688,6 +735,7 @@ SENTINEL_ACLED_POLL_HOURS=24
 SENTINEL_LLM_MAX_TOKENS=500
 SENTINEL_LLM_TEMPERATURE=0.0
 SENTINEL_POLL_INTERVAL_S=900
+SENTINEL_RETENTION_DAYS=90
 
 # Infrastructure
 REDIS_URL=redis://localhost:6379
@@ -711,6 +759,7 @@ All parameters are read from environment variables (prefixed `SENTINEL_`) with d
 | `SENTINEL_LLM_MAX_TOKENS` | 500 | FR-12 | Max tokens in NIM response |
 | `SENTINEL_LLM_TEMPERATURE` | 0.0 | FR-12 | LLM sampling temperature |
 | `SENTINEL_POLL_INTERVAL_S` | 900 | FR-0 | Pipeline schedule interval (seconds) |
+| `SENTINEL_RETENTION_DAYS` | 90 | §6.2.1 (M1) | Rolling-window retention for `events`; partitions older than this are dropped |
 
 ### C. Repository Structure (Monorepo)
 
@@ -759,6 +808,9 @@ ln -s ../specs.md docs/spec.md
 
 | Version | Date | Change | Reason |
 |---|---|---|---|
+| 1.2.1 | 2026-06-07 | **M1 retention & partitioning model (World Monitor-informed).** Added Section 6.2.1 defining a bounded rolling-window retention policy (`SENTINEL_RETENTION_DAYS`, default 90) with **partition-`DROP`-based retention** as the deliberate justification for range-partitioning the live `events` table by month; documented that `hotspots` stays non-partitioned and that the `event_hotspot → events` FK is dropped (replaced by index + app-level integrity) once `events` is partitioned; flagged the stale `db/init/004` `*_partitioned` tables for retirement. Rewrote the M1 Sprint 5 plan row accordingly (migration runner + retention-driven partitioning) and added `SENTINEL_RETENTION_DAYS` to Appendix B/B1. | Review of World Monitor's live storage docs showed it scales via short Redis-cached rolling windows rather than a partitioned RDBMS; Sentinel keeps a durable system of record but borrows the retention discipline and gives partitioning an honest, retention-driven purpose instead of breaking foreign keys for an unneeded query-speed gain. |
+| 1.2.0 | 2026-06-07 | **Productionisation epic expansion.** Marked the 4-sprint foundation as ✅ Delivered (FR-0 through FR-13 implemented and test-covered, including live ACLED ingestion). Added a `Status` column to the foundation and milestone tables. Expanded Section 8 Productionisation into a full epic: each milestone M1–M4 is now decomposed into delivery sprints (Sprints 5–16) with goals, deliverables, and explicit exit criteria mapped to the relevant FRs/NFRs (managed DB + partitioning, Redis Stream workers, FastAPI REST+SSE, CI/CD, Next.js dual-map frontend, JWT auth, benchmarking, and thesis evaluation). | Record foundation completion and provide an actionable sprint-level roadmap from the validated monolith to production deployment. |
+| 1.1.2 | 2026-06-04 | **Consistency pass — fixes from internal review.** Strengthened FR-5 DBSCAN activation guard to require `unique_event_types ≥ 2` in addition to `convergence_score ≥ 1`, aligning with FR-WM-CONVERGENCE acceptance criteria (single-event-type cells cannot generate Convergence Zones). Removed `alert_level` from Clustering Worker step in Section 6.4 workflow (stored in `grid_cells` per FR-6, not duplicated in `hotspots`). Added missing `scipy` dependency to `requirements.txt` for `scoring.py` entropy calculation. | Resolve spec/code contradictions: DBSCAN guard mismatch, stale `alert_level` reference, and undeclared dependency. |
 | 1.1.1 | 2026-05-27 | **Spec consistency pass.** Fixed agent directive (3+ → 2+ event types); added `is_noise` to `EVENT_HOTSPOT` ER + DDL; removed `convergence_score` and `alert_level` duplication from `hotspots` (stored once in `grid_cells`, accessed via JOIN); added `alert_level` to `GRID_CELLS`; deduplicated `SENTINEL_LLM_THRESHOLD`/`SENTINEL_CONF_THRESHOLD` → `SENTINEL_LLM_THRESHOLD`; fixed ACLED Redis cache TTL (14 min → 24h); added ACLED Protests → `civil_unrest` event type; added `trust_score` GENERATED column DDL; added `grid_cell_id` assignment mechanism; restored Phase column to testing table; added convergence formula example note; FR-12 references `SENTINEL_LLM_MAX_TOKENS` instead of hardcoded 500. | Review feedback: resolve contradictions, remove data duplication, complete missing DDL/schema details. |
 | 1.1.0 | 2026-05-26 | **Production-grade merge.** Removed all PoC references throughout; adopted specs_claudemade's agent directive, Section 1.2 Relationship column, richer definitions (1.3), SENTINEL_ prefix convention (1.4), FR-0 exception handling + job coalescing, GDELTColumnSchema validation in FR-1, Redis cache in FR-1b, coordinate validation in FR-3, dual-window FR-4 (24h convergence + 2h DBSCAN), ST_Centroid specification in FR-5, alert_level + unique_event_types in FR-6, weighted domain scoring in FR-7, Ollama fallback in FR-12, stricter numeric citation regex in FR-11, `trust_tier` + generated `trust_score` in SOURCES (6.2), alert_level index and conf_score DESC index in DDL, R8 (ACLED availability) + R9 (World Monitor drift) in risk register. Restructured implementation plan from Phase 1/Phase 2 to continuous sprint + milestone model. Removed Phase column from testing strategy. | Align spec for production deployment. Incorporate all superior elements from specs_claudemade while preserving grid-first pipeline architecture, GRID_CELLS table, and composite unique constraint from specs.md. |
 | 1.0.9 | 2026-05-26 | **Major rework — World Monitor alignment:** replaced DBSCAN-only clustering with 1°×1° grid-cell convergence detection (FR-WM-CONVERGENCE) adapted from World Monitor; split `conf_score` into `convergence_score` and `confidence_score`; added ACLED as second data source; added explicit 4-tier source trust mapping; added differentiation table; added `grid_cells` table; updated DFD. | Fix conflation of convergence and confidence; align with World Monitor methodology. |

@@ -279,7 +279,7 @@ class GDELT2Ingestor:
                     grid_cell_id
                 )
                 VALUES %s
-                ON CONFLICT (source_system, external_event_id) DO NOTHING
+                ON CONFLICT (source_system, external_event_id, event_date) DO NOTHING
                 """,
                 augmented_records,
                 template=(
@@ -750,7 +750,7 @@ class ACLEDIngestor:
                     point_geom, source_id, grid_cell_id
                 )
                 VALUES %s
-                ON CONFLICT (source_system, external_event_id) DO NOTHING
+                ON CONFLICT (source_system, external_event_id, event_date) DO NOTHING
                 """,
                 records,
                 template=(
