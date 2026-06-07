@@ -20,6 +20,21 @@ def run_pipeline() -> None:
     cycle_start = datetime.now(timezone.utc)
     logger.info("Pipeline cycle starting", extra={"cycle": cycle_start.isoformat()})
 
+    # Step 0: Partition maintenance + retention (M1, spec Section 6.2.1)
+    try:
+        from pipeline.retention import apply_retention, ensure_partitions
+
+        conn, pool = get_pooled_connection()
+        try:
+            ensure_partitions(conn)
+            dropped = apply_retention(conn)
+            if dropped:
+                logger.info("Retention dropped partitions: %s", dropped)
+        finally:
+            pool.return_connection(conn)
+    except Exception as exc:  # never crash the cycle on maintenance
+        logger.warning("Partition maintenance failed: %s: %s", type(exc).__name__, exc)
+
     # Step 1: GDELT Ingestion
     try:
         step_start = time.monotonic()
