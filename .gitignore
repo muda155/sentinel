@@ -31,3 +31,6 @@ sentinel.env.local
 worktrees
 worktrees/
 military_events.csv
+
+# Local-only dev implementation plans (not shared)
+docs/superpowers/plans/
