@@ -82,6 +82,18 @@ def run_pipeline() -> None:
             "step": "acled_ingestion", "error": str(e), "error_type": type(e).__name__,
         })
 
+    # Reverse-geocode source countries (M1, Sprint 6) — feeds FR-8 diversity.
+    try:
+        from pipeline.geocode import backfill_source_countries
+
+        conn, pool = get_pooled_connection()
+        try:
+            backfill_source_countries(conn)
+        finally:
+            pool.return_connection(conn)
+    except Exception as exc:
+        logger.warning("Source reverse-geocoding failed: %s: %s", type(exc).__name__, exc)
+
     # Step 3: Grid-cell convergence
     try:
         step_start = time.monotonic()
