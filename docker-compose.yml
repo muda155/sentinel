@@ -1,4 +1,6 @@
 services:
+  # NOTE: ./db/init runs only on first-init of an empty volume. For existing
+  # volumes and all managed deploys, apply schema via: python -m pipeline.migrate apply
   postgres:
     image: postgis/postgis:15-3.4
     # postgis/postgis:15-3.4 is amd64-only; Apple Silicon must run via emulation
