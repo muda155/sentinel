@@ -83,10 +83,12 @@ def apply_retention(conn, today: date | None = None) -> list[str]:
         for name in to_drop:
             logger.info("Dropping expired partition %s", name)
             cur.execute(f'DROP TABLE IF EXISTS "{name}"')
-        # Prune event_hotspot rows whose events no longer exist (FK was removed).
-        cur.execute(
-            "DELETE FROM event_hotspot eh "
-            "WHERE NOT EXISTS (SELECT 1 FROM events e WHERE e.event_id = eh.event_id)"
-        )
+        # Prune event_hotspot rows orphaned by the partition drops (FK was removed).
+        # Only worth the anti-join scan when a partition was actually dropped.
+        if to_drop:
+            cur.execute(
+                "DELETE FROM event_hotspot eh "
+                "WHERE NOT EXISTS (SELECT 1 FROM events e WHERE e.event_id = eh.event_id)"
+            )
     conn.commit()
     return to_drop
