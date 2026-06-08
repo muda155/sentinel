@@ -15,6 +15,14 @@ def create_app() -> FastAPI:
     app.include_router(hotspots.router)
     app.include_router(events.router)
     app.include_router(stream.router)
+
+    from fastapi import Response
+    from api.metrics import render_prometheus
+
+    @app.get("/metrics")
+    def metrics():
+        return Response(render_prometheus(), media_type="text/plain")
+
     return app
 
 

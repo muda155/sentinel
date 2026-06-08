@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 
+from api.metrics import METRICS
 from pipeline.db import get_pooled_connection
 from pipeline.scoring import score_hotspot
 from pipeline.workers.base import Worker
@@ -25,6 +26,7 @@ class ConsensusWorker(Worker):
         finally:
             pool.return_connection(conn)
         if conf is not None and conf > threshold:
+            METRICS.inc("alerts_total")
             return [{
                 "hotspot_id": hotspot_id, "conf_score": float(conf),
                 "ts": datetime.now(timezone.utc).isoformat(),

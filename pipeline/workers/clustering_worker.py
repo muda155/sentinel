@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from api.metrics import METRICS
 from pipeline.clustering import cluster_single_cell
 from pipeline.db import get_pooled_connection
 from pipeline.workers.base import Worker
@@ -28,6 +29,7 @@ class ClusteringWorker(Worker):
                     "lat": row[0], "lon": row[1],
                     "ts": datetime.now(timezone.utc).isoformat(),
                 })
+            METRICS.inc("hotspots_created_total", len(out))
             return out
         finally:
             pool.return_connection(conn)
