@@ -1,7 +1,7 @@
 """Ingestion worker: GDELT (+ACLED daily) -> DB -> publish event IDs.
 
-Reuses the monolith's ingestion path verbatim (pipeline.ingestion), so output
-is identical to pipeline.py Step 1/2. Source-style worker: driven by tick()."""
+Reuses the monolith's ingestion path (pipeline.ingestion), so output is
+identical to pipeline.py Step 1/2. Source-style worker: driven by tick()."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timezone
 
 from pipeline.db import get_pooled_connection
-from pipeline.ingestion import GDELT2Ingestor
+from pipeline.ingestion import ACLEDIngestor, GDELT2Ingestor
 from pipeline.streams import StreamBus
 
 logger = logging.getLogger(__name__)
@@ -23,12 +23,28 @@ class IngestionWorker:
         self.bus = bus or StreamBus()
 
     def tick(self) -> int:
-        """Run one ingestion batch; publish inserted IDs. Returns rows inserted."""
-        ingestor = GDELT2Ingestor()
-        military_df = ingestor.run_once()
+        """Run one ingestion batch (GDELT + ACLED); publish inserted IDs. Returns total rows inserted."""
         conn, pool = get_pooled_connection()
         try:
+            inserted = 0
+            event_ids: list[int] = []
+            # Step 1: GDELT
+            ingestor = GDELT2Ingestor()
+            military_df = ingestor.run_once()
             event_ids = ingestor.insert_to_db_returning_ids(military_df, conn)
+            inserted += len(event_ids)
+
+            # Step 2: ACLED (non-fatal — per monolith pipeline.py Step 2)
+            if os.getenv("ACLED_API_KEY"):
+                try:
+                    acled_days = int(os.getenv("SENTINEL_ACLED_FETCH_DAYS", "7"))
+                    acled = ACLEDIngestor()
+                    acled_df = acled.fetch_events(days=acled_days)
+                    acled_inserted = acled.insert_to_db(acled_df, conn)
+                    inserted += acled_inserted
+                    logger.info("ACLED ingestion complete", extra={"acled_inserted": acled_inserted})
+                except Exception:
+                    logger.warning("ACLED ingestion failed (continuing with GDELT-only)", exc_info=True)
         finally:
             pool.return_connection(conn)
         if event_ids:
@@ -40,8 +56,8 @@ class IngestionWorker:
                     "ts": datetime.now(timezone.utc).isoformat(),
                 },
             )
-        logger.info("ingestion tick complete", extra={"inserted": len(event_ids)})
-        return len(event_ids)
+        logger.info("ingestion tick complete", extra={"inserted": inserted})
+        return inserted
 
 
 def main() -> int:  # pragma: no cover

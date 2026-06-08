@@ -21,6 +21,7 @@ class ClusteringWorker(Worker):
         conn, pool = get_pooled_connection()
         try:
             hotspot_ids = cluster_single_cell(conn, cell_id)
+            conn.commit()   # persist DML before read queries
             out = []
             for hid in hotspot_ids:
                 row = self._hotspot_centroid(conn, hid)
