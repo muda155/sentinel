@@ -50,9 +50,12 @@ class StreamBus:
         return mid.decode() if isinstance(mid, bytes) else mid
 
     def read(self, stream: str, group: str, consumer: str) -> list[tuple[str, dict]]:
-        resp = self._r.xreadgroup(
-            group, consumer, {stream: ">"}, count=self._batch, block=self._block_ms
-        )
+        try:
+            resp = self._r.xreadgroup(
+                group, consumer, {stream: ">"}, count=self._batch, block=self._block_ms
+            )
+        except redis.exceptions.TimeoutError:
+            return []
         return self._flatten(resp)
 
     def claim_stale(self, stream: str, group: str, consumer: str, *, min_idle_ms: int | None = None) -> list[tuple[str, dict]]:
