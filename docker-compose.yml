@@ -52,5 +52,55 @@ services:
       timeout: 3s
       retries: 5
 
+  api:
+    build: { context: ., dockerfile: docker/Dockerfile }
+    env_file: [sentinel.env]
+    environment: { PGHOST: pgbouncer, PGPORT: "5432", REDIS_URL: "redis://redis:6379" }
+    command: ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports: ["8000:8000"]
+    depends_on:
+      redis: { condition: service_healthy }
+      pgbouncer: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  ingestion-worker:
+    build: { context: ., dockerfile: docker/Dockerfile }
+    env_file: [sentinel.env]
+    environment: { PGHOST: pgbouncer, PGPORT: "5432", REDIS_URL: "redis://redis:6379" }
+    command: ["python", "-m", "pipeline.workers.ingestion_worker"]
+    depends_on: { redis: { condition: service_healthy }, pgbouncer: { condition: service_started } }
+
+  gridcell-worker:
+    build: { context: ., dockerfile: docker/Dockerfile }
+    env_file: [sentinel.env]
+    environment: { PGHOST: pgbouncer, PGPORT: "5432", REDIS_URL: "redis://redis:6379" }
+    command: ["python", "-m", "pipeline.workers.gridcell_worker"]
+    depends_on: { redis: { condition: service_healthy }, pgbouncer: { condition: service_started } }
+
+  clustering-worker:
+    build: { context: ., dockerfile: docker/Dockerfile }
+    env_file: [sentinel.env]
+    environment: { PGHOST: pgbouncer, PGPORT: "5432", REDIS_URL: "redis://redis:6379" }
+    command: ["python", "-m", "pipeline.workers.clustering_worker"]
+    depends_on: { redis: { condition: service_healthy }, pgbouncer: { condition: service_started } }
+
+  consensus-worker:
+    build: { context: ., dockerfile: docker/Dockerfile }
+    env_file: [sentinel.env]
+    environment: { PGHOST: pgbouncer, PGPORT: "5432", REDIS_URL: "redis://redis:6379" }
+    command: ["python", "-m", "pipeline.workers.consensus_worker"]
+    depends_on: { redis: { condition: service_healthy }, pgbouncer: { condition: service_started } }
+
+  llm-worker:
+    build: { context: ., dockerfile: docker/Dockerfile }
+    env_file: [sentinel.env]
+    environment: { PGHOST: pgbouncer, PGPORT: "5432", REDIS_URL: "redis://redis:6379" }
+    command: ["python", "-m", "pipeline.workers.llm_worker"]
+    depends_on: { redis: { condition: service_healthy }, pgbouncer: { condition: service_started } }
+
 volumes:
   pgdata:
