@@ -2,6 +2,16 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# `streamlit run frontend/app.py` puts the script's own directory on sys.path,
+# not the project root, so the `pipeline` package would be unimportable. Add the
+# repo root explicitly so the documented launch command works as-is.
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 import streamlit as st
 import pydeck as pdk
 import pandas as pd
