@@ -103,6 +103,16 @@ class ScoringRepository:
         return [self.score_hotspot(int(hid)) for hid in hotspot_ids]
 
 
+def score_hotspot(conn, hotspot_id: int) -> float | None:
+    """Compute and persist conf_score for a single hotspot.
+
+    Thin wrapper around ScoringRepository.score_hotspot so worker code
+    shares one code path with the monolith. Returns conf_score or None."""
+    repo = ScoringRepository(conn)
+    result = repo.score_hotspot(hotspot_id)
+    return float(result.get("conf_score", 0)) if result else None
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Compute consensus scores for hotspots")
     parser.add_argument("--hotspot-id", type=int, default=None)

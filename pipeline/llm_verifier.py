@@ -254,6 +254,38 @@ def verify_hotspots_with_llm(
     return {"candidates": len(hotspot_ids), "processed": processed}
 
 
+def verify_hotspot(conn, hotspot_id: int) -> int | None:
+    """Verify a single hotspot: NIM (Ollama fallback) -> save -> return summary_id.
+
+    Thin wrapper so the LLM worker and the monolith share one code path.
+    Returns the created llm_summaries.summary_id or None if NIM+Ollama fail."""
+    endpoint = os.getenv("NVIDIA_NIM_ENDPOINT", "")
+    api_key = os.getenv("NVIDIA_NIM_API_KEY", "")
+    model = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.1-70b-instruct")
+    ollama_endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
+
+    repo = LLMRepository(conn)
+    articles = repo.fetch_hotspot_articles(hotspot_id)
+    if not articles:
+        return None
+    prompt = build_prompt({"hotspot_id": hotspot_id, "articles": articles})
+    result, model_used = call_nim_api(
+        prompt, endpoint=endpoint, api_key=api_key, model=model,
+        ollama_endpoint=ollama_endpoint,
+    )
+    if not result or not result.get("summary"):
+        return None
+    repo.save_summary(hotspot_id, result, model=model_used)
+    # Fetch the generated summary_id
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT summary_id FROM llm_summaries WHERE hotspot_id = %s",
+            (hotspot_id,),
+        )
+        row = cur.fetchone()
+    return int(row[0]) if row else None
+
+
 def _domain(url: str | None) -> str:
     if not url:
         return ""
