@@ -379,6 +379,7 @@ class ClusterRepository:
 
         hotspot_count = 0
         linked_rows = 0
+        hotspot_ids: list[int] = []
 
         with self._conn.cursor() as cursor:
             for label, group in clustered.groupby("cluster_label"):
@@ -465,7 +466,7 @@ class ClusterRepository:
                     values,
                 )
                 hotspot_id = cursor.fetchone()[0]
-
+                hotspot_ids.append(int(hotspot_id))
                 # Event-hotspot links (non-noise)
                 event_links = [(int(event_id), int(hotspot_id)) for event_id in group_event_ids]
                 execute_values(
@@ -510,7 +511,7 @@ class ClusterRepository:
                         )
 
         self._conn.commit()
-        return {"hotspot_count": hotspot_count, "linked_events": linked_rows}
+        return {"hotspot_count": hotspot_count, "linked_events": linked_rows, "hotspot_ids": hotspot_ids}
 
     @staticmethod
     def _compute_postgis_centroid(cursor, event_ids: list[int]) -> tuple[float, float]:
@@ -575,7 +576,10 @@ def load_recent_events(conn, lookback_hours: int | None = None) -> pd.DataFrame:
             source_system,
             cameo_code
         FROM events
-        WHERE event_date <= NOW()
+        -- GDELT event_date is day-granular (midnight UTC), so current-day
+        -- events can be nominally ahead of NOW(); allow a 1-day tolerance on
+        -- the upper bound while still excluding far-future records.
+        WHERE event_date < NOW() + INTERVAL '1 day'
           AND event_date >= NOW() - (%s || ' hours')::interval
         ORDER BY event_date DESC
     """
@@ -612,7 +616,10 @@ def load_events_for_convergence(conn, lookback_hours: int | None = None) -> pd.D
             cameo_code,
             grid_cell_id
         FROM events
-        WHERE event_date <= NOW()
+        -- GDELT event_date is day-granular (midnight UTC), so current-day
+        -- events can be nominally ahead of NOW(); allow a 1-day tolerance on
+        -- the upper bound while still excluding far-future records.
+        WHERE event_date < NOW() + INTERVAL '1 day'
           AND event_date >= NOW() - (%s || ' hours')::interval
         ORDER BY event_date DESC
     """
@@ -739,6 +746,32 @@ def run_clustering_pipeline(
     return {"hotspot_count": 0, "linked_events": 0, "noise_count": 0}
 
 
+def cluster_single_cell(conn, cell_id: str, *, dbscan_window_hours=None,
+                        eps_km=None, min_samples=None, max_time_diff_h=None) -> list[int]:
+    """Run DBSCAN for one grid cell, persist hotspots, return new hotspot_ids.
+    Extracted from run_clustering_pipeline so the clustering worker and the
+    monolith share one code path (returns the ids it created)."""
+    import os
+    import pandas as pd  # noqa: F811
+    dbscan_window_hours = dbscan_window_hours or int(os.getenv("SENTINEL_DBSCAN_WINDOW_HOURS", "2"))
+    eps_km = eps_km or float(os.getenv("SENTINEL_DBSCAN_EPS_KM", "50"))
+    min_samples = min_samples or int(os.getenv("SENTINEL_DBSCAN_MIN_SAMPLES", "3"))
+    max_time_diff_h = max_time_diff_h or float(os.getenv("SENTINEL_MAX_TIME_DIFF_H", "1"))
+
+    cell_events = _load_cell_events(conn, cell_id, lookback_hours=dbscan_window_hours)
+    if len(cell_events) < min_samples:
+        return []
+    cell_events["ActionGeo_Lat"] = cell_events["lat"].astype(float)
+    cell_events["ActionGeo_Long"] = cell_events["lon"].astype(float)
+    cell_events["SOURCEURL"] = cell_events.get("url", pd.Series(dtype=object))
+    dist = build_distance_matrix(cell_events, max_time_diff_h=max_time_diff_h)
+    labels = cluster_dbscan(dist, eps_km=eps_km, min_samples=min_samples)
+    persisted = ClusterRepository(conn).save_clusters(cell_events, labels, cell_id=cell_id)
+    conn.commit()
+    return list(persisted.get("hotspot_ids", []))
+
+
+
 def _load_cell_events(conn, cell_id: str, lookback_hours: int = 2) -> pd.DataFrame:
     """Load events for a specific grid cell within the DBSCAN window.
 
@@ -763,7 +796,9 @@ def _load_cell_events(conn, cell_id: str, lookback_hours: int = 2) -> pd.DataFra
             grid_cell_id
         FROM events
         WHERE grid_cell_id = %s
-          AND event_date <= NOW()
+          -- GDELT event_date is day-granular (midnight UTC), so current-day
+          -- events can be nominally ahead of NOW(); allow a 1-day tolerance.
+          AND event_date < NOW() + INTERVAL '1 day'
           AND event_date >= NOW() - (%s || ' hours')::interval
         ORDER BY event_date DESC
     """
