@@ -6,7 +6,13 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 
-from pipeline.clustering import bin_to_grid, load_events_for_convergence, GridCellRepository
+from pipeline.clustering import (
+    bin_to_grid,
+    classify_alert_level,
+    compute_convergence_score,
+    load_events_for_convergence,
+    GridCellRepository,
+)
 from pipeline.db import get_pooled_connection
 from pipeline.streams import StreamBus
 from pipeline.workers.base import Worker
@@ -31,7 +37,9 @@ class GridCellWorker(Worker):
             pool.return_connection(conn)
         out = []
         for cell_id, cell in binned.items():
-            score = cell.get("convergence_score") or 0
+            unique_types = len(cell.get("type_counts", {}))
+            total_events = cell.get("total_events", 0)
+            score = compute_convergence_score(unique_types, total_events)
             if score >= 1:
                 out.append({
                     "cell_id": cell_id,
