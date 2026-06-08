@@ -1,0 +1,8 @@
+.git
+__pycache__
+*.pyc
+.venv
+docs
+tests
+*.md
+military_events.csv
