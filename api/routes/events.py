@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
 from api import queries
+from api.ratelimit import limit_events
 from pipeline.db import get_pooled_connection
 
 router = APIRouter()
@@ -12,7 +13,8 @@ router = APIRouter()
 @router.get("/events")
 def get_events(sw_lat: float, sw_lon: float, ne_lat: float, ne_lon: float,
                start: datetime, end: datetime,
-               cursor: int = 0, page_size: int = Query(100, le=1000)):
+               cursor: int = 0, page_size: int = Query(100, le=1000),
+               _rate_limit: None = Depends(limit_events)):
     conn, pool = get_pooled_connection()
     try:
         rows = queries.fetch_events_bbox(conn, sw_lat=sw_lat, sw_lon=sw_lon,
