@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 from api.metrics import METRICS
 from pipeline.db import get_pooled_connection
-from pipeline.llm_verifier import call_nim_api, LLMRepository, build_prompt
+from pipeline.llm_verifier import LLMRepository, build_prompt, call_nim_api
 from pipeline.workers.base import Worker
 
 
@@ -42,7 +42,7 @@ class LLMWorker(Worker):
 
             if not result or not result.get("summary"):
                 return []
-            if "nim" not in model_used.lower():
+            if "ollama" in model_used.lower():
                 METRICS.inc("llm_fallback_total")
             repo.save_summary(hotspot_id, result, model=model_used)
             with conn.cursor() as cur:

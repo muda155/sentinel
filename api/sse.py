@@ -14,12 +14,14 @@ STREAMS = ["sentinel:hotspot_created", "sentinel:summary_ready"]
 
 
 def _enrich(payload: dict) -> dict:
+    hotspot_id = payload.get("hotspot_id")
+    if hotspot_id is None:
+        return payload
     conn, pool = get_pooled_connection()
     try:
-        rows = queries.fetch_hotspots(conn, limit=1, min_conf=0, min_convergence=0)
-        rows = [r for r in rows if r["hotspot_id"] == payload.get("hotspot_id")]
-        if rows:
-            return rows[0]
+        row = queries.fetch_hotspot_by_id(conn, int(hotspot_id))
+        if row:
+            return row
     finally:
         pool.return_connection(conn)
     return payload
