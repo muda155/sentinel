@@ -17,3 +17,6 @@ sse-starlette
 httpx
 ruff
 fakeredis
+pyjwt
+bcrypt
+locust

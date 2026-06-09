@@ -22,6 +22,20 @@ class HotspotSummary(BaseModel):
     convergence_score: float
 
 
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    role: str
+
+
+class Source(BaseModel):
+    source_id: int
+    domain: str
+    trust_tier: int | None = None
+    country_code: str | None = None
+    country_name: str | None = None
+
+
 class StreamEvent(BaseModel):
     hotspot_id: int
     lat: float
