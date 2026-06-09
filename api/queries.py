@@ -5,6 +5,23 @@ from __future__ import annotations
 from typing import Any
 
 
+def fetch_grid_cells(conn, *, min_convergence=1.0) -> list[dict]:
+    q = """
+        SELECT cell_id, ST_Y(ST_Centroid(cell_geom)) lat, ST_X(ST_Centroid(cell_geom)) lon,
+               COALESCE(convergence_score,0) convergence_score,
+               COALESCE(alert_level,'Medium') alert_level,
+               COALESCE(total_events,0) total_events
+        FROM grid_cells
+        WHERE COALESCE(convergence_score,0) >= %s
+        ORDER BY convergence_score DESC
+        LIMIT 2000
+    """
+    with conn.cursor() as cur:
+        cur.execute(q, (min_convergence,))
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
 def fetch_hotspots(conn, *, limit=50, min_conf=0.0, min_convergence=0.0,
                    alert_level=None) -> list[dict[str, Any]]:
     limit = max(1, min(int(limit), 200))   # spec: max 200
