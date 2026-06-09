@@ -75,12 +75,19 @@ def classify_event_type(row) -> str:
                 pass
 
     elif source == "ACLED":
+        # ACLED ingestion stores the normalised Sentinel label in cameo_code
+        # (see ingestion._map_acled_event_type); live API rows may instead carry
+        # a raw 'event_type' string. Consult the stored label first.
+        known = {"armed_conflict", "civilian_violence", "civil_unrest"}
+        label = str(row.get("cameo_code", "")).strip().lower()
+        if label in known:
+            return label
         event_type = str(row.get("event_type", "")).lower()
         if "battle" in event_type or "explosion" in event_type:
             return "armed_conflict"
         if "violence against civilians" in event_type or "civilian" in event_type:
             return "civilian_violence"
-        if "protest" in event_type:
+        if "protest" in event_type or "riot" in event_type:
             return "civil_unrest"
 
     return "unknown"

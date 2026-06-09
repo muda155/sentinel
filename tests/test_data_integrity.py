@@ -70,8 +70,14 @@ def test_duplicate_event_is_deduplicated(live_conn):
 
 
 def test_alert_level_filter_uses_index(live_conn):
-    """Filtering hotspots by alert_level should use the b-tree index."""
+    """The b-tree index on alert_level must be usable for severity filtering.
+
+    On a near-empty table the planner rightly prefers a seq scan, so we disable
+    seqscan for this EXPLAIN to assert the index *can* serve the query (the
+    fixture rolls back, so the setting does not leak).
+    """
     cur = live_conn.cursor()
+    cur.execute("SET LOCAL enable_seqscan = off")
     cur.execute(
         "EXPLAIN SELECT count(*) FROM hotspots WHERE alert_level IN ('High', 'Critical')"
     )

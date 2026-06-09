@@ -63,8 +63,9 @@ def test_batch_flows_to_hotspots_matching_monolith():
         _drain(cons)
 
         # Compare to documented expected signature for this fixed seed.
-        # 5 events (4 distinct CAMEO root codes) in one cell should produce:
-        #   - convergence_score >= 50 (4 types -> type_score=100, 5 events -> count_boost=10)
+        # 5 events spanning 3 distinct event types (GDELT military_conflict +
+        # ACLED armed_conflict + civilian_violence) in one cell should produce:
+        #   - convergence fires (>= 2 distinct types, FR-WM-CONVERGENCE)
         #   - exactly 1 hotspot (from DBSCAN on events in same 50km/1h window)
         #   - conf_score ~ 11.8 (same country IL, unknown source trust_tier=4)
         sig = monolith_hotspot_signature(conn)
