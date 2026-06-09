@@ -9,7 +9,11 @@ def fetch_grid_cells(conn, *, min_convergence=1.0) -> list[dict]:
     q = """
         SELECT cell_id, ST_Y(ST_Centroid(cell_geom)) lat, ST_X(ST_Centroid(cell_geom)) lon,
                COALESCE(convergence_score,0) convergence_score,
-               COALESCE(alert_level,'Medium') alert_level,
+               CASE
+                 WHEN event_type_count >= 3 AND convergence_score >= 70 THEN 'Critical'
+                 WHEN convergence_score >= 50 THEN 'High'
+                 ELSE 'Medium'
+               END AS alert_level,
                COALESCE(total_events,0) total_events
         FROM grid_cells
         WHERE COALESCE(convergence_score,0) >= %s
