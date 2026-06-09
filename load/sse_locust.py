@@ -17,7 +17,12 @@ def _token() -> str:
     from datetime import datetime, timedelta, timezone
 
     import jwt
-    secret = os.getenv("SENTINEL_JWT_SECRET", "change_me_in_production")
+    secret = os.getenv("SENTINEL_JWT_SECRET")
+    if not secret:
+        raise SystemExit(
+            "SENTINEL_JWT_SECRET must be set — must match the API server's secret "
+            "for JWT signature verification."
+        )
     payload = {"sub": "load", "role": "analyst",
                "exp": datetime.now(timezone.utc) + timedelta(hours=1)}
     return jwt.encode(payload, secret, algorithm="HS256")

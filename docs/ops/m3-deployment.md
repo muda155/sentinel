@@ -46,6 +46,8 @@ The application refuses to start if `SENTINEL_ENV=production` and the secret sti
 
 ## Demo Credentials (local only)
 
+> **⚠️ Must rotate before any public exposure.** Default admin/admin and analyst/analyst credentials undercut the entire auth gate.
+
 The `013_create_users.sql` migration seeds two default accounts:
 
 | Username | Password | Role |
@@ -53,7 +55,15 @@ The `013_create_users.sql` migration seeds two default accounts:
 | `admin` | `admin` | admin — can edit source trust tiers |
 | `analyst` | `analyst` | analyst — read-only |
 
-These default credentials are suitable for local development only. In any public-facing demo, **change these passwords before deployment**. The `seed_default_users()` function in `api/auth.py` runs on a CONFLICT DO NOTHING basis, so manual SQL can be used to set different credentials before the first login.
+**Before any public-facing deployment**, change these passwords:
+
+```sql
+-- Connect to the DB and run:
+UPDATE users SET password_hash = crypt('new_secure_password', gen_salt('bf'))
+WHERE username = 'admin';
+```
+
+Or set different credentials in `api/auth.py:seed_default_users()` before the first run (the INSERT uses `ON CONFLICT DO NOTHING`, so first-write wins).
 
 ## Deployment
 
@@ -69,10 +79,22 @@ This starts: PostgreSQL+PostGIS, PgBouncer, the FastAPI gateway (`api`), pipelin
 
 - Place the FastAPI gateway behind a reverse proxy (nginx, Caddy, Traefik) with TLS termination
 - Set `SENTINEL_ENV=production` and inject `SENTINEL_JWT_SECRET` from a secrets manager
-- Set `NEXT_PUBLIC_API_BASE` to the public-facing API URL
+- Build the frontend with `NEXT_PUBLIC_API_BASE` set to the **browser-reachable** API URL (this is a build-time arg, not runtime — the value is inlined into the JS bundle):
+
+  ```bash
+  docker compose build --build-arg NEXT_PUBLIC_API_BASE=https://api.yourdomain.com frontend-next
+  ```
+- **Rotate or disable the default demo credentials** (admin/admin, analyst/analyst) before any public deployment
 - Rate-limit `/auth/login` to prevent brute-force attacks
 - Rotate JWT signing keys periodically
-- The demo credentials (admin/analyst) must be changed before any public deployment
+
+## Accepted Risks
+
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| `/auth/login` has no rate limit | Medium | The only unauthenticated endpoint; brute-force could enumerate credentials. Accept for M3; add rate limiting in a follow-up sprint (FastAPI middleware or reverse-proxy sidecar). |
+| Default demo credentials (admin/admin, analyst/analyst) | High | Must be rotated before any public deployment (see above). |
+| `NEXT_PUBLIC_*` vars are build-time inlined | Low | Cannot be overridden at runtime. A rebuild is required to change the API base URL. Documented above — always rebuild with `--build-arg` for environment changes. |
 
 ## Retired Components
 

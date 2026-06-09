@@ -1,4 +1,6 @@
 FROM node:22-alpine AS build
+ARG NEXT_PUBLIC_API_BASE
+ARG NEXT_PUBLIC_MAP_STYLE
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
