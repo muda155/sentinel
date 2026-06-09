@@ -6,3 +6,8 @@ docs
 tests
 *.md
 military_events.csv
+.claude
+node_modules
+**/node_modules
+frontend-next
+load

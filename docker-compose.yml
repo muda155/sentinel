@@ -30,6 +30,9 @@ services:
       MAX_CLIENT_CONN: "100"
       DEFAULT_POOL_SIZE: "20"
       AUTH_TYPE: scram-sha-256
+      # Pooled clients send `-c statement_timeout=...` in startup options; transaction-mode
+      # PgBouncer rejects unknown startup params unless told to ignore them.
+      IGNORE_STARTUP_PARAMETERS: statement_timeout
     ports:
       - "6432:5432"
     depends_on:
@@ -55,7 +58,7 @@ services:
   api:
     build: { context: ., dockerfile: docker/Dockerfile }
     env_file: [sentinel.env]
-    environment: { PGHOST: pgbouncer, PGPORT: "5432", REDIS_URL: "redis://redis:6379" }
+    environment: { PGHOST: pgbouncer, PGPORT: "5432", PGPASSWORD: "${POSTGRES_PASSWORD:-sentinel_pass}", REDIS_URL: "redis://redis:6379" }
     command: ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8000"]
     ports: ["8000:8000"]
     depends_on:
@@ -70,35 +73,35 @@ services:
   ingestion-worker:
     build: { context: ., dockerfile: docker/Dockerfile }
     env_file: [sentinel.env]
-    environment: { PGHOST: pgbouncer, PGPORT: "5432", REDIS_URL: "redis://redis:6379" }
+    environment: { PGHOST: pgbouncer, PGPORT: "5432", PGPASSWORD: "${POSTGRES_PASSWORD:-sentinel_pass}", REDIS_URL: "redis://redis:6379" }
     command: ["python", "-m", "pipeline.workers.ingestion_worker"]
     depends_on: { redis: { condition: service_healthy }, pgbouncer: { condition: service_started } }
 
   gridcell-worker:
     build: { context: ., dockerfile: docker/Dockerfile }
     env_file: [sentinel.env]
-    environment: { PGHOST: pgbouncer, PGPORT: "5432", REDIS_URL: "redis://redis:6379" }
+    environment: { PGHOST: pgbouncer, PGPORT: "5432", PGPASSWORD: "${POSTGRES_PASSWORD:-sentinel_pass}", REDIS_URL: "redis://redis:6379" }
     command: ["python", "-m", "pipeline.workers.gridcell_worker"]
     depends_on: { redis: { condition: service_healthy }, pgbouncer: { condition: service_started } }
 
   clustering-worker:
     build: { context: ., dockerfile: docker/Dockerfile }
     env_file: [sentinel.env]
-    environment: { PGHOST: pgbouncer, PGPORT: "5432", REDIS_URL: "redis://redis:6379" }
+    environment: { PGHOST: pgbouncer, PGPORT: "5432", PGPASSWORD: "${POSTGRES_PASSWORD:-sentinel_pass}", REDIS_URL: "redis://redis:6379" }
     command: ["python", "-m", "pipeline.workers.clustering_worker"]
     depends_on: { redis: { condition: service_healthy }, pgbouncer: { condition: service_started } }
 
   consensus-worker:
     build: { context: ., dockerfile: docker/Dockerfile }
     env_file: [sentinel.env]
-    environment: { PGHOST: pgbouncer, PGPORT: "5432", REDIS_URL: "redis://redis:6379" }
+    environment: { PGHOST: pgbouncer, PGPORT: "5432", PGPASSWORD: "${POSTGRES_PASSWORD:-sentinel_pass}", REDIS_URL: "redis://redis:6379" }
     command: ["python", "-m", "pipeline.workers.consensus_worker"]
     depends_on: { redis: { condition: service_healthy }, pgbouncer: { condition: service_started } }
 
   llm-worker:
     build: { context: ., dockerfile: docker/Dockerfile }
     env_file: [sentinel.env]
-    environment: { PGHOST: pgbouncer, PGPORT: "5432", REDIS_URL: "redis://redis:6379" }
+    environment: { PGHOST: pgbouncer, PGPORT: "5432", PGPASSWORD: "${POSTGRES_PASSWORD:-sentinel_pass}", REDIS_URL: "redis://redis:6379" }
     command: ["python", "-m", "pipeline.workers.llm_worker"]
     depends_on: { redis: { condition: service_healthy }, pgbouncer: { condition: service_started } }
 
