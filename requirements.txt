@@ -19,3 +19,4 @@ ruff
 fakeredis
 pyjwt
 bcrypt
+locust
