@@ -1,0 +1,86 @@
+# DOX framework — Sentinel root
+
+- DOX is the binding work contract for this repository
+- All agents must read the applicable DOX chain before editing any file
+
+## Core Contract
+
+- AGENTS.md files are binding work contracts for their subtrees
+- Work products, source materials, instructions, records, and durable docs must stay understandable from the nearest applicable AGENTS.md plus every parent AGENTS.md above it
+
+## Read Before Editing
+
+1. Read this root AGENTS.md
+2. Identify every file or folder you expect to touch
+3. Walk from the repository root to each target path
+4. Read every AGENTS.md found along each route
+5. Use the nearest AGENTS.md as the local contract; use parent docs for repo-wide rules
+6. If docs conflict, the closer doc controls local details; no child doc may weaken DOX
+
+Do not rely on memory. Re-read the applicable DOX chain in the current session before editing.
+
+## Update After Editing
+
+Every meaningful change requires a DOX pass before the task is done.
+
+Update the closest owning AGENTS.md when a change affects:
+- purpose, scope, ownership, or responsibilities
+- durable structure, contracts, workflows, or operating rules
+- required inputs, outputs, permissions, constraints, side effects, or artifacts
+- user preferences about behavior, communication, process, organization, or quality
+- AGENTS.md creation, deletion, move, rename, or index contents
+
+Remove stale or contradictory text immediately.
+
+## Hierarchy
+
+- This root AGENTS.md is the DOX rail: project-wide rules, global preferences, and the Child DOX Index
+- Child AGENTS.md files own domain-specific instructions and their own Child DOX Index
+- Each parent explains what its direct children cover and what stays owned by the parent
+- The closer a doc is to the work, the more specific and practical it must be
+
+## Project-Wide Rules
+
+### Architecture
+- Pipeline flow: ingest → cluster → score → verify → visualize (6 steps, `pipeline/pipeline.py`)
+- Always use `get_pooled_connection()` and return with `pool.return_connection(conn)` in a `finally` block — never open raw DB connections
+- Schema migrations live in `db/init/` and are applied in numeric order; never modify already-applied migrations
+
+### Spec Compliance
+- `specs.md` is the authoritative design doc (v1.1.2) — check it before implementing new features
+- FR-WM-CONVERGENCE: grid-cell binning must fire on **2+ distinct event types**, not DBSCAN density alone
+- FR-7/FR-8/FR-9: `conf_score` formula must match exactly: `0.6 × source_density + 0.4 × geopolitical_diversity`
+- FR-11/FR-12: LLM citations must be validated with `validate_citations()` — every sentence must end with `[N]`
+
+### Code Quality
+- Run `ruff check` before committing; config is in `ruff.toml`
+- All new features need tests in `tests/`
+- No raw SQL outside `pipeline/db.py`, `api/queries.py`, or migration files
+
+### Environment
+- All config via env vars; `sentinel.env` is the live config, `sentinel.env.example` is the template
+- Never hard-code credentials or endpoints
+
+## Closeout
+
+1. Re-check changed paths against the DOX chain
+2. Update nearest owning docs and any affected parents or children
+3. Refresh every affected Child DOX Index
+4. Remove stale or contradictory text
+5. Run `pytest tests/` and `ruff check` when relevant
+6. Report any docs intentionally left unchanged and why
+
+## User Preferences
+
+- Terse responses; no trailing summaries after diffs
+- No emojis unless explicitly requested
+- No comments unless the WHY is non-obvious
+
+## Child DOX Index
+
+- [pipeline/AGENTS.md](pipeline/AGENTS.md) — ingestion, clustering, scoring, LLM verification, scheduler, connection pool
+- [frontend/AGENTS.md](frontend/AGENTS.md) — Streamlit dashboard, Pydeck map, auto-refresh logic
+- [api/AGENTS.md](api/AGENTS.md) — FastAPI REST + SSE layer, rate limiting, metrics
+- [frontend-next/AGENTS.md](frontend-next/AGENTS.md) — Next.js dual-map frontend (deck.gl/MapLibre/globe.gl), FR-13 visual contract, auth/SSE/citation contracts
+- [tests/AGENTS.md](tests/AGENTS.md) — pytest suite, integration test patterns, seeding helpers
+- [db/AGENTS.md](db/AGENTS.md) — schema migrations, PostGIS setup, table contracts
