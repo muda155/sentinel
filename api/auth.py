@@ -10,7 +10,7 @@ from fastapi import Depends, HTTPException, Request
 
 
 def _secret() -> str:
-    return os.getenv("SENTINEL_JWT_SECRET", "change_me_in_production")
+    return os.getenv("SENTINEL_JWT_SECRET", "change_me_in_production_32_bytes__xxxx!")
 
 
 def _alg() -> str:

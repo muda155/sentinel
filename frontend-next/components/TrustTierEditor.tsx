@@ -45,10 +45,10 @@ export default function TrustTierEditor() {
               onChange={(e) => update(s.source_id, Number(e.target.value))}
               style={{ padding: "4px 8px", borderRadius: 4, border: "1px solid #333", background: "#0f3460", color: "#eee", fontSize: 12 }}
             >
-              <option value={1}>Tier 1 (lowest)</option>
-              <option value={2}>Tier 2</option>
-              <option value={3}>Tier 3</option>
-              <option value={4}>Tier 4 (highest)</option>
+              <option value={1}>Tier 1 (wire/gov — highest trust)</option>
+              <option value={2}>Tier 2 (major outlets)</option>
+              <option value={3}>Tier 3 (specialist/regional)</option>
+              <option value={4}>Tier 4 (aggregators/unknown — lowest)</option>
             </select>
           </div>
         ))}

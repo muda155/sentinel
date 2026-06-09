@@ -1,5 +1,5 @@
 "use client";
-import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from "react";
 
 type User = { username: string; role: "admin" | "analyst" };
 
@@ -33,9 +33,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() =>
     typeof window !== "undefined" ? localStorage.getItem("sentinel_token") : null
   );
-  const [user, setUser] = useState<User | null>(null);
-  // Derive user from token after mount (avoids SSR localStorage access).
-  useEffect(() => { setUser(token ? decodePayload(token) : null); }, [token]);
+  const user = useMemo(() => (token ? decodePayload(token) : null), [token]);
 
   const login = useCallback(async (username: string, password: string) => {
     const res = await fetch(`${BASE}/auth/login`, {
@@ -47,13 +45,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const data = await res.json();
     localStorage.setItem("sentinel_token", data.access_token);
     setToken(data.access_token);
-    setUser(decodePayload(data.access_token));
   }, []);
 
   const logout = useCallback(() => {
     localStorage.removeItem("sentinel_token");
     setToken(null);
-    setUser(null);
   }, []);
 
   return (

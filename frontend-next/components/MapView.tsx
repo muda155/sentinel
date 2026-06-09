@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import DeckGL from "@deck.gl/react";
 import { ScatterplotLayer } from "@deck.gl/layers";
 import { Map } from "react-map-gl/maplibre";
@@ -15,8 +15,6 @@ export default function MapView({
   onSelect, extraLayers = [], token,
 }: { onSelect?: (h: Hotspot) => void; extraLayers?: unknown[]; token?: string | null }) {
   const [hotspots, setHotspots] = useState<Hotspot[]>([]);
-  const onSelectRef = useRef(onSelect);
-  onSelectRef.current = onSelect;
 
   // Fetch hotspots on mount
   useEffect(() => {
@@ -50,7 +48,7 @@ export default function MapView({
     lineWidthUnits: "pixels",
     getLineWidth: (d) => (d.alert_level === "Medium" ? 0 : 3),
     getLineColor: (d) => ringColor(d.alert_level),
-    onClick: (info) => info.object && onSelectRef.current?.(info.object as Hotspot),
+    onClick: (info) => info.object && onSelect?.(info.object as Hotspot),
     updateTriggers: { getFillColor: hotspots, getLineColor: hotspots },
   });
 
