@@ -1,66 +1,41 @@
-import Image from "next/image";
-import styles from "./page.module.css";
+"use client";
+import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
+import { HeatmapLayer } from "@deck.gl/aggregation-layers";
+import { api, GridCell, Hotspot } from "@/lib/api";
+import HotspotDetail from "@/components/HotspotDetail";
 
-export default function Home() {
+const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
+const GlobeView = dynamic(() => import("@/components/GlobeToggle"), { ssr: false });
+
+export default function Page() {
+  const [selected, setSelected] = useState<Hotspot | null>(null);
+  const [showHeat, setShowHeat] = useState(false);
+  const [cells, setCells] = useState<GridCell[]>([]);
+  const [globe, setGlobe] = useState(false);
+
+  useEffect(() => { if (showHeat && cells.length === 0) api.gridCells().then(setCells).catch(() => {}); }, [showHeat, cells.length]);
+
+  const heatLayer = showHeat
+    ? [new HeatmapLayer<GridCell>({
+        id: "convergence-heat", data: cells,
+        getPosition: (d) => [d.lon, d.lat],
+        getWeight: (d) => d.convergence_score, radiusPixels: 60,
+      })]
+    : [];
+
   return (
-    <div className={styles.page}>
-      <main className={styles.main}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className={styles.intro}>
-          <h1>To get started, edit the page.tsx file.</h1>
-          <p>
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className={styles.secondary}
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+    <main style={{ position: "absolute", inset: 0 }}>
+      {globe ? <GlobeView /> : <MapView onSelect={setSelected} extraLayers={heatLayer} />}
+      <div style={{ position: "absolute", top: 12, left: 12, display: "flex", gap: 8 }}>
+        <label style={{ background: "#111", color: "#eee", padding: "8px 12px", borderRadius: 6, cursor: "pointer" }}>
+          <input type="checkbox" checked={showHeat} onChange={(e) => setShowHeat(e.target.checked)} /> Convergence heatmap
+        </label>
+        <button onClick={() => setGlobe((g) => !g)} style={{ background: "#111", color: "#eee", padding: "8px 12px", borderRadius: 6, border: "none", cursor: "pointer" }}>
+          {globe ? "2D Map" : "3D Globe"}
+        </button>
+      </div>
+      {selected && <HotspotDetail hotspot={selected} onClose={() => setSelected(null)} />}
+    </main>
   );
 }
