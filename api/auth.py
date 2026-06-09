@@ -8,7 +8,6 @@ import bcrypt
 import jwt
 from fastapi import Depends, HTTPException, Request
 
-
 _DEFAULT_SECRET = "change_me_in_production_32_bytes__xxxx!"
 
 

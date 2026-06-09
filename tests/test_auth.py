@@ -51,7 +51,8 @@ def test_login_returns_token():
 def test_production_default_secret_raises(monkeypatch):
     monkeypatch.setenv("SENTINEL_ENV", "production")
     monkeypatch.delenv("SENTINEL_JWT_SECRET", raising=False)
-    from api.auth import _secret
     import re
+
+    from api.auth import _secret
     with pytest.raises(RuntimeError, match=re.escape("SENTINEL_JWT_SECRET must be overridden")):
         _secret()
