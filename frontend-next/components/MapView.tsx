@@ -1,21 +1,42 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import DeckGL from "@deck.gl/react";
 import { ScatterplotLayer } from "@deck.gl/layers";
 import { Map } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { api, Hotspot } from "@/lib/api";
 import { fillColor, ringColor } from "@/lib/colors";
+import { connectHotspotStream } from "@/lib/sse";
 
 const INITIAL_VIEW = { longitude: 30, latitude: 30, zoom: 2, pitch: 0, bearing: 0 };
 const MAP_STYLE = process.env.NEXT_PUBLIC_MAP_STYLE ?? "https://demotiles.maplibre.org/style.json";
 
 export default function MapView({
-  onSelect, extraLayers = [],
-}: { onSelect?: (h: Hotspot) => void; extraLayers?: unknown[] }) {
+  onSelect, extraLayers = [], token,
+}: { onSelect?: (h: Hotspot) => void; extraLayers?: unknown[]; token?: string | null }) {
   const [hotspots, setHotspots] = useState<Hotspot[]>([]);
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
 
-  useEffect(() => { api.hotspots().then(setHotspots).catch(() => setHotspots([])); }, []);
+  // Fetch hotspots on mount
+  useEffect(() => {
+    api.hotspots(token).then(setHotspots).catch(() => setHotspots([]));
+  }, [token]);
+
+  // SSE live updates: re-fetch on push
+  useEffect(() => {
+    if (!token) return;
+    const base = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
+    const cleanup = connectHotspotStream(base, token, {
+      onHotspot: () => {
+        api.hotspots(token).then(setHotspots).catch(() => {});
+      },
+      onSummary: () => {
+        api.hotspots(token).then(setHotspots).catch(() => {});
+      },
+    });
+    return cleanup;
+  }, [token]);
 
   const hotspotLayer = new ScatterplotLayer<Hotspot>({
     id: "hotspots",
@@ -29,7 +50,7 @@ export default function MapView({
     lineWidthUnits: "pixels",
     getLineWidth: (d) => (d.alert_level === "Medium" ? 0 : 3),
     getLineColor: (d) => ringColor(d.alert_level),
-    onClick: (info) => info.object && onSelect?.(info.object as Hotspot),
+    onClick: (info) => info.object && onSelectRef.current?.(info.object as Hotspot),
     updateTriggers: { getFillColor: hotspots, getLineColor: hotspots },
   });
 

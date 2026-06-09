@@ -3,10 +3,21 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api.auth import require_role
+from api import queries
+from api.auth import get_current_user, require_role
+from api.schemas import Source
 from pipeline.db import get_pooled_connection
 
 router = APIRouter()
+
+
+@router.get("/sources", response_model=list[Source])
+def list_sources(_user: dict = Depends(get_current_user)):
+    conn, pool = get_pooled_connection()
+    try:
+        return queries.fetch_sources(conn)
+    finally:
+        pool.return_connection(conn)
 
 
 class TrustTierUpdate(BaseModel):

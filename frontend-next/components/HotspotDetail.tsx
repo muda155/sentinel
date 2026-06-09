@@ -1,10 +1,16 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api, Hotspot, HotspotSummary } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { parseCitations } from "@/lib/citations";
+import TrustTierEditor from "@/components/TrustTierEditor";
 
 export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; onClose: () => void }) {
+  const { token } = useAuth();
   const [summary, setSummary] = useState<HotspotSummary | null>(null);
-  useEffect(() => { api.summary(hotspot.hotspot_id).then(setSummary).catch(() => setSummary(null)); }, [hotspot.hotspot_id]);
+  useEffect(() => {
+    api.summary(hotspot.hotspot_id, token).then(setSummary).catch(() => setSummary(null));
+  }, [hotspot.hotspot_id, token]);
 
   return (
     <aside style={{ position: "absolute", top: 12, right: 12, width: 340, background: "#111", color: "#eee", padding: 16, borderRadius: 8 }}>
@@ -20,9 +26,24 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
       {summary ? (
         <>
           {summary.conflict_detected && <p style={{ color: "#f87171" }}>Conflict detected across sources.</p>}
-          <p>{summary.summary || "No SITREP generated (below LLM threshold)."}</p>
+          {summary.summary ? (
+            <p>
+              {parseCitations(summary.summary).map((part, i) =>
+                part.type === "cite" ? (
+                  <sup key={i} style={{ color: "#60a5fa", cursor: "pointer", fontWeight: 600 }} title={`Source [${part.n}]`}>
+                    [{part.n}]
+                  </sup>
+                ) : (
+                  <span key={i}>{part.text}</span>
+                )
+              )}
+            </p>
+          ) : (
+            <p>No SITREP generated (below LLM threshold).</p>
+          )}
         </>
       ) : <p>Loading…</p>}
+      <TrustTierEditor />
     </aside>
   );
 }

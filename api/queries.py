@@ -81,6 +81,19 @@ def fetch_hotspot_by_id(conn, hotspot_id: int) -> dict | None:
         return dict(zip(cols, row))
 
 
+def fetch_sources(conn) -> list[dict]:
+    q = """
+        SELECT source_id, domain, trust_tier, country_code, country_name
+        FROM sources
+        ORDER BY source_id ASC
+        LIMIT 1000
+    """
+    with conn.cursor() as cur:
+        cur.execute(q)
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
 def fetch_events_bbox(conn, *, sw_lat, sw_lon, ne_lat, ne_lon, start, end,
                       cursor=0, page_size=100) -> list[dict]:
     page_size = max(1, min(int(page_size), 1000))   # spec: max 1000
