@@ -11,11 +11,12 @@ def fetch_hotspots(conn, *, limit=50, min_conf=0.0, min_convergence=0.0,
     q = """
         SELECT h.hotspot_id, ST_Y(h.centroid_geom) lat, ST_X(h.centroid_geom) lon,
                COALESCE(h.conf_score,0) conf_score, h.event_count,
-               COALESCE(g.convergence_score,0) convergence_score,
-               COALESCE(g.alert_level,'Medium') alert_level
+               COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
+               COALESCE(h.alert_level,'Medium') alert_level
         FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
-        WHERE COALESCE(h.conf_score,0) >= %s AND COALESCE(g.convergence_score,0) >= %s
-          AND (%s IS NULL OR g.alert_level = %s)
+        WHERE COALESCE(h.conf_score,0) >= %s
+          AND COALESCE(g.convergence_score,h.convergence_score,0) >= %s
+          AND (%s IS NULL OR h.alert_level = %s)
         ORDER BY h.conf_score DESC NULLS LAST, h.hotspot_id DESC
         LIMIT %s
     """
@@ -29,7 +30,8 @@ def fetch_hotspot_summary(conn, hotspot_id: int) -> dict | None:
     q = """
         SELECT COALESCE(ls.summary_text,'') summary, COALESCE(ls.conflict_detected,false) conflict_detected,
                COALESCE(ls.sources_cited,'[]'::jsonb) sources_cited,
-               COALESCE(h.conf_score,0) conf_score, COALESCE(g.convergence_score,0) convergence_score
+               COALESCE(h.conf_score,0) conf_score,
+               COALESCE(g.convergence_score,h.convergence_score,0) convergence_score
         FROM hotspots h LEFT JOIN llm_summaries ls ON ls.hotspot_id=h.hotspot_id
                         LEFT JOIN grid_cells g ON h.cell_id=g.cell_id
         WHERE h.hotspot_id=%s
@@ -48,8 +50,8 @@ def fetch_hotspot_by_id(conn, hotspot_id: int) -> dict | None:
     q = """
         SELECT h.hotspot_id, ST_Y(h.centroid_geom) lat, ST_X(h.centroid_geom) lon,
                COALESCE(h.conf_score,0) conf_score, h.event_count,
-               COALESCE(g.convergence_score,0) convergence_score,
-               COALESCE(g.alert_level,'Medium') alert_level
+               COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
+               COALESCE(h.alert_level,'Medium') alert_level
         FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
         WHERE h.hotspot_id = %s
     """
