@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from api import queries
+from api.auth import get_current_user
 from api.ratelimit import limit_hotspots
 from api.schemas import Hotspot, HotspotSummary
 from pipeline.db import get_pooled_connection
@@ -13,7 +14,8 @@ router = APIRouter()
 @router.get("/hotspots", response_model=list[Hotspot])
 def list_hotspots(limit: int = Query(50, le=200), min_conf: float = 0.0,
                   min_convergence: float = 0.0, alert_level: str | None = None,
-                  _rate_limit: None = Depends(limit_hotspots)):
+                  _rate_limit: None = Depends(limit_hotspots),
+                  _user: dict = Depends(get_current_user)):
     conn, pool = get_pooled_connection()
     try:
         rows = queries.fetch_hotspots(conn, limit=limit, min_conf=min_conf,
@@ -24,7 +26,8 @@ def list_hotspots(limit: int = Query(50, le=200), min_conf: float = 0.0,
 
 
 @router.get("/hotspots/{hotspot_id}/summary", response_model=HotspotSummary)
-def hotspot_summary(hotspot_id: int, _rate_limit: None = Depends(limit_hotspots)):
+def hotspot_summary(hotspot_id: int, _rate_limit: None = Depends(limit_hotspots),
+                    _user: dict = Depends(get_current_user)):
     conn, pool = get_pooled_connection()
     try:
         row = queries.fetch_hotspot_summary(conn, hotspot_id)
