@@ -75,9 +75,6 @@ def test_ollama_fallback_triggered_on_429_exhaustion(monkeypatch: pytest.MonkeyP
     too_many.status_code = 429
     too_many.raise_for_status.side_effect = requests.HTTPError(response=too_many)
 
-    # Mock the HTTP response for NIM (all three attempts get 429)
-    nim_post_mock = mock.Mock(side_effect=requests.HTTPError(response=too_many))
-
     # Mock Ollama response
     ollama_response = mock.Mock()
     ollama_response.raise_for_status.return_value = None

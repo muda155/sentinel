@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import socket
+
 from fastapi import APIRouter, Request
 from sse_starlette.sse import EventSourceResponse
 

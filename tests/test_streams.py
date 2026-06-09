@@ -1,6 +1,6 @@
-import json
 import fakeredis
 import pytest
+
 from pipeline.streams import StreamBus
 
 

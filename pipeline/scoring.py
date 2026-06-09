@@ -3,19 +3,10 @@ from __future__ import annotations
 import argparse
 import math
 from collections import Counter
-from urllib.parse import urlparse
 
 import pandas as pd
 
 from pipeline.db import get_pooled_connection
-
-
-def _extract_domain(url: str | None) -> str | None:
-    if not url:
-        return None
-    parsed = urlparse(str(url))
-    domain = parsed.netloc.lower().strip()
-    return domain or None
 
 
 def compute_source_density(trust_weights: list[float]) -> float:
@@ -43,7 +34,6 @@ def compute_conf_score(source_density: float, diversity: float) -> float:
 
 
 def score_hotspot_from_events(events_df: pd.DataFrame) -> dict[str, float]:
-    domains = [_extract_domain(v) for v in events_df.get("url", pd.Series(dtype=object)).tolist()]
     trust_weights = [float(w) for w in events_df.get("trust_score", pd.Series(dtype=object)).tolist() if pd.notna(w)]
     countries = [v for v in events_df.get("country_code", pd.Series(dtype=object)).tolist()]
     source_density = compute_source_density(trust_weights)

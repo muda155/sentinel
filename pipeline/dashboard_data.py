@@ -1,6 +1,8 @@
 # Note: dashboard_data.py functions take a connection object as parameter
 # to maintain flexibility. Callers are responsible for managing the connection.
 
+from pipeline.clustering import classify_alert_level as grid_cell_alert_level
+
 
 def confidence_to_color(conf_score: float | None) -> list[int]:
     """Map consensus confidence score to pydeck RGBA color (FR-13)."""
@@ -33,9 +35,6 @@ def grid_cell_alert_color(alert_level: str | None) -> list[int]:
     if level == "High":
         return [249, 115, 22, 60]    # orange, low opacity
     return [234, 179, 8, 30]         # yellow, very low opacity
-
-
-from pipeline.clustering import classify_alert_level as grid_cell_alert_level
 
 
 def fetch_dashboard_hotspots(conn, limit: int = 100) -> list[dict]:

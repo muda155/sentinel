@@ -3,18 +3,16 @@ from __future__ import annotations
 import argparse
 import io
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Iterable
 
 import pandas as pd
 import requests
 from psycopg2.extras import execute_values
-
-import json
-import os
-from datetime import datetime, timedelta
 
 from pipeline.clustering import assign_grid_cell
 from pipeline.db import get_pooled_connection

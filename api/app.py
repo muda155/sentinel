@@ -17,6 +17,7 @@ def create_app() -> FastAPI:
     app.include_router(stream.router)
 
     from fastapi import Response
+
     from api.metrics import render_prometheus
 
     @app.get("/metrics")

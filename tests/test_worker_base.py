@@ -1,4 +1,5 @@
 import fakeredis
+
 from pipeline.streams import StreamBus
 from pipeline.workers.base import Worker
 

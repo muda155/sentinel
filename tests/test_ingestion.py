@@ -166,6 +166,7 @@ def test_acled_extract_source_domain() -> None:
 
 def test_acled_insert_to_db(monkeypatch: pytest.MonkeyPatch) -> None:
     from unittest.mock import MagicMock
+
     from pipeline.ingestion import ACLEDIngestor
 
     mock_exec = MagicMock()
@@ -211,6 +212,7 @@ def test_acled_insert_to_db(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_acled_fetch_cache_hit(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify fetch_events returns cached data without calling the API."""
     from unittest.mock import MagicMock
+
     from pipeline.ingestion import ACLEDIngestor
 
     try:

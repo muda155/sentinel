@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+
 from fastapi import APIRouter, Depends, Query
 
 from api import queries

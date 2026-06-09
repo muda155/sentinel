@@ -1,8 +1,10 @@
-import json
 import asyncio
+import json
+
 import fakeredis
+
+from api.sse import SSE_GROUP, STREAMS, hotspot_event_source
 from pipeline.streams import StreamBus
-from api.sse import hotspot_event_source, SSE_GROUP, STREAMS
 
 
 def test_sse_emits_summary_ready_frame():

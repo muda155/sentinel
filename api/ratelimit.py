@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import time
 import threading
+import time
 
 from fastapi import HTTPException, Request
 from starlette.status import HTTP_429_TOO_MANY_REQUESTS

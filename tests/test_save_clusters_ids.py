@@ -1,4 +1,5 @@
 import pytest
+
 pytest.importorskip("pandas")
 # Integration: requires SENTINEL_TEST_DB. Skips otherwise (mirrors conftest live_conn).
 from pipeline.clustering import ClusterRepository  # noqa: E402

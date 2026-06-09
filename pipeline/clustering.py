@@ -14,7 +14,6 @@ from pipeline.db import get_pooled_connection
 from pipeline.llm_verifier import verify_hotspots_with_llm
 from pipeline.scoring import ScoringRepository
 
-
 EARTH_RADIUS_KM = 6371.0088
 
 
@@ -752,6 +751,7 @@ def cluster_single_cell(conn, cell_id: str, *, dbscan_window_hours=None,
     Extracted from run_clustering_pipeline so the clustering worker and the
     monolith share one code path (returns the ids it created)."""
     import os
+
     import pandas as pd  # noqa: F811
     dbscan_window_hours = dbscan_window_hours or int(os.getenv("SENTINEL_DBSCAN_WINDOW_HOURS", "2"))
     eps_km = eps_km or float(os.getenv("SENTINEL_DBSCAN_EPS_KM", "50"))

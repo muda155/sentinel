@@ -2,19 +2,20 @@
 assert the hotspots match expected signatures. Requires SENTINEL_TEST_DB
 (live PostGIS); skips otherwise."""
 import os
-import psycopg2
+
 import fakeredis
+import psycopg2
 import pytest
+
+from pipeline.streams import StreamBus
+from pipeline.workers.clustering_worker import ClusteringWorker
+from pipeline.workers.consensus_worker import ConsensusWorker
+from pipeline.workers.gridcell_worker import GridCellWorker
+from tests.helpers_seed import monolith_hotspot_signature, seed_demo_events
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("SENTINEL_TEST_DB"), reason="needs live PostGIS via SENTINEL_TEST_DB"
 )
-
-from pipeline.streams import StreamBus
-from pipeline.workers.gridcell_worker import GridCellWorker
-from pipeline.workers.clustering_worker import ClusteringWorker
-from pipeline.workers.consensus_worker import ConsensusWorker
-from tests.helpers_seed import seed_demo_events, monolith_hotspot_signature
 
 
 def _drain(worker):
@@ -54,7 +55,7 @@ def test_batch_flows_to_hotspots_matching_monolith():
         bus.publish("sentinel:ingested_events", {"batch_id": "t1", "event_ids": event_ids})
 
         # Drive workers in dependency order until quiescent.
-        grid = GridCellWorker(bus=bus, consumer="c"); grid.bus = bus
+        grid = GridCellWorker(bus=bus, consumer="c")
         clus = ClusteringWorker(bus=bus, consumer="c")
         cons = ConsensusWorker(bus=bus, consumer="c")
         assert _drain(grid) >= 1

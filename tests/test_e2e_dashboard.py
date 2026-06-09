@@ -1,8 +1,8 @@
 """End-to-end integration tests for dashboard with mocked pipeline."""
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import Mock, patch, MagicMock
-from datetime import datetime, timedelta
 
 
 @pytest.fixture
@@ -51,7 +51,6 @@ class TestDashboardE2EIntegration:
     @patch("pipeline.db.get_pooled_connection")
     def test_e2e_dashboard_fetches_and_renders_hotspots(self, mock_get_pooled_connection, mock_sample_hotspots):
         """Test that dashboard can fetch and render hotspots through full pipeline."""
-        from frontend.app import render_dashboard, format_hotspots_for_pydeck
         from pipeline.dashboard_data import fetch_dashboard_hotspots
 
         # Mock database connection
@@ -155,7 +154,7 @@ class TestDashboardE2EIntegration:
         self, mock_get_pooled_connection, mock_sample_hotspots
     ):
         """Test that map is built correctly from full pipeline output."""
-        from frontend.app import format_hotspots_for_pydeck, build_map_config
+        from frontend.app import build_map_config, format_hotspots_for_pydeck
 
         formatted = format_hotspots_for_pydeck(mock_sample_hotspots)
         map_config = build_map_config(formatted)

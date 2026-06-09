@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from pipeline.migrate import discover_migrations, pending_migrations, parse_version
+from pipeline.migrate import discover_migrations, parse_version, pending_migrations
 
 
 def test_parse_version_extracts_leading_number():

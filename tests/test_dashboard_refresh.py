@@ -1,9 +1,7 @@
 """Tests for dashboard refresh mechanisms (auto-refresh and manual)."""
 
-import pytest
 import time
-from unittest.mock import Mock, patch, MagicMock
-from datetime import datetime, timedelta
+from unittest.mock import MagicMock, patch
 
 
 class TestRefreshIntervalLogic:
