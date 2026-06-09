@@ -4,6 +4,9 @@
 
 Streamlit dashboard: Pydeck map of hotspots color-coded by confidence score, auto-refresh every 15 min, manual refresh button.
 
+**RETIRED in M3** — replaced by `frontend-next/` (Next.js dual-map frontend).
+Source kept as historical reference. Do not use for new development.
+
 ## Ownership
 
 All files in `frontend/`.

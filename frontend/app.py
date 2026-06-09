@@ -1,5 +1,8 @@
-"""Streamlit dashboard for Sentinel OSINT hotspot visualization."""
+"""Streamlit dashboard for Sentinel OSINT hotspot visualization.
 
+DEPRECATED in M3 — replaced by frontend-next/ (Next.js dual-map frontend).
+Kept as historical reference only. See frontend-next/AGENTS.md.
+"""
 from __future__ import annotations
 
 import sys

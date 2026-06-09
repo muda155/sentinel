@@ -1,0 +1,5 @@
+node_modules
+.next
+*.local
+__tests__
+e2e

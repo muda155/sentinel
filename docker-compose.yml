@@ -102,5 +102,14 @@ services:
     command: ["python", "-m", "pipeline.workers.llm_worker"]
     depends_on: { redis: { condition: service_healthy }, pgbouncer: { condition: service_started } }
 
+  frontend-next:
+    build: { context: ./frontend-next, dockerfile: Dockerfile }
+    environment:
+      NEXT_PUBLIC_API_BASE: "http://api:8000"
+      NEXT_PUBLIC_MAP_STYLE: "https://demotiles.maplibre.org/style.json"
+    ports: ["3000:3000"]
+    depends_on:
+      api: { condition: service_healthy }
+
 volumes:
   pgdata:
