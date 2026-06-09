@@ -109,8 +109,7 @@ def run_pipeline() -> None:
     # Step 3: Grid-cell convergence
     try:
         step_start = time.monotonic()
-        from pipeline.clustering import bin_to_grid, GridCellRepository
-        from pipeline.clustering import load_events_for_convergence
+        from pipeline.clustering import GridCellRepository, bin_to_grid, load_events_for_convergence
 
         conn, pool = get_pooled_connection()
         try:
@@ -135,8 +134,11 @@ def run_pipeline() -> None:
     # Step 4: DBSCAN clustering per cell
     try:
         step_start = time.monotonic()
-        from pipeline.clustering import run_clustering_pipeline, ClusterRepository
-        from pipeline.clustering import load_recent_events
+        from pipeline.clustering import (
+            ClusterRepository,
+            load_recent_events,
+            run_clustering_pipeline,
+        )
 
         conn, pool = get_pooled_connection()
         try:

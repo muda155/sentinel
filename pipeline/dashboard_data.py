@@ -1,6 +1,8 @@
 # Note: dashboard_data.py functions take a connection object as parameter
 # to maintain flexibility. Callers are responsible for managing the connection.
 
+from pipeline.clustering import classify_alert_level as grid_cell_alert_level
+
 
 def confidence_to_color(conf_score: float | None) -> list[int]:
     """Map consensus confidence score to pydeck RGBA color (FR-13)."""
@@ -35,9 +37,6 @@ def grid_cell_alert_color(alert_level: str | None) -> list[int]:
     return [234, 179, 8, 30]         # yellow, very low opacity
 
 
-from pipeline.clustering import classify_alert_level as grid_cell_alert_level
-
-
 def fetch_dashboard_hotspots(conn, limit: int = 100) -> list[dict]:
     """Fetch hotspots with confidence, convergence, and alert data (FR-13).
 
@@ -55,8 +54,8 @@ def fetch_dashboard_hotspots(conn, limit: int = 100) -> list[dict]:
            h.end_window,
            COALESCE(ls.summary_text, '') AS summary_text,
            COALESCE(ls.conflict_detected, false) AS conflict_detected,
-           COALESCE(g.convergence_score, 0) AS convergence_score,
-           COALESCE(g.alert_level, 'Medium') AS alert_level
+           COALESCE(g.convergence_score, h.convergence_score, 0) AS convergence_score,
+           COALESCE(h.alert_level, 'Medium') AS alert_level
     FROM hotspots h
     LEFT JOIN llm_summaries ls ON ls.hotspot_id = h.hotspot_id
     LEFT JOIN grid_cells g ON h.cell_id = g.cell_id

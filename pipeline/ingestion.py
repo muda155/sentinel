@@ -3,18 +3,16 @@ from __future__ import annotations
 import argparse
 import io
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Iterable
 
 import pandas as pd
 import requests
 from psycopg2.extras import execute_values
-
-import json
-import os
-from datetime import datetime, timedelta
 
 from pipeline.clustering import assign_grid_cell
 from pipeline.db import get_pooled_connection
@@ -152,8 +150,23 @@ class GDELTColumnSchema:
     }
 
     @staticmethod
+    def _token(name: str) -> str:
+        """Normalize a column name to an alnum-lowercase token.
+
+        Mirrors the tokenization in ``_normalize_columns`` so validation is
+        agnostic to GDELT's raw casing (``GLOBALEVENTID``) versus the
+        pipeline's canonical names (``GlobalEventID``). ``validate`` runs on
+        already-normalized frames inside ``insert_to_db``, so it must accept
+        both forms.
+        """
+        return re.sub(r"[^a-zA-Z0-9]+", "", str(name)).lower()
+
+    @staticmethod
     def validate(df: pd.DataFrame) -> None:
         """Validate that all required columns are present in the DataFrame.
+
+        Comparison is done on normalized tokens, so both the raw GDELT casing
+        and the pipeline's canonical column names satisfy the requirement.
 
         Args:
             df: The GDELT 2.0 export DataFrame to validate.
@@ -161,7 +174,12 @@ class GDELTColumnSchema:
         Raises:
             SchemaError: If any required columns are missing.
         """
-        missing = GDELTColumnSchema.REQUIRED_COLUMNS - set(df.columns)
+        present_tokens = {GDELTColumnSchema._token(c) for c in df.columns}
+        missing = {
+            col
+            for col in GDELTColumnSchema.REQUIRED_COLUMNS
+            if GDELTColumnSchema._token(col) not in present_tokens
+        }
         if missing:
             raise SchemaError(
                 f"Missing required GDELT columns: {sorted(missing)}. "
@@ -227,40 +245,7 @@ class GDELT2Ingestor:
         # Register sources and get source_id for each event
         url_to_source_id = self._register_sources(df, conn)
 
-        # Augment records with source_system, external_event_id, grid_cell_id, source_id
-        # Record layout from _build_event_records:
-        #   [0]=global_event_id, [1]=event_date, [2]=cameo_code, [3]=country_code,
-        #   [4]=url, [5]=title, [6]=lon, [7]=lat
-        augmented_records = []
-        for record in records:
-            global_event_id = record[0]
-            url = record[4]
-            lat = record[7]
-            lon = record[6]
-
-            # Coordinate validation: skip events with out-of-range coordinates (FR-3)
-            if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
-                logging.warning(
-                    f"Skipping event {global_event_id}: "
-                    f"out-of-range coordinates (lat={lat}, lon={lon})"
-                )
-                continue
-
-            source_id = url_to_source_id.get(url)
-            grid_cell_id = assign_grid_cell(lat, lon)
-            augmented_records.append((
-                "GDELT",                 # source_system
-                str(global_event_id),    # external_event_id
-                record[1],               # event_date
-                record[2],               # cameo_code
-                record[3],               # country_code
-                record[4],               # url
-                record[5],               # title
-                record[6],               # lon (for ST_MakePoint)
-                record[7],               # lat (for ST_MakePoint)
-                source_id,
-                grid_cell_id,
-            ))
+        augmented_records = self._augment_records(records, url_to_source_id)
 
         with conn.cursor() as cursor:
             execute_values(
@@ -268,6 +253,7 @@ class GDELT2Ingestor:
                 """
                 INSERT INTO events (
                     source_system,
+                    gdelt_global_event_id,
                     external_event_id,
                     event_date,
                     cameo_code,
@@ -283,7 +269,7 @@ class GDELT2Ingestor:
                 """,
                 augmented_records,
                 template=(
-                    "(%s, %s, %s, %s, %s, %s, %s, "
+                    "(%s, %s, %s, %s, %s, %s, %s, %s, "
                     "ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s, %s)"
                 ),
             )
@@ -313,6 +299,85 @@ class GDELT2Ingestor:
                     continue
 
         return url_to_source_id
+
+    def _augment_records(self, records, url_to_source_id):
+        """Build augmented insert tuples from raw event records.
+
+        Record layout from _build_event_records:
+          [0]=global_event_id, [1]=event_date, [2]=cameo_code, [3]=country_code,
+          [4]=url, [5]=title, [6]=lon, [7]=lat
+
+        Returns a list of 12-field tuples ready for execute_values INSERT.
+        """
+        augmented_records = []
+        for record in records:
+            global_event_id = record[0]
+            url = record[4]
+            lat = record[7]
+            lon = record[6]
+
+            if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+                logging.warning(
+                    f"Skipping event {global_event_id}: "
+                    f"out-of-range coordinates (lat={lat}, lon={lon})"
+                )
+                continue
+
+            source_id = url_to_source_id.get(url)
+            grid_cell_id = assign_grid_cell(lat, lon)
+            augmented_records.append((
+                "GDELT",                 # source_system
+                int(global_event_id),    # gdelt_global_event_id
+                str(global_event_id),    # external_event_id
+                record[1],               # event_date
+                record[2],               # cameo_code
+                record[3],               # country_code
+                record[4],               # url
+                record[5],               # title
+                record[6],               # lon (for ST_MakePoint)
+                record[7],               # lat (for ST_MakePoint)
+                source_id,
+                grid_cell_id,
+            ))
+        return augmented_records
+
+    def insert_to_db_returning_ids(self, df, conn) -> list[int]:
+        """Like insert_to_db, but RETURNS the event_id of each inserted row.
+
+        Rows skipped by ON CONFLICT DO NOTHING are not returned (idempotent
+        replay yields an empty list on a re-run of the same batch)."""
+        GDELTColumnSchema.validate(df)
+        records = list(self._build_event_records(df))
+        if not records:
+            return []
+        url_to_source_id = self._register_sources(df, conn)
+        augmented_records = self._augment_records(records, url_to_source_id)
+        if not augmented_records:
+            return []
+        ids: list[int] = []
+        with conn.cursor() as cursor:
+            rows = execute_values(
+                cursor,
+                """
+                INSERT INTO events (
+                    source_system, gdelt_global_event_id, external_event_id,
+                    event_date, cameo_code, country_code, url, title,
+                    point_geom, source_id, grid_cell_id
+                )
+                VALUES %s
+                ON CONFLICT (source_system, external_event_id, event_date) DO NOTHING
+                RETURNING event_id
+                """,
+                augmented_records,
+                template=(
+                    "(%s, %s, %s, %s, %s, %s, %s, %s, "
+                    "ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s, %s)"
+                ),
+                fetch=True,
+            )
+            ids = [r[0] for r in rows]
+        conn.commit()
+        return ids
 
     def run_once(self) -> pd.DataFrame:
         # Find the most recent file that actually exists (not just in the index)

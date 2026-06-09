@@ -3,19 +3,10 @@ from __future__ import annotations
 import argparse
 import math
 from collections import Counter
-from urllib.parse import urlparse
 
 import pandas as pd
 
 from pipeline.db import get_pooled_connection
-
-
-def _extract_domain(url: str | None) -> str | None:
-    if not url:
-        return None
-    parsed = urlparse(str(url))
-    domain = parsed.netloc.lower().strip()
-    return domain or None
 
 
 def compute_source_density(trust_weights: list[float]) -> float:
@@ -43,7 +34,6 @@ def compute_conf_score(source_density: float, diversity: float) -> float:
 
 
 def score_hotspot_from_events(events_df: pd.DataFrame) -> dict[str, float]:
-    domains = [_extract_domain(v) for v in events_df.get("url", pd.Series(dtype=object)).tolist()]
     trust_weights = [float(w) for w in events_df.get("trust_score", pd.Series(dtype=object)).tolist() if pd.notna(w)]
     countries = [v for v in events_df.get("country_code", pd.Series(dtype=object)).tolist()]
     source_density = compute_source_density(trust_weights)
@@ -101,6 +91,16 @@ class ScoringRepository:
             cursor.execute("SELECT hotspot_id FROM hotspots ORDER BY hotspot_id")
             hotspot_ids = [row[0] for row in cursor.fetchall()]
         return [self.score_hotspot(int(hid)) for hid in hotspot_ids]
+
+
+def score_hotspot(conn, hotspot_id: int) -> float | None:
+    """Compute and persist conf_score for a single hotspot.
+
+    Thin wrapper around ScoringRepository.score_hotspot so worker code
+    shares one code path with the monolith. Returns conf_score or None."""
+    repo = ScoringRepository(conn)
+    result = repo.score_hotspot(hotspot_id)
+    return float(result.get("conf_score", 0)) if result else None
 
 
 def _build_parser() -> argparse.ArgumentParser:

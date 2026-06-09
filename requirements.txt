@@ -11,3 +11,9 @@ scikit-learn
 scipy
 streamlit
 pydeck
+fastapi
+uvicorn[standard]
+sse-starlette
+httpx
+ruff
+fakeredis
