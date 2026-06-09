@@ -9,8 +9,17 @@ import jwt
 from fastapi import Depends, HTTPException, Request
 
 
+_DEFAULT_SECRET = "change_me_in_production_32_bytes__xxxx!"
+
+
 def _secret() -> str:
-    return os.getenv("SENTINEL_JWT_SECRET", "change_me_in_production_32_bytes__xxxx!")
+    secret = os.getenv("SENTINEL_JWT_SECRET", _DEFAULT_SECRET)
+    if os.getenv("SENTINEL_ENV") == "production" and secret == _DEFAULT_SECRET:
+        raise RuntimeError(
+            "SENTINEL_JWT_SECRET must be overridden in production — "
+            "inject via secrets manager, never use the default."
+        )
+    return secret
 
 
 def _alg() -> str:

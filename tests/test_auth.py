@@ -46,3 +46,12 @@ def test_login_returns_token():
     r = c.post("/auth/login", json={"username": "admin", "password": "admin"})
     assert r.status_code == 200 and r.json()["role"] == "admin"
     assert c.post("/auth/login", json={"username": "admin", "password": "no"}).status_code == 401
+
+
+def test_production_default_secret_raises(monkeypatch):
+    monkeypatch.setenv("SENTINEL_ENV", "production")
+    monkeypatch.delenv("SENTINEL_JWT_SECRET", raising=False)
+    from api.auth import _secret
+    import re
+    with pytest.raises(RuntimeError, match=re.escape("SENTINEL_JWT_SECRET must be overridden")):
+        _secret()
