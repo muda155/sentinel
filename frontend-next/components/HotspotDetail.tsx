@@ -19,7 +19,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
       <h4>AI Intelligence Brief</h4>
       {summary ? (
         <>
-          {summary.conflict_detected && <p style={{ color: "#f87171" }}>⚠ Conflict detected across sources.</p>}
+          {summary.conflict_detected && <p style={{ color: "#f87171" }}>Conflict detected across sources.</p>}
           <p>{summary.summary || "No SITREP generated (below LLM threshold)."}</p>
         </>
       ) : <p>Loading…</p>}

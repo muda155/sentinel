@@ -1,13 +1,14 @@
 import os
+
 import pytest
 from fastapi.testclient import TestClient
+
+from api.app import create_app
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("SENTINEL_TEST_DB"),
     reason="needs live PostGIS via SENTINEL_TEST_DB",
 )
-
-from api.app import create_app
 
 
 def test_grid_cells_shape():
