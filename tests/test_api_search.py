@@ -54,7 +54,9 @@ def test_search_endpoint_groups_and_auth():
 
 @pytest_live
 def test_search_common_domain_returns_200():
-    """Regression: q=com must not 500 — trust_tier is text 'A','B','C', not int."""
+    """Regression: q=com must not 500 when the sources group is non-empty
+    (originally broke on a trust_tier type mismatch; tiers are int 1-4 since
+    migration 017)."""
     from fastapi.testclient import TestClient
 
     from api.app import create_app
@@ -65,4 +67,6 @@ def test_search_common_domain_returns_200():
     r = client.get("/search?q=com", headers=auth)
     assert r.status_code == 200
     for s in r.json()["sources"]:
-        assert isinstance(s["trust_tier"], (str, type(None)))
+        assert s["trust_tier"] is None or (
+            isinstance(s["trust_tier"], int) and 1 <= s["trust_tier"] <= 4
+        )
