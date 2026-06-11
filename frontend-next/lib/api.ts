@@ -2,6 +2,7 @@ export type Hotspot = {
   hotspot_id: number; lat: number; lon: number;
   conf_score: number; convergence_score: number;
   alert_level: "Critical" | "High" | "Medium"; event_count: number;
+  name: string | null;
 };
 export type HotspotSummary = {
   summary: string; conflict_detected: boolean; sources_cited: string[];
@@ -14,6 +15,23 @@ export type GridCell = {
 export type Source = {
   source_id: number; domain: string; trust_tier: number;
   country_code: string | null; country_name: string | null;
+};
+
+export type HotspotEvent = {
+  event_id: number; title: string | null; url: string | null; domain: string;
+  source_system: string; event_type_label: string; event_date: string;
+  trust_tier: number | null; trust_score: number; citation_index: number | null;
+};
+
+export type SearchEvent = {
+  event_id: number; title: string | null; url: string | null; domain: string;
+  event_date: string; hotspot: Hotspot;
+};
+export type SearchSource = {
+  source_id: number; domain: string; trust_tier: number | null; hotspots: Hotspot[];
+};
+export type SearchResults = {
+  hotspots: Hotspot[]; events: SearchEvent[]; sources: SearchSource[];
 };
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
@@ -53,4 +71,8 @@ export const api = {
     patchJson<{ source_id: number; trust_tier: number }>(
       `/sources/${sourceId}`, { trust_tier: trustTier }, token
     ),
+  hotspotEvents: (id: number, token?: string | null) =>
+    getJson<HotspotEvent[]>(`/hotspots/${id}/events`, token),
+  search: (q: string, token?: string | null) =>
+    getJson<SearchResults>(`/search?q=${encodeURIComponent(q)}`, token),
 };
