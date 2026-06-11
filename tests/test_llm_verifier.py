@@ -297,3 +297,24 @@ def test_call_nim_api_returns_validated_dict(monkeypatch: pytest.MonkeyPatch) ->
     assert model_used == "meta/llama-3.1-70b-instruct"
     assert result["conflict_detail"] == ""       # default filled by model
     assert result["sources_cited"] == ["1"]       # coerced to str
+
+
+def test_fetch_hotspot_articles_order_is_deterministic():
+    class _Cur:
+        sql = ""
+        def execute(self, sql, params=None):
+            _Cur.sql = " ".join(sql.split())
+        def fetchall(self):
+            return []
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+
+    class _Conn:
+        def cursor(self):
+            return _Cur()
+
+    from pipeline.llm_verifier import LLMRepository
+    LLMRepository(_Conn()).fetch_hotspot_articles(1)
+    assert "ORDER BY e.event_date DESC, e.event_id DESC" in _Cur.sql

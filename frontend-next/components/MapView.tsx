@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import DeckGL from "@deck.gl/react";
 import { ScatterplotLayer } from "@deck.gl/layers";
+import { FlyToInterpolator } from "@deck.gl/core";
 import { Map } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { api, Hotspot } from "@/lib/api";
@@ -12,9 +13,19 @@ const INITIAL_VIEW = { longitude: 30, latitude: 30, zoom: 2, pitch: 0, bearing: 
 const MAP_STYLE = process.env.NEXT_PUBLIC_MAP_STYLE ?? "https://demotiles.maplibre.org/style.json";
 
 export default function MapView({
-  onSelect, extraLayers = [], token,
-}: { onSelect?: (h: Hotspot) => void; extraLayers?: unknown[]; token?: string | null }) {
+  onSelect, extraLayers = [], token, focus,
+}: { onSelect?: (h: Hotspot) => void; extraLayers?: unknown[];
+     token?: string | null; focus?: { lat: number; lon: number } | null }) {
+  const [viewState, setViewState] = useState<Record<string, unknown>>(INITIAL_VIEW);
   const [hotspots, setHotspots] = useState<Hotspot[]>([]);
+
+  useEffect(() => {
+    if (!focus) return;
+    setViewState((vs) => ({
+      ...vs, longitude: focus.lon, latitude: focus.lat, zoom: 6,
+      transitionDuration: 1200, transitionInterpolator: new FlyToInterpolator(),
+    }));
+  }, [focus]);
 
   // Fetch hotspots on mount
   useEffect(() => {
@@ -57,7 +68,12 @@ export default function MapView({
   });
 
   return (
-    <DeckGL initialViewState={INITIAL_VIEW} controller layers={[...(extraLayers as never[]), hotspotLayer]}>
+    <DeckGL
+      viewState={viewState}
+      onViewStateChange={({ viewState: vs }) => setViewState(vs as Record<string, unknown>)}
+      controller
+      layers={[...(extraLayers as never[]), hotspotLayer]}
+    >
       <Map mapStyle={MAP_STYLE} />
     </DeckGL>
   );

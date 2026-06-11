@@ -13,8 +13,8 @@
 
 # Sentinel – Technical Specification Document
 
-**Document Version:** 1.3.0
-**Date:** 2026‑06‑08  
+**Document Version:** 1.5.0
+**Date:** 2026‑06‑11  
 **Author:** FYP Candidate (role: Senior Software Architect & Technical Project Manager)  
 **Status:** Approved for Development  
 
@@ -364,6 +364,34 @@ The dashboard shall display a map with markers for each hotspot. Marker colour e
 ☑ Map updates after manual "Refresh" button or automated 15-minute APScheduler trigger.  
 ☑ Both `conf_score` and `convergence_score` are displayed in the hotspot detail panel, labelled distinctly.  
 ☑ Grid-cell overlay can be toggled to show convergence heatmap.
+
+### 4.6 Dashboard Usability & Localization (M4 extension)
+
+*Design reference: `docs/superpowers/specs/2026-06-11-dashboard-search-naming-articles-design.md`. The naming approach (layered curated-place lookup) and grouped-search UX are adapted from World Monitor (`koala73/worldmonitor`, AGPL-3.0) — approach credited, no code or data copied verbatim.*
+
+**FR‑14‑HOTSPOT_NAMING**  
+Each hotspot shall carry a human-readable English `name`, resolved at clustering write time and stored in `hotspots.name` (migration `014_hotspot_names.sql`). Resolution is layered: (1) nearest curated place from `pipeline/naming.py:CURATED_PLACES` (~30–40 entries; conflict zones radius 300 km, strategic waterways 200 km, strategic cities 150 km), composed as `"<place>, <country>"` when the containing country differs; (2) country name via existing `reverse_geocode_country()`; (3) `"<lat>°, <lon>°"` fallback. Naming failures log a warning and leave `name` NULL — they shall never fail the clustering pipeline. A backfill entrypoint (`python -m pipeline.naming --backfill`) names existing rows.  
+**Acceptance Criteria:**  
+☑ A hotspot at 48.0°N, 37.8°E resolves to a curated-zone name (e.g. `"Donbas, Ukraine"`); a hotspot far from any curated place but inside a country polygon resolves to the country name; an open-ocean hotspot resolves to formatted coordinates.  
+☑ `GET /hotspots` includes `name`; the dashboard detail panel header shows it, falling back to `Hotspot #N` when NULL.
+
+**FR‑15‑SEARCH**  
+The system shall expose `GET /search?q=<text>` (Bearer-gated, rate-limited) returning grouped results `{hotspots, events, sources}`: hotspot names via indexed `ILIKE` (≤10), event/article titles via PostgreSQL FTS — stored generated `tsvector` column + GIN index (migration `015_events_fts.sql`), queried with `websearch_to_tsquery`, joined to `event_hotspot` to return the owning hotspot (≤10) — and source domains via `ILIKE` with citing-hotspot counts (≤5). Queries under 2 characters return empty groups. The dashboard shall render an always-visible search box above the map, focusable via **Cmd+K / Ctrl+K**, with debounced (250 ms) grouped results and keyboard navigation; selecting a result flies the map to the hotspot and opens its detail panel.  
+**Acceptance Criteria:**  
+☑ Searching a country or curated-place substring returns matching hotspots; searching an article phrase (e.g. "drone strike") returns FTS title matches with their owning `hotspot_id`; searching a domain returns sources with hotspot counts.  
+☑ Cmd+K focuses the search input from anywhere in the dashboard; Esc closes the dropdown.
+
+**FR‑16‑SOURCE_ARTICLES**  
+The system shall expose `GET /hotspots/{id}/events` (Bearer-gated, rate-limited, 404 on unknown id) returning the hotspot's linked events with `{event_id, title, url, domain, source_system, event_type_label, event_date, trust_tier, trust_score, citation_index}`. `citation_index` is the event's 1-based position in the exact article ordering used by `LLMRepository.fetch_hotspot_articles()` (URL-bearing events, `ORDER BY event_date DESC, event_id DESC`), so the numbering matches the SITREP's `[N]` citation markers by construction; both queries share the `event_id DESC` tiebreaker. URL-less events append after cited rows with `citation_index = NULL`. The detail panel shall render a "Sources (N)" list — citation number, title linking to `url` (`target="_blank" rel="noopener noreferrer"`), domain, trust-tier badge, date — and clicking a `[N]` marker in the SITREP scrolls to and highlights row N.  
+**Acceptance Criteria:**  
+☑ For a hotspot with a SITREP, every `[N]` marker resolves to the Nth row of the sources list.  
+☑ Trust-tier badge colors follow `lib/colors.ts` conventions.
+
+**FR‑17‑I18N**  
+The dashboard shall be bilingual with **Vietnamese as the default locale** and an EN/VI toggle (`components/LanguageToggle.tsx`). All UI chrome — labels, buttons, headings, search placeholder, event-type labels (e.g. `armed_conflict` → "giao tranh vũ trang") — is translated via a lightweight `lib/i18n.tsx` context with flat typed dictionaries (`lib/locales/en.ts`, `lib/locales/vi.ts`); locale persists in `localStorage` (`sentinel_locale`). Place names, article titles, and SITREP text remain English; the API and database are not localized.  
+**Acceptance Criteria:**  
+☑ First load renders Vietnamese; toggling to EN persists across reload.  
+☑ A vitest test asserts `vi.ts` declares every key present in `en.ts`.
 
 ---
 
@@ -808,6 +836,7 @@ ln -s ../specs.md docs/spec.md
 
 | Version | Date | Change | Reason |
 |---|---|---|---|
+| 1.5.0 | 2026-06-11 | **Dashboard usability & localization (Section 4.6).** Added FR-14 hotspot naming (curated-place layered resolution stored in `hotspots.name`, migration 012, backfill CLI), FR-15 grouped search (`GET /search` with events FTS migration 013; always-visible search box with Cmd+K focus), FR-16 source-article list (`GET /hotspots/{id}/events` with `citation_index` aligned to the LLM prompt's article ordering), and FR-17 bilingual UI (Vietnamese default, EN/VI toggle, client-side dictionaries). Naming/search UX adapted from World Monitor with attribution; fixed stale header version (was 1.3.0 while history recorded 1.4.0). | Dashboard lacked practical affordances: hotspots were labelled "Hotspot #N", there was no search, and stored article data (`events.title`/`url`) was never surfaced; FYP requires a Vietnamese-language UI. |
 | 1.4.0 | 2026-06-09 | **M3 React frontend delivered.** Next.js 16 dual-map frontend (deck.gl + MapLibre GL + globe.gl) replacing Streamlit; JWT auth with `users` table, `/auth/login`, Bearer-gated REST/SSE, role separation (analyst/admin); SSE live hotspot updates with exponential backoff (±500ms jitter); admin `trust_tier` editor (PATCH `/sources/{id}`); FR-13 visual contract (green/yellow/grey fill, red/orange ring); SITREP citation rendering; production default-secret guard; SQL-injection + auth-bypass tests; Locust SSE load test harness; containerized `frontend-next` service in Docker Compose; M3 deployment runbook. | Milestone M3 complete. |
 | 1.3.0 | 2026-06-08 | **M2 microservices delivered.** Redis Streams worker decomposition (6 workers: Ingestion, Grid-Cell, Clustering, Consensus, LLM, API) replacing the monolithic scheduler; FastAPI REST gateway with `/events` (GeoJSON, cursor pagination), `/hotspots`, `/hotspots/{id}/summary`, rate limiting (429); SSE `/hotspots/stream` tailing `hotspot_created` + `summary_ready`; full-stack `docker-compose.yml` (PostGIS + PgBouncer + Redis + 6 workers + API); GitHub Actions CI; in-process Prometheus metrics (`/metrics`) for cluster count, alert count, LLM latency, fallback rate. | M2 Sprint 7–9 complete; all Section 6.3/6.4 endpoints and workers operational. |
 | 1.2.1 | 2026-06-07 | **M1 retention & partitioning model (World Monitor-informed).** Added Section 6.2.1 defining a bounded rolling-window retention policy (`SENTINEL_RETENTION_DAYS`, default 90) with **partition-`DROP`-based retention** as the deliberate justification for range-partitioning the live `events` table by month; documented that `hotspots` stays non-partitioned and that the `event_hotspot → events` FK is dropped (replaced by index + app-level integrity) once `events` is partitioned; flagged the stale `db/init/004` `*_partitioned` tables for retirement. Rewrote the M1 Sprint 5 plan row accordingly (migration runner + retention-driven partitioning) and added `SENTINEL_RETENTION_DAYS` to Appendix B/B1. | Review of World Monitor's live storage docs showed it scales via short Redis-cached rolling windows rather than a partitioned RDBMS; Sentinel keeps a durable system of record but borrows the retention discipline and gives partitioning an honest, retention-driven purpose instead of breaking foreign keys for an unneeded query-speed gain. |

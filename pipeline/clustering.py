@@ -13,6 +13,7 @@ from sklearn.cluster import DBSCAN
 from pipeline.db import get_pooled_connection
 from pipeline.llm_verifier import verify_hotspots_with_llm
 from pipeline.scoring import ScoringRepository
+from pipeline.naming import name_hotspot
 
 EARTH_RADIUS_KM = 6371.0088
 
@@ -406,6 +407,7 @@ class ClusterRepository:
                     centroid_lon = float(group["ActionGeo_Long"].astype(float).mean())
                     unique_event_types = 0
 
+                hotspot_name = name_hotspot(self._conn, centroid_lat, centroid_lon)
                 radius_km = max(
                     haversine_km(
                         centroid_lat,
@@ -434,6 +436,7 @@ class ClusterRepository:
                     "event_count",
                     "unique_sources",
                     "unique_event_types",
+                    "name",
                 ]
                 values = [
                     centroid_lon,
@@ -444,9 +447,11 @@ class ClusterRepository:
                     int(len(group)),
                     int(unique_sources),
                     unique_event_types,
+                    hotspot_name,
                 ]
                 placeholders = [
                     "ST_SetSRID(ST_MakePoint(%s, %s), 4326)",
+                    "%s",
                     "%s",
                     "%s",
                     "%s",

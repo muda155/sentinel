@@ -32,12 +32,13 @@ def create_app() -> FastAPI:
     def health():
         return {"status": "ok"}
 
-    from api.routes import auth, events, grid_cells, hotspots, sources, stream
+    from api.routes import auth, events, grid_cells, hotspots, search, sources, stream
     app.include_router(auth.router)
     app.include_router(hotspots.router)
     app.include_router(grid_cells.router)
     app.include_router(events.router)
     app.include_router(sources.router)
+    app.include_router(search.router)
     app.include_router(stream.router)
 
     from fastapi import Response

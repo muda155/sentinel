@@ -1,6 +1,8 @@
 """Pydantic v2 response models matching Section 6.3."""
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel
 
 
@@ -12,6 +14,7 @@ class Hotspot(BaseModel):
     convergence_score: float
     alert_level: str
     event_count: int
+    name: str | None = None
 
 
 class HotspotSummary(BaseModel):
@@ -31,9 +34,44 @@ class LoginResponse(BaseModel):
 class Source(BaseModel):
     source_id: int
     domain: str
-    trust_tier: int | None = None
+    trust_tier: str | None = None
     country_code: str | None = None
     country_name: str | None = None
+
+
+class HotspotEvent(BaseModel):
+    event_id: int
+    title: str | None = None
+    url: str | None = None
+    domain: str
+    source_system: str
+    event_type_label: str
+    event_date: datetime
+    trust_tier: str | None = None
+    trust_score: float
+    citation_index: int | None = None
+
+
+class SearchEvent(BaseModel):
+    event_id: int
+    title: str | None = None
+    url: str | None = None
+    domain: str
+    event_date: datetime
+    hotspot: Hotspot
+
+
+class SearchSource(BaseModel):
+    source_id: int
+    domain: str
+    trust_tier: str | None = None
+    hotspots: list[Hotspot]
+
+
+class SearchResults(BaseModel):
+    hotspots: list[Hotspot]
+    events: list[SearchEvent]
+    sources: list[SearchSource]
 
 
 class StreamEvent(BaseModel):

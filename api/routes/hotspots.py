@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from api import queries
 from api.auth import get_current_user
 from api.ratelimit import limit_hotspots
-from api.schemas import Hotspot, HotspotSummary
+from api.schemas import Hotspot, HotspotEvent, HotspotSummary
 from pipeline.db import get_pooled_connection
 
 router = APIRouter()
@@ -38,3 +38,16 @@ def hotspot_summary(hotspot_id: int, _rate_limit: None = Depends(limit_hotspots)
     sc = row["sources_cited"]
     row["sources_cited"] = sc if isinstance(sc, list) else list(sc)
     return row
+
+
+@router.get("/hotspots/{hotspot_id}/events", response_model=list[HotspotEvent])
+def hotspot_events(hotspot_id: int, _rate_limit: None = Depends(limit_hotspots),
+                   _user: dict = Depends(get_current_user)):
+    conn, pool = get_pooled_connection()
+    try:
+        rows = queries.fetch_hotspot_events(conn, hotspot_id)
+    finally:
+        pool.return_connection(conn)
+    if rows is None:
+        raise HTTPException(status_code=404, detail="hotspot not found")
+    return rows
