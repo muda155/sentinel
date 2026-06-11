@@ -22,9 +22,13 @@ no search, and never surfaces the source articles that events already carry
    sources by domain.
 3. The hotspot detail panel lists source articles, numbered to match the
    SITREP's `[N]` citations; clicking a citation highlights the article.
+4. The UI is bilingual: **Vietnamese by default** with an EN/VI toggle. All
+   dashboard chrome (labels, buttons, headings, event-type labels) is
+   translated; place names, article titles, and SITREPs remain English.
 
 Out of scope: place fly-to for arbitrary cities, fuzzy/trigram matching,
-non-English full-text search, LLM-generated hotspot titles.
+non-English full-text search, LLM-generated hotspot titles, Vietnamese
+SITREPs, localized place names.
 
 ## Component 1 — Hotspot naming
 
@@ -106,15 +110,18 @@ Empty `q` or `q` shorter than 2 chars returns all-empty groups.
 
 ### API: `GET /hotspots/{id}/events` (auth + rate-limited; 404 if unknown id)
 
-Returns the hotspot's events via `event_hotspot` (excluding `is_noise` rows):
+Returns the hotspot's events via `event_hotspot`:
 `{event_id, title, url, domain, source_system, event_type_label, event_date,
 trust_tier, trust_score, citation_index}`.
 
-**Citation alignment:** when an `llm_summaries` row exists for the hotspot,
-`citation_index` is each event's 1-based position in `sources_cited` (matched
-by URL; unmatched events get `null` and sort after cited ones). When no SITREP
-exists, ordering is `event_date DESC` and `citation_index` is null. This keeps
-the numbered list consistent with the `[N]` markers the LLM emitted.
+**Citation alignment:** the LLM prompt numbers its articles by position in
+`LLMRepository.fetch_hotspot_articles()` — URL-bearing linked events ordered
+`event_date DESC`. The endpoint therefore mirrors that query exactly (same
+join, same URL filter, same ordering) and assigns `citation_index = 1..N` by
+position, so `[N]` markers align by construction. Both queries gain an
+`event_id DESC` tiebreaker so ordering is deterministic for equal timestamps.
+Events without a URL are appended after the cited rows with
+`citation_index = null`.
 
 ### Frontend: sources list in `HotspotDetail`
 
@@ -125,6 +132,23 @@ the numbered list consistent with the `[N]` markers the LLM emitted.
   row N (extends the existing `parseCitations` rendering — the `sup` elements
   become buttons).
 - Events without titles render the domain as the link text.
+
+## Component 4 — Internationalization (Vietnamese default, EN toggle)
+
+- New `frontend-next/lib/i18n.tsx`: `Locale = "vi" | "en"`, a `LocaleProvider`
+  React context with `useT()` returning `{ t, locale, setLocale }`. Locale
+  persists to `localStorage` key `sentinel_locale`; default is `"vi"`.
+- Dictionaries in `frontend-next/lib/locales/vi.ts` and `en.ts` as flat
+  typed key maps (e.g. `"detail.confidence"`, `"search.placeholder"`,
+  `"eventType.armed_conflict"`). The `en.ts` key set is the source of truth;
+  `vi.ts` must declare the same keys (enforced by a vitest test).
+- `components/LanguageToggle.tsx`: small EN/VI switch rendered in the page
+  header next to the existing controls.
+- Event-type labels are translated client-side from the stored English type
+  keys (`armed_conflict` → "giao tranh vũ trang"), so the DB and API stay
+  English-only.
+- Place names (`hotspots.name`), article titles, and SITREP text are **not**
+  translated.
 
 ## Error handling
 
@@ -146,7 +170,8 @@ the numbered list consistent with the `[N]` markers the LLM emitted.
   `sources_cited`, noise exclusion, 404, ordering without SITREP.
 - `frontend-next/__tests__/` (vitest, TDD per repo convention) — SearchBar
   debounce + keyboard navigation + grouping; citation click → row highlight
-  wiring; api client methods.
+  wiring; api client methods; i18n dictionary key parity (vi covers every en
+  key) and locale persistence.
 - Verification: `pytest tests/` and `cd frontend-next && npm run build && npx vitest run`.
 
 ## Implementation order
@@ -154,5 +179,7 @@ the numbered list consistent with the `[N]` markers the LLM emitted.
 1. Migrations 012/013 + `pipeline/naming.py` + backfill (names visible in API).
 2. `/hotspots/{id}/events` + detail-panel sources list + header rename.
 3. `/search` + SearchBar with Cmd+K.
+4. i18n provider + dictionaries + LanguageToggle, then translate the chrome
+   introduced in steps 2–3 alongside the existing UI.
 
 Each step is independently shippable and demoable.
