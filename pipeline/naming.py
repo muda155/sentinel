@@ -112,3 +112,50 @@ def name_hotspot(conn, lat: float, lon: float) -> str:
     if country_name:
         return country_name
     return f"{lat:.1f}°, {lon:.1f}°"
+
+
+def backfill_names(conn) -> int:
+    """Name hotspots where name IS NULL. Returns rows updated."""
+    with conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT hotspot_id, ST_Y(centroid_geom), ST_X(centroid_geom)
+            FROM hotspots
+            WHERE name IS NULL
+            """
+        )
+        rows = cursor.fetchall()
+        updated = 0
+        for hotspot_id, lat, lon in rows:
+            name = name_hotspot(conn, float(lat), float(lon))
+            cursor.execute(
+                "UPDATE hotspots SET name = %s WHERE hotspot_id = %s",
+                (name, hotspot_id),
+            )
+            updated += 1
+    conn.commit()
+    logger.info("backfilled %d hotspot names", updated)
+    return updated
+
+
+def main() -> None:
+    import argparse
+
+    from pipeline.db import get_pooled_connection
+
+    parser = argparse.ArgumentParser(description="Hotspot naming utilities (FR-14)")
+    parser.add_argument("--backfill", action="store_true",
+                        help="Name all hotspots where name IS NULL")
+    args = parser.parse_args()
+    if not args.backfill:
+        parser.error("nothing to do: pass --backfill")
+    conn, pool = get_pooled_connection()
+    try:
+        backfill_names(conn)
+    finally:
+        pool.return_connection(conn)
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    main()

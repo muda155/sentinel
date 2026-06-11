@@ -1,5 +1,7 @@
 from pipeline.naming import CURATED_PLACES, TYPE_LABELS, resolve_place
 
+import pipeline.naming as naming  # noqa: E402
+
 
 def test_curated_place_hit_inside_radius():
     # Donetsk city coordinates -> Donbas conflict zone (300 km radius)
@@ -49,8 +51,6 @@ def test_all_curated_places_have_valid_fields():
 
 # ── name_hotspot() tests ──────────────────────────────────────────────
 
-import pipeline.naming as naming
-
 
 class _FakeConn:  # never actually used by the stubbed geocoder
     pass
@@ -89,3 +89,48 @@ def test_name_hotspot_never_raises(monkeypatch):
     assert naming.name_hotspot(_FakeConn(), 48.0, 37.8) == "Donbas"
     # Geocode failure outside any zone: degrade to coordinates.
     assert naming.name_hotspot(_FakeConn(), -45.0, -150.0) == "-45.0°, -150.0°"
+
+
+class _BackfillCursor:
+    """Captures executed SQL; serves one unnamed hotspot row."""
+    def __init__(self):
+        self.executed: list[tuple[str, tuple | None]] = []
+        self._rows = [(7, 48.0, 37.8)]  # hotspot_id, lat, lon
+
+    def execute(self, sql, params=None):
+        self.executed.append((" ".join(sql.split()), params))
+
+    def fetchall(self):
+        return self._rows
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class _BackfillConn:
+    def __init__(self):
+        self.cursor_obj = _BackfillCursor()
+        self.committed = False
+
+    def cursor(self):
+        return self.cursor_obj
+
+    def commit(self):
+        self.committed = True
+
+
+def test_backfill_names_updates_null_rows(monkeypatch):
+    monkeypatch.setattr(naming, "name_hotspot",
+                        lambda conn, lat, lon: "Donbas, Ukraine")
+    conn = _BackfillConn()
+    updated = naming.backfill_names(conn)
+    assert updated == 1
+    select_sql = conn.cursor_obj.executed[0][0]
+    assert "WHERE name IS NULL" in select_sql
+    update_sql, update_params = conn.cursor_obj.executed[1]
+    assert "UPDATE hotspots SET name = %s WHERE hotspot_id = %s" in update_sql
+    assert update_params == ("Donbas, Ukraine", 7)
+    assert conn.committed
