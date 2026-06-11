@@ -14,25 +14,27 @@
 --   e=load_recent_events(c,lookback_hours=24); run_clustering_pipeline(e, repository=ClusterRepository(c));
 --   ScoringRepository(c).score_all_hotspots(); p.return_connection(c)"
 
--- 12 diverse source domains across different countries (trust_tier drives trust_score).
+-- 12 diverse source domains across different countries. trust_tier is spec
+-- int 1-4 (migration 017); trust_score is GENERATED from it (1->1.0, 2->0.8,
+-- 3->0.6, else 0.4) and must not be written directly.
 INSERT INTO sources (domain, country_code, country_name, trust_tier) VALUES
-  ('reuters.com', 'GBR', 'United Kingdom', 'A'),
-  ('bbc.co.uk', 'GBR', 'United Kingdom', 'A'),
-  ('aljazeera.net', 'QAT', 'Qatar', 'B'),
-  ('france24.com', 'FRA', 'France', 'B'),
-  ('dw.com', 'DEU', 'Germany', 'A'),
-  ('nytimes.com', 'USA', 'United States', 'A'),
-  ('reuters.in', 'IND', 'India', 'B'),
-  ('tass.ru', 'RUS', 'Russia', 'C'),
-  ('xinhuanet.com', 'CHN', 'China', 'C'),
-  ('jpost.com', 'ISR', 'Israel', 'B'),
-  ('kyivindependent.com', 'UKR', 'Ukraine', 'B'),
-  ('al-monitor.com', 'TUR', 'Turkey', 'C')
+  ('reuters.com', 'GBR', 'United Kingdom', 1),
+  ('bbc.co.uk', 'GBR', 'United Kingdom', 1),
+  ('aljazeera.net', 'QAT', 'Qatar', 2),
+  ('france24.com', 'FRA', 'France', 2),
+  ('dw.com', 'DEU', 'Germany', 1),
+  ('nytimes.com', 'USA', 'United States', 1),
+  ('reuters.in', 'IND', 'India', 2),
+  ('tass.ru', 'RUS', 'Russia', 3),
+  ('xinhuanet.com', 'CHN', 'China', 3),
+  ('jpost.com', 'ISR', 'Israel', 2),
+  ('kyivindependent.com', 'UKR', 'Ukraine', 2),
+  ('al-monitor.com', 'TUR', 'Turkey', 3)
 ON CONFLICT (domain) DO NOTHING;
 
-UPDATE sources SET trust_score = 0.95, trust_tier = 'A' WHERE domain IN ('reuters.com','bbc.co.uk','dw.com','nytimes.com');
-UPDATE sources SET trust_score = 0.75, trust_tier = 'B' WHERE domain IN ('aljazeera.net','france24.com','reuters.in','jpost.com','kyivindependent.com');
-UPDATE sources SET trust_score = 0.45, trust_tier = 'C' WHERE domain IN ('tass.ru','xinhuanet.com','al-monitor.com');
+UPDATE sources SET trust_tier = 1 WHERE domain IN ('reuters.com','bbc.co.uk','dw.com','nytimes.com');
+UPDATE sources SET trust_tier = 2 WHERE domain IN ('aljazeera.net','france24.com','reuters.in','jpost.com','kyivindependent.com');
+UPDATE sources SET trust_tier = 3 WHERE domain IN ('tass.ru','xinhuanet.com','al-monitor.com');
 
 -- Cluster 1: Kyiv (~50.44, 30.52) — diverse country_code per source for high diversity.
 INSERT INTO events (source_system, external_event_id, event_date, cameo_code, country_code, url, title, point_geom, source_id, grid_cell_id) VALUES
