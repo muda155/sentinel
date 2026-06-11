@@ -12,6 +12,7 @@ class Hotspot(BaseModel):
     convergence_score: float
     alert_level: str
     event_count: int
+    name: str | None = None
 
 
 class HotspotSummary(BaseModel):

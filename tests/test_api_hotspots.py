@@ -25,6 +25,14 @@ def test_hotspots_endpoint_shape():
                           "convergence_score", "alert_level", "event_count"}
 
 
+def test_hotspots_include_name_field():
+    client = TestClient(create_app())
+    r = client.get("/hotspots?limit=5", headers=_AUTH)
+    assert r.status_code == 200
+    for h in r.json():
+        assert "name" in h  # may be None for unbackfilled rows
+
+
 def test_health():
     client = TestClient(create_app())
     assert client.get("/health").json() == {"status": "ok"}
