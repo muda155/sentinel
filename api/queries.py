@@ -118,6 +118,98 @@ def fetch_events_bbox(conn, *, sw_lat, sw_lon, ne_lat, ne_lon, start, end,
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
+_HOTSPOT_SELECT = """
+    SELECT h.hotspot_id, h.name, ST_Y(h.centroid_geom) lat, ST_X(h.centroid_geom) lon,
+           COALESCE(h.conf_score,0) conf_score, h.event_count,
+           COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
+           COALESCE(h.alert_level,'Medium') alert_level
+    FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
+"""
+
+
+def _rows_to_dicts(cur) -> list[dict]:
+    cols = [c[0] for c in cur.description]
+    return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def fetch_search(conn, q: str) -> dict[str, list]:
+    """Grouped search (FR-15): hotspot names, article titles (FTS), source domains."""
+    q = (q or "").strip()
+    if len(q) < 2:
+        return {"hotspots": [], "events": [], "sources": []}
+    pattern = f"%{q}%"
+    with conn.cursor() as cur:
+        cur.execute(
+            _HOTSPOT_SELECT + """
+            WHERE h.name ILIKE %s
+            ORDER BY h.conf_score DESC NULLS LAST, h.hotspot_id DESC
+            LIMIT 10
+            """,
+            (pattern,),
+        )
+        hotspots = _rows_to_dicts(cur)
+
+        cur.execute(
+            """
+            SELECT e.event_id, e.title, e.url, e.event_date,
+                   h.hotspot_id, h.name, ST_Y(h.centroid_geom) h_lat,
+                   ST_X(h.centroid_geom) h_lon, COALESCE(h.conf_score,0) h_conf,
+                   h.event_count h_event_count,
+                   COALESCE(g.convergence_score,h.convergence_score,0) h_convergence,
+                   COALESCE(h.alert_level,'Medium') h_alert
+            FROM events e
+            JOIN event_hotspot eh ON eh.event_id = e.event_id
+            JOIN hotspots h ON h.hotspot_id = eh.hotspot_id
+            LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
+            WHERE e.title_tsv @@ websearch_to_tsquery('english', %s)
+            ORDER BY e.event_date DESC, e.event_id DESC
+            LIMIT 10
+            """,
+            (q,),
+        )
+        events = [
+            {
+                "event_id": r["event_id"], "title": r["title"], "url": r["url"],
+                "domain": _domain(r["url"]), "event_date": r["event_date"],
+                "hotspot": {
+                    "hotspot_id": r["hotspot_id"], "name": r["name"],
+                    "lat": r["h_lat"], "lon": r["h_lon"], "conf_score": r["h_conf"],
+                    "convergence_score": r["h_convergence"],
+                    "alert_level": r["h_alert"], "event_count": r["h_event_count"],
+                },
+            }
+            for r in _rows_to_dicts(cur)
+        ]
+
+        cur.execute(
+            """
+            SELECT s.source_id, s.domain, s.trust_tier
+            FROM sources s
+            WHERE s.domain ILIKE %s
+            ORDER BY s.source_id
+            LIMIT 5
+            """,
+            (pattern,),
+        )
+        sources = _rows_to_dicts(cur)
+        for src in sources:
+            cur.execute(
+                _HOTSPOT_SELECT + """
+                WHERE h.hotspot_id IN (
+                    SELECT DISTINCT eh.hotspot_id
+                    FROM events e JOIN event_hotspot eh ON eh.event_id = e.event_id
+                    WHERE e.source_id = %s
+                )
+                ORDER BY h.conf_score DESC NULLS LAST
+                LIMIT 5
+                """,
+                (src["source_id"],),
+            )
+            src["hotspots"] = _rows_to_dicts(cur)
+
+    return {"hotspots": hotspots, "events": events, "sources": sources}
+
+
 def _domain(url: str | None) -> str:
     if not url:
         return ""

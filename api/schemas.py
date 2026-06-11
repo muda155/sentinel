@@ -52,6 +52,28 @@ class HotspotEvent(BaseModel):
     citation_index: int | None = None
 
 
+class SearchEvent(BaseModel):
+    event_id: int
+    title: str | None = None
+    url: str | None = None
+    domain: str
+    event_date: datetime
+    hotspot: Hotspot
+
+
+class SearchSource(BaseModel):
+    source_id: int
+    domain: str
+    trust_tier: int | None = None
+    hotspots: list[Hotspot]
+
+
+class SearchResults(BaseModel):
+    hotspots: list[Hotspot]
+    events: list[SearchEvent]
+    sources: list[SearchSource]
+
+
 class StreamEvent(BaseModel):
     hotspot_id: int
     lat: float
