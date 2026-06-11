@@ -1,0 +1,27 @@
+import type { MessageKey } from "./en";
+
+export const vi: Record<MessageKey, string> = {
+  "header.heatmap": "Bản đồ nhiệt hội tụ",
+  "header.globe": "Chế độ quả cầu",
+  "header.logout": "Đăng xuất",
+  "detail.confidence": "Độ tin cậy (độ tin cậy nguồn)",
+  "detail.convergence": "Độ hội tụ (đồng xuất hiện đa lĩnh vực)",
+  "detail.aiBrief": "Bản tin tình báo AI",
+  "detail.noSitrep": "Chưa có SITREP (dưới ngưỡng LLM).",
+  "detail.conflictDetected": "Phát hiện mâu thuẫn giữa các nguồn.",
+  "detail.loading": "Đang tải…",
+  "detail.sources": "Nguồn tin",
+  "detail.events": "sự kiện",
+  "detail.trustTier": "Bậc tin cậy",
+  "search.placeholder": "Tìm điểm nóng, bài báo, nguồn tin…",
+  "search.noResults": "Không có kết quả",
+  "search.unavailable": "Tìm kiếm không khả dụng",
+  "search.group.hotspots": "Điểm nóng",
+  "search.group.events": "Bài báo",
+  "search.group.sources": "Nguồn tin",
+  "eventType.military_conflict": "xung đột quân sự",
+  "eventType.armed_conflict": "giao tranh vũ trang",
+  "eventType.civilian_violence": "bạo lực nhằm vào dân thường",
+  "eventType.civil_unrest": "biểu tình",
+  "eventType.unknown": "chưa phân loại",
+};
