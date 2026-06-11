@@ -1,6 +1,5 @@
-from pipeline.naming import CURATED_PLACES, TYPE_LABELS, resolve_place
-
 import pipeline.naming as naming  # noqa: E402
+from pipeline.naming import CURATED_PLACES, TYPE_LABELS, resolve_place
 
 
 def test_curated_place_hit_inside_radius():

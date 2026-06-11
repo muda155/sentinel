@@ -42,6 +42,7 @@ pytest_live = pytest.mark.skipif(
 @pytest_live
 def test_hotspot_events_endpoint_shape_and_404():
     from fastapi.testclient import TestClient
+
     from api.app import create_app
     from api.auth import create_token
 

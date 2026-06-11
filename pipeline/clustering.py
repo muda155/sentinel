@@ -12,8 +12,8 @@ from sklearn.cluster import DBSCAN
 
 from pipeline.db import get_pooled_connection
 from pipeline.llm_verifier import verify_hotspots_with_llm
-from pipeline.scoring import ScoringRepository
 from pipeline.naming import name_hotspot
+from pipeline.scoring import ScoringRepository
 
 EARTH_RADIUS_KM = 6371.0088
 

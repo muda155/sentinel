@@ -32,6 +32,7 @@ pytest_live = pytest.mark.skipif(
 @pytest_live
 def test_search_endpoint_groups_and_auth():
     from fastapi.testclient import TestClient
+
     from api.app import create_app
     from api.auth import create_token
 
@@ -55,6 +56,7 @@ def test_search_endpoint_groups_and_auth():
 def test_search_common_domain_returns_200():
     """Regression: q=com must not 500 — trust_tier is text 'A','B','C', not int."""
     from fastapi.testclient import TestClient
+
     from api.app import create_app
     from api.auth import create_token
 
