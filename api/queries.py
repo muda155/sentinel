@@ -3,6 +3,7 @@ REST and the (deprecated) dashboard return the same numbers."""
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlparse
 
 
 def fetch_grid_cells(conn, *, min_convergence=1.0) -> list[dict]:
@@ -115,3 +116,54 @@ def fetch_events_bbox(conn, *, sw_lat, sw_lon, ne_lat, ne_lon, start, end,
         cur.execute(q, (sw_lon, sw_lat, ne_lon, ne_lat, start, end, cursor, page_size))
         cols = [c[0] for c in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def _domain(url: str | None) -> str:
+    if not url:
+        return ""
+    return urlparse(url).netloc.lower()
+
+
+def assign_citation_indices(rows: list[dict]) -> list[dict]:
+    """1-based citation_index for url-bearing rows, in input order."""
+    n = 0
+    for row in rows:
+        row["domain"] = _domain(row.get("url"))
+        if row.get("url"):
+            n += 1
+            row["citation_index"] = n
+        else:
+            row["citation_index"] = None
+    return rows
+
+
+def fetch_hotspot_events(conn, hotspot_id: int) -> list[dict] | None:
+    """Linked events for a hotspot; None if the hotspot does not exist.
+    ORDER BY must stay in lockstep with LLMRepository.fetch_hotspot_articles."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM hotspots WHERE hotspot_id = %s", (hotspot_id,))
+        if cur.fetchone() is None:
+            return None
+        cur.execute(
+            """
+            SELECT e.event_id, e.title, e.url, e.source_system, e.event_date,
+                   CASE
+                     WHEN e.source_system = 'GDELT' THEN 'military_conflict'
+                     WHEN lower(e.cameo_code) IN
+                          ('armed_conflict','civilian_violence','civil_unrest')
+                       THEN lower(e.cameo_code)
+                     ELSE 'unknown'
+                   END AS event_type_label,
+                   s.trust_tier, COALESCE(s.trust_score, 0.4) AS trust_score
+            FROM event_hotspot eh
+            JOIN events e ON e.event_id = eh.event_id
+            LEFT JOIN sources s ON e.source_id = s.source_id
+            WHERE eh.hotspot_id = %s
+            ORDER BY (e.url IS NULL OR e.url = ''),
+                     e.event_date DESC, e.event_id DESC
+            """,
+            (hotspot_id,),
+        )
+        cols = [c[0] for c in cur.description]
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    return assign_citation_indices(rows)

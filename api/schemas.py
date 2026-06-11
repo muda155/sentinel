@@ -1,6 +1,8 @@
 """Pydantic v2 response models matching Section 6.3."""
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel
 
 
@@ -35,6 +37,19 @@ class Source(BaseModel):
     trust_tier: int | None = None
     country_code: str | None = None
     country_name: str | None = None
+
+
+class HotspotEvent(BaseModel):
+    event_id: int
+    title: str | None = None
+    url: str | None = None
+    domain: str
+    source_system: str
+    event_type_label: str
+    event_date: datetime
+    trust_tier: str | None = None
+    trust_score: float
+    citation_index: int | None = None
 
 
 class StreamEvent(BaseModel):
