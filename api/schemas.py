@@ -34,7 +34,7 @@ class LoginResponse(BaseModel):
 class Source(BaseModel):
     source_id: int
     domain: str
-    trust_tier: int | None = None
+    trust_tier: str | None = None
     country_code: str | None = None
     country_name: str | None = None
 
@@ -64,7 +64,7 @@ class SearchEvent(BaseModel):
 class SearchSource(BaseModel):
     source_id: int
     domain: str
-    trust_tier: int | None = None
+    trust_tier: str | None = None
     hotspots: list[Hotspot]
 
 

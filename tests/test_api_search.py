@@ -49,3 +49,18 @@ def test_search_endpoint_groups_and_auth():
         assert set(e) >= {"event_id", "title", "url", "domain", "event_date", "hotspot"}
     for s in body["sources"]:
         assert set(s) >= {"source_id", "domain", "trust_tier", "hotspots"}
+
+
+@pytest_live
+def test_search_common_domain_returns_200():
+    """Regression: q=com must not 500 — trust_tier is text 'A','B','C', not int."""
+    from fastapi.testclient import TestClient
+    from api.app import create_app
+    from api.auth import create_token
+
+    auth = {"Authorization": f"Bearer {create_token(username='test', role='analyst')}"}
+    client = TestClient(create_app())
+    r = client.get("/search?q=com", headers=auth)
+    assert r.status_code == 200
+    for s in r.json()["sources"]:
+        assert isinstance(s["trust_tier"], (str, type(None)))
