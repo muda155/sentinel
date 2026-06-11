@@ -45,3 +45,47 @@ def test_all_curated_places_have_valid_fields():
         assert p["kind"] in ("conflict_zone", "waterway", "strategic_city")
         assert -90 <= p["lat"] <= 90 and -180 <= p["lon"] <= 180
         assert p["radius_km"] > 0 and p["name"]
+
+
+# ── name_hotspot() tests ──────────────────────────────────────────────
+
+import pipeline.naming as naming
+
+
+class _FakeConn:  # never actually used by the stubbed geocoder
+    pass
+
+
+def test_name_hotspot_place_and_country(monkeypatch):
+    monkeypatch.setattr(naming, "reverse_geocode_country",
+                        lambda conn, lat, lon: ("UKR", "Ukraine"))
+    assert naming.name_hotspot(_FakeConn(), 48.0, 37.8) == "Donbas, Ukraine"
+
+
+def test_name_hotspot_place_equals_country_no_duplication(monkeypatch):
+    monkeypatch.setattr(naming, "reverse_geocode_country",
+                        lambda conn, lat, lon: ("SDN", "Sudan"))
+    assert naming.name_hotspot(_FakeConn(), 15.5, 32.5) == "Sudan"
+
+
+def test_name_hotspot_country_fallback(monkeypatch):
+    monkeypatch.setattr(naming, "reverse_geocode_country",
+                        lambda conn, lat, lon: ("BRA", "Brazil"))
+    # Amazon interior: no curated place
+    assert naming.name_hotspot(_FakeConn(), -4.0, -63.0) == "Brazil"
+
+
+def test_name_hotspot_coordinate_fallback(monkeypatch):
+    monkeypatch.setattr(naming, "reverse_geocode_country",
+                        lambda conn, lat, lon: None)
+    assert naming.name_hotspot(_FakeConn(), -45.0, -150.0) == "-45.0°, -150.0°"
+
+
+def test_name_hotspot_never_raises(monkeypatch):
+    def boom(conn, lat, lon):
+        raise RuntimeError("db down")
+    monkeypatch.setattr(naming, "reverse_geocode_country", boom)
+    # Geocode failure inside a curated zone: still get the place name.
+    assert naming.name_hotspot(_FakeConn(), 48.0, 37.8) == "Donbas"
+    # Geocode failure outside any zone: degrade to coordinates.
+    assert naming.name_hotspot(_FakeConn(), -45.0, -150.0) == "-45.0°, -150.0°"

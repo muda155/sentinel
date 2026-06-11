@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 import math
 
+from pipeline.geocode import reverse_geocode_country
+
 logger = logging.getLogger(__name__)
 
 # Display labels for classify_event_type() keys. The API ships the raw key;
@@ -91,3 +93,22 @@ def resolve_place(lat: float, lon: float) -> dict | None:
         if best is not None:
             return best
     return None
+
+
+def name_hotspot(conn, lat: float, lon: float) -> str:
+    """Best-effort display name. Never raises (FR-14)."""
+    place = resolve_place(lat, lon)
+    country_name: str | None = None
+    try:
+        geo = reverse_geocode_country(conn, lat, lon)
+        country_name = geo[1] if geo else None
+    except Exception:
+        logger.warning("reverse geocode failed for (%s, %s)", lat, lon, exc_info=True)
+
+    if place is not None:
+        if country_name and country_name != place["name"]:
+            return f"{place['name']}, {country_name}"
+        return place["name"]
+    if country_name:
+        return country_name
+    return f"{lat:.1f}°, {lon:.1f}°"
