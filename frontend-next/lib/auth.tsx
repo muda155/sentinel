@@ -1,11 +1,12 @@
 "use client";
-import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, useMemo, useEffect, type ReactNode } from "react";
 
 type User = { username: string; role: "admin" | "analyst" };
 
 type AuthCtx = {
   token: string | null;
   user: User | null;
+  hydrated: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => void;
 };
@@ -13,6 +14,7 @@ type AuthCtx = {
 const AuthContext = createContext<AuthCtx>({
   token: null,
   user: null,
+  hydrated: false,
   login: async () => {},
   logout: () => {},
 });
@@ -30,9 +32,12 @@ function decodePayload(token: string): User | null {
 const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(() =>
-    typeof window !== "undefined" ? localStorage.getItem("sentinel_token") : null
-  );
+  const [token, setToken] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    setToken(localStorage.getItem("sentinel_token"));
+    setHydrated(true);
+  }, []);
   const user = useMemo(() => (token ? decodePayload(token) : null), [token]);
 
   const login = useCallback(async (username: string, password: string) => {
@@ -53,7 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ token, user, login, logout }}>
+    <AuthContext.Provider value={{ token, user, hydrated, login, logout }}>
       {children}
     </AuthContext.Provider>
   );

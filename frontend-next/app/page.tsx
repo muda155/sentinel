@@ -11,7 +11,7 @@ const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
 const GlobeView = dynamic(() => import("@/components/GlobeToggle"), { ssr: false });
 
 export default function Page() {
-  const { token, user, logout } = useAuth();
+  const { token, user, hydrated, logout } = useAuth();
   const router = useRouter();
   const [selected, setSelected] = useState<Hotspot | null>(null);
   const [showHeat, setShowHeat] = useState(false);
@@ -19,13 +19,14 @@ export default function Page() {
   const [globe, setGlobe] = useState(false);
 
   useEffect(() => {
-    if (token === null) router.push("/login");
-  }, [token, router]);
+    if (hydrated && token === null) router.push("/login");
+  }, [hydrated, token, router]);
 
   useEffect(() => {
     if (showHeat && cells.length === 0 && token) api.gridCells(token).then(setCells).catch(() => {});
   }, [showHeat, cells.length, token]);
 
+  if (!hydrated) return null; // avoid hydration mismatch
   if (!token || !user) return null; // redirecting
 
   const heatLayer = showHeat

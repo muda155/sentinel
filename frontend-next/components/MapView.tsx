@@ -36,9 +36,13 @@ export default function MapView({
     return cleanup;
   }, [token]);
 
+  // Render highest-confidence markers last so they paint on top of lower-score
+  // ones when hotspots overlap (green > yellow > grey z-order).
+  const orderedHotspots = [...hotspots].sort((a, b) => a.conf_score - b.conf_score);
+
   const hotspotLayer = new ScatterplotLayer<Hotspot>({
     id: "hotspots",
-    data: hotspots,
+    data: orderedHotspots,
     pickable: true,
     radiusUnits: "pixels",
     getPosition: (d) => [d.lon, d.lat],
@@ -49,7 +53,7 @@ export default function MapView({
     getLineWidth: (d) => (d.alert_level === "Medium" ? 0 : 3),
     getLineColor: (d) => ringColor(d.alert_level),
     onClick: (info) => info.object && onSelect?.(info.object as Hotspot),
-    updateTriggers: { getFillColor: hotspots, getLineColor: hotspots },
+    updateTriggers: { getFillColor: orderedHotspots, getLineColor: orderedHotspots },
   });
 
   return (
