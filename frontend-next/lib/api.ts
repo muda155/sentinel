@@ -20,7 +20,7 @@ export type Source = {
 export type HotspotEvent = {
   event_id: number; title: string | null; url: string | null; domain: string;
   source_system: string; event_type_label: string; event_date: string;
-  trust_tier: string | null; trust_score: number; citation_index: number | null;
+  trust_tier: number | null; trust_score: number; citation_index: number | null;
 };
 
 export type SearchEvent = {
@@ -28,7 +28,7 @@ export type SearchEvent = {
   event_date: string; hotspot: Hotspot;
 };
 export type SearchSource = {
-  source_id: number; domain: string; trust_tier: string | null; hotspots: Hotspot[];
+  source_id: number; domain: string; trust_tier: number | null; hotspots: Hotspot[];
 };
 export type SearchResults = {
   hotspots: Hotspot[]; events: SearchEvent[]; sources: SearchSource[];
