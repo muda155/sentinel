@@ -385,3 +385,61 @@ def test_acled_fetch_reauths_on_401(monkeypatch: pytest.MonkeyPatch) -> None:
     assert get_mock.call_count == 2
     # one initial password grant + one forced re-auth after the 401
     assert post_mock.call_count == 2
+
+
+def test_acled_fetch_multipage_pagination(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pagination fetches consecutive pages and stops when a page is shorter than page_size."""
+    from unittest.mock import MagicMock
+
+    from pipeline.ingestion import ACLEDIngestor
+
+    monkeypatch.setattr("pipeline.ingestion.REDIS_AVAILABLE", False)
+
+    page_1_events = [
+        {
+            "event_id_cnty": f"UKR{i:04d}",
+            "event_date": "2026-06-10",
+            "latitude": "50.45",
+            "longitude": "30.52",
+            "country": "Ukraine",
+            "event_type": "Battles",
+            "source": "Reuters",
+        }
+        for i in range(3)
+    ]
+    page_2_events = [
+        {
+            "event_id_cnty": "UKR1001",
+            "event_date": "2026-06-10",
+            "latitude": "50.45",
+            "longitude": "30.52",
+            "country": "Ukraine",
+            "event_type": "Protests",
+            "source": "AFP",
+        }
+    ]
+
+    page_1_response = MagicMock()
+    page_1_response.status_code = 200
+    page_1_response.json.return_value = {"data": page_1_events}
+    page_2_response = MagicMock()
+    page_2_response.status_code = 200
+    page_2_response.json.return_value = {"data": page_2_events}
+    get_mock = MagicMock(side_effect=[page_1_response, page_2_response])
+    monkeypatch.setattr("pipeline.ingestion.requests.get", get_mock)
+
+    ingestor = ACLEDIngestor(username="user@test.com", password="pw")
+    ingestor.page_size = 3  # smaller for test convenience
+
+    monkeypatch.setattr(
+        ingestor, "_get_access_token", lambda force_refresh=False: "tok123"
+    )
+
+    df = ingestor._fetch_from_api(days=7)
+
+    assert len(df) == 4
+    assert get_mock.call_count == 2
+    # page 1 params
+    assert get_mock.call_args_list[0].kwargs["params"]["page"] == 1
+    # page 2 params
+    assert get_mock.call_args_list[1].kwargs["params"]["page"] == 2

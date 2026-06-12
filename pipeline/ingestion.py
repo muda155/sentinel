@@ -656,6 +656,7 @@ class ACLEDIngestor:
         )
         self.base_url = "https://acleddata.com/api/acled/read"
         self.page_size = 5000  # ACLED maximum rows per request
+        self.max_pages = 50  # defensive cap; API may not honour page param
         self.rate_limit = 1.0  # 1 request per second (academic tier)
         self.max_retries = 3
         self._access_token: str | None = None
@@ -920,8 +921,9 @@ class ACLEDIngestor:
 
         all_events: list[dict] = []
         page = 1
+        seen_first_id: str | None = None
 
-        while True:
+        while page <= self.max_pages:
             page_params = {**params, "page": page}
             data = self._fetch_page_with_retry(page_params)
             if data is None:
@@ -939,6 +941,19 @@ class ACLEDIngestor:
             if not events_on_page:
                 break
 
+            # Detect API silently ignoring page param (returning same data)
+            if events_on_page:
+                first_id = events_on_page[0].get("event_id_cnty", "")
+                if seen_first_id is not None and first_id == seen_first_id:
+                    logging.warning(
+                        "ACLED page %d returned same data as page %d — "
+                        "breaking pagination loop",
+                        page,
+                        page - 1,
+                    )
+                    break
+                seen_first_id = first_id
+
             all_events.extend(events_on_page)
 
             if len(events_on_page) < self.page_size:
@@ -946,6 +961,12 @@ class ACLEDIngestor:
 
             page += 1
             time.sleep(self.rate_limit)
+
+        if page > self.max_pages:
+            logging.warning(
+                "ACLED pagination hit cap of %d pages — response may be truncated",
+                self.max_pages,
+            )
 
         if not all_events:
             return pd.DataFrame()
@@ -964,6 +985,15 @@ class ACLEDIngestor:
         for attempt in range(1, self.max_retries + 1):
             try:
                 token = self._get_access_token()
+            except requests.RequestException as exc:
+                logging.error(
+                    "ACLED token acquisition failed — check ACLED_EMAIL/"
+                    "ACLED_PASSWORD: %s",
+                    exc,
+                )
+                return None
+
+            try:
                 response = requests.get(
                     self.base_url,
                     params=params,
