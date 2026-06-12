@@ -207,7 +207,7 @@ The system shall fetch the latest GDELT 2.0 export CSV every 15 minutes using 
 
 **FR‑1b‑ACLED_FETCH**  
 The system shall fetch the latest events from the ACLED API (academic access tier) every 24 hours, covering armed conflict, protests, and violence against civilians. Responses are cached in Redis (TTL = SENTINEL_ACLED_POLL_HOURS × 3600 seconds) to avoid redundant API calls between ACLED's 24-hour update cycle.  
-**Input:** API key via `ACLED_API_KEY` env var; query parameters for the latest date range.  
+**Input:** myACLED OAuth credentials via `ACLED_EMAIL`/`ACLED_PASSWORD` env vars (password grant, `client_id=acled`); query parameters for the latest date range.  
 **Output:** A `pandas.DataFrame` with columns: `event_id_cnty`, `event_date`, `event_type`, `admin1`, `location`, `latitude`, `longitude`, `source`, `fatalities`.  
 **Acceptance Criteria:**  
 ☑ ACLED events are normalized to the same `events` table schema (with `source_system='ACLED'` discriminator column).  
@@ -749,7 +749,8 @@ NVIDIA_NIM_ENDPOINT=https://api.nvcf.nvidia.com/v2/your-model
 OLLAMA_ENDPOINT=http://localhost:11434
 
 # External APIs
-ACLED_API_KEY=your_acled_key_here
+ACLED_EMAIL=your_email_here
+ACLED_PASSWORD=your_password_here
 
 # Pipeline Parameters (all have defaults if omitted)
 SENTINEL_LOOKBACK_HOURS=24

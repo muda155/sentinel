@@ -125,7 +125,7 @@ All config is env-driven via `sentinel.env` (copy from `sentinel.env.example`). 
   `SENTINEL_LLM_THRESHOLD` (40), `SENTINEL_POLL_INTERVAL_S` (900).
 - `NVIDIA_NIM_ENDPOINT`, `NVIDIA_NIM_API_KEY`, `NVIDIA_NIM_MODEL` — LLM SITREP step
   (skipped if absent; falls back to `OLLAMA_ENDPOINT`).
-- `ACLED_API_KEY` — enables ACLED ingestion (GDELT-only without it).
+- `ACLED_EMAIL` / `ACLED_PASSWORD` — myACLED OAuth credentials; enable ACLED ingestion (GDELT-only without them).
 
 Frontend build args (compose): `NEXT_PUBLIC_API_BASE` (default `http://localhost:8000`),
 `NEXT_PUBLIC_MAP_STYLE`. Changing these requires rebuilding `frontend-next`.
