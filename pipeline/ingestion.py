@@ -910,13 +910,12 @@ class ACLEDIngestor:
         start_date = end_date - timedelta(days=days)
 
         params: dict = {
-            "key": self.api_key,
-            "email": self.email,
             "event_date": (
                 f"{start_date.strftime('%Y-%m-%d')}"
                 f"|{end_date.strftime('%Y-%m-%d')}"
             ),
             "event_date_where": "BETWEEN",
+            "limit": self.page_size,
         }
 
         all_events: list[dict] = []
@@ -933,14 +932,16 @@ class ACLEDIngestor:
                 )
                 break
 
-            events_on_page = data.get("data", [])
+            if isinstance(data, dict):
+                events_on_page = data.get("data", [])
+            else:
+                events_on_page = data
             if not events_on_page:
                 break
 
             all_events.extend(events_on_page)
 
-            # Check if more pages exist (ACLED returns max ~500 per page)
-            if len(events_on_page) < 500:
+            if len(events_on_page) < self.page_size:
                 break
 
             page += 1
@@ -955,15 +956,30 @@ class ACLEDIngestor:
     def _fetch_page_with_retry(self, params: dict) -> dict | None:
         """Fetch a single ACLED API page with exponential backoff retry.
 
+        On HTTP 401 the cached token is discarded and a fresh password
+        grant is performed before the next attempt.
+
         Returns parsed JSON dict on success, ``None`` after exhausting retries.
         """
         for attempt in range(1, self.max_retries + 1):
             try:
+                token = self._get_access_token()
                 response = requests.get(
-                    self.base_url, params=params, timeout=30
+                    self.base_url,
+                    params=params,
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=30,
                 )
                 if response.status_code == 200:
                     return response.json()
+                elif response.status_code == 401:
+                    backoff = 1
+                    logging.warning(
+                        "ACLED token rejected (401), re-auth %d/%d",
+                        attempt,
+                        self.max_retries,
+                    )
+                    self._get_access_token(force_refresh=True)
                 elif response.status_code == 429:
                     backoff = 2 ** attempt
                     logging.warning(
