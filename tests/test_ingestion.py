@@ -180,7 +180,7 @@ def test_acled_insert_to_db(monkeypatch: pytest.MonkeyPatch) -> None:
         MagicMock(return_value="1x1_LAT48_LON2"),
     )
 
-    ingestor = ACLEDIngestor(api_key="test_key", email="test@test.com")
+    ingestor = ACLEDIngestor(username="test@test.com", password="test_pw")
     df = pd.DataFrame(
         {
             "event_id_cnty": ["TEST001"],
@@ -242,9 +242,67 @@ def test_acled_fetch_cache_hit(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("pipeline.ingestion.REDIS_AVAILABLE", True)
     monkeypatch.setattr("pipeline.ingestion._redis_lib", mock_redis_lib)
 
-    ingestor = ACLEDIngestor(api_key="test_key", email="test@test.com")
+    ingestor = ACLEDIngestor(username="test@test.com", password="test_pw")
     df = ingestor.fetch_events(days=7)
 
     assert len(df) == 1
     assert df.iloc[0]["event_id_cnty"] == "CACHED001"
     mock_redis.get.assert_called()
+
+
+def test_acled_oauth_token_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Token is fetched via password grant against the myACLED OAuth endpoint."""
+    from unittest.mock import MagicMock
+
+    from pipeline.ingestion import ACLEDIngestor
+
+    monkeypatch.setattr("pipeline.ingestion.REDIS_AVAILABLE", False)
+
+    token_response = MagicMock()
+    token_response.status_code = 200
+    token_response.json.return_value = {
+        "access_token": "tok123",
+        "refresh_token": "ref456",
+        "expires_in": 86400,
+        "token_type": "Bearer",
+    }
+    post_mock = MagicMock(return_value=token_response)
+    monkeypatch.setattr("pipeline.ingestion.requests.post", post_mock)
+
+    ingestor = ACLEDIngestor(username="user@test.com", password="pw")
+    token = ingestor._get_access_token()
+
+    assert token == "tok123"
+    call = post_mock.call_args
+    assert call.args[0] == "https://acleddata.com/oauth/token"
+    assert call.kwargs["data"] == {
+        "username": "user@test.com",
+        "password": "pw",
+        "grant_type": "password",
+        "client_id": "acled",
+        "scope": "authenticated",
+    }
+
+
+def test_acled_token_reused_until_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A second token request within the validity window hits the in-memory cache."""
+    from unittest.mock import MagicMock
+
+    from pipeline.ingestion import ACLEDIngestor
+
+    monkeypatch.setattr("pipeline.ingestion.REDIS_AVAILABLE", False)
+
+    token_response = MagicMock()
+    token_response.status_code = 200
+    token_response.json.return_value = {
+        "access_token": "tok123",
+        "expires_in": 86400,
+    }
+    post_mock = MagicMock(return_value=token_response)
+    monkeypatch.setattr("pipeline.ingestion.requests.post", post_mock)
+
+    ingestor = ACLEDIngestor(username="user@test.com", password="pw")
+
+    assert ingestor._get_access_token() == "tok123"
+    assert ingestor._get_access_token() == "tok123"
+    assert post_mock.call_count == 1
