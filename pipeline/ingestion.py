@@ -627,6 +627,11 @@ def _register_acled_source(cursor, domain: str) -> int | None:
 class ACLEDIngestor:
     """Fetch and ingest ACLED (Armed Conflict Location & Event Data) events.
 
+    Authenticates against the myACLED OAuth endpoint (password grant,
+    ``client_id=acled``) and calls the current ACLED API at
+    ``https://acleddata.com/api/acled/read`` with a Bearer token.
+    Access tokens are valid 24h; cached in Redis with in-memory fallback.
+
     Normalises ACLED events to Sentinel's events table schema with
     ``source_system='ACLED'`` discriminator. Uses Redis cache to respect
     ACLED's 24-hour update cadence and avoid redundant API calls.
@@ -634,21 +639,27 @@ class ACLEDIngestor:
     Rate limit: 1 request/second (academic access tier).
     """
 
+    TOKEN_URL = "https://acleddata.com/oauth/token"
+    TOKEN_CACHE_KEY = "acled:oauth:access_token"
+
     def __init__(
         self,
-        api_key: str | None = None,
-        email: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
         cache_ttl: int | None = None,
     ):
-        self.api_key = api_key or os.getenv("ACLED_API_KEY", "")
-        self.email = email or os.getenv("ACLED_EMAIL", "")
+        self.username = username or os.getenv("ACLED_EMAIL", "")
+        self.password = password or os.getenv("ACLED_PASSWORD", "")
         poll_hours = int(os.getenv("SENTINEL_ACLED_POLL_HOURS", "24"))
         self.cache_ttl = (
             cache_ttl if cache_ttl is not None else poll_hours * 3600
         )
-        self.base_url = "https://api.acleddata.com/acled/read"
+        self.base_url = "https://acleddata.com/api/acled/read"
+        self.page_size = 5000  # ACLED maximum rows per request
         self.rate_limit = 1.0  # 1 request per second (academic tier)
         self.max_retries = 3
+        self._access_token: str | None = None
+        self._token_expires_at: float = 0.0
 
         # Redis cache (graceful fallback if unavailable)
         self._redis = None
@@ -832,6 +843,66 @@ class ACLEDIngestor:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _request_token(self) -> tuple[str, int]:
+        """Request a new access token via OAuth password grant.
+
+        Returns:
+            Tuple of (access_token, expires_in_seconds).
+        """
+        response = requests.post(
+            self.TOKEN_URL,
+            data={
+                "username": self.username,
+                "password": self.password,
+                "grant_type": "password",
+                "client_id": "acled",
+                "scope": "authenticated",
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return payload["access_token"], int(payload.get("expires_in", 86400))
+
+    def _get_access_token(self, force_refresh: bool = False) -> str:
+        """Return a valid Bearer token, fetching a new one if needed.
+
+        Checks in-memory expiry first, then Redis, then performs a
+        password grant. A 60s safety margin avoids using tokens at the
+        edge of their 24h validity window.
+        """
+        now = time.time()
+        if (
+            not force_refresh
+            and self._access_token
+            and now < self._token_expires_at
+        ):
+            return self._access_token
+
+        if not force_refresh and self._redis is not None:
+            try:
+                cached = self._redis.get(self.TOKEN_CACHE_KEY)
+                if cached:
+                    ttl = int(self._redis.ttl(self.TOKEN_CACHE_KEY) or 0)
+                    if ttl > 0:
+                        self._access_token = cached.decode("utf-8")
+                        self._token_expires_at = now + ttl
+                        return self._access_token
+            except Exception as exc:
+                logging.warning("Redis token cache read failed: %s", exc)
+
+        token, expires_in = self._request_token()
+        self._access_token = token
+        self._token_expires_at = now + max(expires_in - 60, 60)
+        if self._redis is not None:
+            try:
+                self._redis.setex(
+                    self.TOKEN_CACHE_KEY, max(expires_in - 60, 60), token
+                )
+            except Exception as exc:
+                logging.warning("Redis token cache write failed: %s", exc)
+        return token
 
     def _fetch_from_api(self, days: int) -> pd.DataFrame:
         """Fetch events from ACLED API with retry and pagination."""
