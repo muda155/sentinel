@@ -1080,16 +1080,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main_acled(args: argparse.Namespace) -> int:
     """Run ACLED ingestion (FR-1b)."""
-    api_key = os.getenv("ACLED_API_KEY", "")
-    email = os.getenv("ACLED_EMAIL", "")
-    if not api_key or not email:
+    username = os.getenv("ACLED_EMAIL", "")
+    password = os.getenv("ACLED_PASSWORD", "")
+    if not username or not password:
         print(
-            "Warning: ACLED_API_KEY or ACLED_EMAIL not set. "
+            "Warning: ACLED_EMAIL or ACLED_PASSWORD not set. "
             "Skipping ACLED fetch."
         )
         return 0
 
-    ingestor = ACLEDIngestor(api_key=api_key, email=email)
+    ingestor = ACLEDIngestor(username=username, password=password)
     print(f"Fetching ACLED events for last {args.acled_days} days...")
     df = ingestor.fetch_events(days=args.acled_days)
     print(f"Fetched {len(df)} ACLED events")
