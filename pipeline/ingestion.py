@@ -627,6 +627,11 @@ def _register_acled_source(cursor, domain: str) -> int | None:
 class ACLEDIngestor:
     """Fetch and ingest ACLED (Armed Conflict Location & Event Data) events.
 
+    Authenticates against the myACLED OAuth endpoint (password grant,
+    ``client_id=acled``) and calls the current ACLED API at
+    ``https://acleddata.com/api/acled/read`` with a Bearer token.
+    Access tokens are valid 24h; cached in Redis with in-memory fallback.
+
     Normalises ACLED events to Sentinel's events table schema with
     ``source_system='ACLED'`` discriminator. Uses Redis cache to respect
     ACLED's 24-hour update cadence and avoid redundant API calls.
@@ -634,21 +639,28 @@ class ACLEDIngestor:
     Rate limit: 1 request/second (academic access tier).
     """
 
+    TOKEN_URL = "https://acleddata.com/oauth/token"
+    TOKEN_CACHE_KEY = "acled:oauth:access_token"
+
     def __init__(
         self,
-        api_key: str | None = None,
-        email: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
         cache_ttl: int | None = None,
     ):
-        self.api_key = api_key or os.getenv("ACLED_API_KEY", "")
-        self.email = email or os.getenv("ACLED_EMAIL", "")
+        self.username = username or os.getenv("ACLED_EMAIL", "")
+        self.password = password or os.getenv("ACLED_PASSWORD", "")
         poll_hours = int(os.getenv("SENTINEL_ACLED_POLL_HOURS", "24"))
         self.cache_ttl = (
             cache_ttl if cache_ttl is not None else poll_hours * 3600
         )
-        self.base_url = "https://api.acleddata.com/acled/read"
+        self.base_url = "https://acleddata.com/api/acled/read"
+        self.page_size = 5000  # ACLED maximum rows per request
+        self.max_pages = 50  # defensive cap; API may not honour page param
         self.rate_limit = 1.0  # 1 request per second (academic tier)
         self.max_retries = 3
+        self._access_token: str | None = None
+        self._token_expires_at: float = 0.0
 
         # Redis cache (graceful fallback if unavailable)
         self._redis = None
@@ -833,25 +845,85 @@ class ACLEDIngestor:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _request_token(self) -> tuple[str, int]:
+        """Request a new access token via OAuth password grant.
+
+        Returns:
+            Tuple of (access_token, expires_in_seconds).
+        """
+        response = requests.post(
+            self.TOKEN_URL,
+            data={
+                "username": self.username,
+                "password": self.password,
+                "grant_type": "password",
+                "client_id": "acled",
+                "scope": "authenticated",
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        return payload["access_token"], int(payload.get("expires_in", 86400))
+
+    def _get_access_token(self, force_refresh: bool = False) -> str:
+        """Return a valid Bearer token, fetching a new one if needed.
+
+        Checks in-memory expiry first, then Redis, then performs a
+        password grant. A 60s safety margin avoids using tokens at the
+        edge of their 24h validity window.
+        """
+        now = time.time()
+        if (
+            not force_refresh
+            and self._access_token
+            and now < self._token_expires_at
+        ):
+            return self._access_token
+
+        if not force_refresh and self._redis is not None:
+            try:
+                cached = self._redis.get(self.TOKEN_CACHE_KEY)
+                if cached:
+                    ttl = int(self._redis.ttl(self.TOKEN_CACHE_KEY) or 0)
+                    if ttl > 0:
+                        self._access_token = cached.decode("utf-8")
+                        self._token_expires_at = now + ttl
+                        return self._access_token
+            except Exception as exc:
+                logging.warning("Redis token cache read failed: %s", exc)
+
+        token, expires_in = self._request_token()
+        self._access_token = token
+        self._token_expires_at = now + max(expires_in - 60, 60)
+        if self._redis is not None:
+            try:
+                self._redis.setex(
+                    self.TOKEN_CACHE_KEY, max(expires_in - 60, 60), token
+                )
+            except Exception as exc:
+                logging.warning("Redis token cache write failed: %s", exc)
+        return token
+
     def _fetch_from_api(self, days: int) -> pd.DataFrame:
         """Fetch events from ACLED API with retry and pagination."""
         end_date = datetime.utcnow()
         start_date = end_date - timedelta(days=days)
 
         params: dict = {
-            "key": self.api_key,
-            "email": self.email,
             "event_date": (
                 f"{start_date.strftime('%Y-%m-%d')}"
                 f"|{end_date.strftime('%Y-%m-%d')}"
             ),
             "event_date_where": "BETWEEN",
+            "limit": self.page_size,
         }
 
         all_events: list[dict] = []
         page = 1
+        seen_first_id: str | None = None
 
-        while True:
+        while page <= self.max_pages:
             page_params = {**params, "page": page}
             data = self._fetch_page_with_retry(page_params)
             if data is None:
@@ -862,18 +934,39 @@ class ACLEDIngestor:
                 )
                 break
 
-            events_on_page = data.get("data", [])
+            if isinstance(data, dict):
+                events_on_page = data.get("data", [])
+            else:
+                events_on_page = data
             if not events_on_page:
                 break
 
+            # Detect API silently ignoring page param (returning same data)
+            if events_on_page:
+                first_id = events_on_page[0].get("event_id_cnty", "")
+                if seen_first_id is not None and first_id == seen_first_id:
+                    logging.warning(
+                        "ACLED page %d returned same data as page %d — "
+                        "breaking pagination loop",
+                        page,
+                        page - 1,
+                    )
+                    break
+                seen_first_id = first_id
+
             all_events.extend(events_on_page)
 
-            # Check if more pages exist (ACLED returns max ~500 per page)
-            if len(events_on_page) < 500:
+            if len(events_on_page) < self.page_size:
                 break
 
             page += 1
             time.sleep(self.rate_limit)
+
+        if page > self.max_pages:
+            logging.warning(
+                "ACLED pagination hit cap of %d pages — response may be truncated",
+                self.max_pages,
+            )
 
         if not all_events:
             return pd.DataFrame()
@@ -884,15 +977,39 @@ class ACLEDIngestor:
     def _fetch_page_with_retry(self, params: dict) -> dict | None:
         """Fetch a single ACLED API page with exponential backoff retry.
 
+        On HTTP 401 the cached token is discarded and a fresh password
+        grant is performed before the next attempt.
+
         Returns parsed JSON dict on success, ``None`` after exhausting retries.
         """
         for attempt in range(1, self.max_retries + 1):
             try:
+                token = self._get_access_token()
+            except requests.RequestException as exc:
+                logging.error(
+                    "ACLED token acquisition failed — check ACLED_EMAIL/"
+                    "ACLED_PASSWORD: %s",
+                    exc,
+                )
+                return None
+
+            try:
                 response = requests.get(
-                    self.base_url, params=params, timeout=30
+                    self.base_url,
+                    params=params,
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=30,
                 )
                 if response.status_code == 200:
                     return response.json()
+                elif response.status_code == 401:
+                    backoff = 1
+                    logging.warning(
+                        "ACLED token rejected (401), re-auth %d/%d",
+                        attempt,
+                        self.max_retries,
+                    )
+                    self._get_access_token(force_refresh=True)
                 elif response.status_code == 429:
                     backoff = 2 ** attempt
                     logging.warning(
@@ -993,16 +1110,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main_acled(args: argparse.Namespace) -> int:
     """Run ACLED ingestion (FR-1b)."""
-    api_key = os.getenv("ACLED_API_KEY", "")
-    email = os.getenv("ACLED_EMAIL", "")
-    if not api_key or not email:
+    username = os.getenv("ACLED_EMAIL", "")
+    password = os.getenv("ACLED_PASSWORD", "")
+    if not username or not password:
         print(
-            "Warning: ACLED_API_KEY or ACLED_EMAIL not set. "
+            "Warning: ACLED_EMAIL or ACLED_PASSWORD not set. "
             "Skipping ACLED fetch."
         )
         return 0
 
-    ingestor = ACLEDIngestor(api_key=api_key, email=email)
+    ingestor = ACLEDIngestor(username=username, password=password)
     print(f"Fetching ACLED events for last {args.acled_days} days...")
     df = ingestor.fetch_events(days=args.acled_days)
     print(f"Fetched {len(df)} ACLED events")
