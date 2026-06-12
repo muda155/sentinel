@@ -76,6 +76,12 @@ Remove stale or contradictory text immediately.
 - No emojis unless explicitly requested
 - No comments unless the WHY is non-obvious
 
+## Root-Owned Directories
+
+Directories with no child AGENTS.md are owned directly by this root doc:
+- `scripts/` — ops scripts: partition create/cleanup (`create_partitions.py`, `cleanup_old_partitions.py`), polygon loader (`load_country_polygons.py`), demo seeding (`seed_demo_hotspots.sql`)
+- `load/` — load testing (`sse_locust.py` Locust suite against the SSE/API layer)
+
 ## Child DOX Index
 
 - [pipeline/AGENTS.md](pipeline/AGENTS.md) — ingestion, clustering, scoring, LLM verification, scheduler, connection pool
