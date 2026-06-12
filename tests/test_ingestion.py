@@ -306,3 +306,82 @@ def test_acled_token_reused_until_expiry(monkeypatch: pytest.MonkeyPatch) -> Non
     assert ingestor._get_access_token() == "tok123"
     assert ingestor._get_access_token() == "tok123"
     assert post_mock.call_count == 1
+
+
+def test_acled_fetch_uses_bearer_token_and_new_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Data requests hit acleddata.com/api with a Bearer header, no key/email params."""
+    from unittest.mock import MagicMock
+
+    from pipeline.ingestion import ACLEDIngestor
+
+    monkeypatch.setattr("pipeline.ingestion.REDIS_AVAILABLE", False)
+
+    api_response = MagicMock()
+    api_response.status_code = 200
+    api_response.json.return_value = {
+        "data": [
+            {
+                "event_id_cnty": "UKR1",
+                "event_date": "2026-06-10",
+                "latitude": "50.45",
+                "longitude": "30.52",
+                "country": "Ukraine",
+                "event_type": "Battles",
+                "source": "Reuters",
+            }
+        ]
+    }
+    get_mock = MagicMock(return_value=api_response)
+    monkeypatch.setattr("pipeline.ingestion.requests.get", get_mock)
+
+    ingestor = ACLEDIngestor(username="user@test.com", password="pw")
+    monkeypatch.setattr(
+        ingestor, "_get_access_token", lambda force_refresh=False: "tok123"
+    )
+
+    df = ingestor._fetch_from_api(days=7)
+
+    assert len(df) == 1
+    call = get_mock.call_args
+    assert call.args[0] == "https://acleddata.com/api/acled/read"
+    assert call.kwargs["headers"]["Authorization"] == "Bearer tok123"
+    assert call.kwargs["params"]["limit"] == 5000
+    assert "key" not in call.kwargs["params"]
+    assert "email" not in call.kwargs["params"]
+
+
+def test_acled_fetch_reauths_on_401(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An expired/rejected token triggers exactly one re-auth, then the retry succeeds."""
+    from unittest.mock import MagicMock
+
+    from pipeline.ingestion import ACLEDIngestor
+
+    monkeypatch.setattr("pipeline.ingestion.REDIS_AVAILABLE", False)
+    monkeypatch.setattr("pipeline.ingestion.time.sleep", Mock())
+
+    unauthorized = MagicMock()
+    unauthorized.status_code = 401
+    ok = MagicMock()
+    ok.status_code = 200
+    ok.json.return_value = {"data": []}
+    get_mock = MagicMock(side_effect=[unauthorized, ok])
+    monkeypatch.setattr("pipeline.ingestion.requests.get", get_mock)
+
+    token_response = MagicMock()
+    token_response.status_code = 200
+    token_response.json.return_value = {
+        "access_token": "tok",
+        "expires_in": 86400,
+    }
+    post_mock = MagicMock(return_value=token_response)
+    monkeypatch.setattr("pipeline.ingestion.requests.post", post_mock)
+
+    ingestor = ACLEDIngestor(username="user@test.com", password="pw")
+    result = ingestor._fetch_page_with_retry({"page": 1})
+
+    assert result == {"data": []}
+    assert get_mock.call_count == 2
+    # one initial password grant + one forced re-auth after the 401
+    assert post_mock.call_count == 2
