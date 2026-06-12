@@ -35,7 +35,7 @@ class IngestionWorker:
             inserted += len(event_ids)
 
             # Step 2: ACLED (non-fatal — per monolith pipeline.py Step 2)
-            if os.getenv("ACLED_API_KEY"):
+            if os.getenv("ACLED_EMAIL") and os.getenv("ACLED_PASSWORD"):
                 try:
                     acled_days = int(os.getenv("SENTINEL_ACLED_FETCH_DAYS", "7"))
                     acled = ACLEDIngestor()
