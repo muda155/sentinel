@@ -6,6 +6,9 @@ return None and are excluded from geopolitical-diversity scoring (FR-8)."""
 
 from __future__ import annotations
 
+import argparse
+import logging
+
 # Curated major outlets whose TLD does not encode a country.
 _CURATED: dict[str, str] = {
     "reuters.com": "GBR",
@@ -72,3 +75,50 @@ def resolve_country(value: str | None) -> str | None:
     if tld in _GENERIC_TLDS:
         return None
     return _CCTLD.get(tld)
+
+
+logger = logging.getLogger(__name__)
+
+
+def backfill_source_countries(conn) -> int:
+    """Set country_code on sources where it is NULL and the domain resolves.
+
+    Idempotent: only touches NULL-country rows. Returns number updated."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT source_id, domain FROM sources WHERE country_code IS NULL"
+        )
+        rows = cur.fetchall()
+        updated = 0
+        for source_id, domain in rows:
+            iso3 = resolve_country(domain)
+            if iso3 is None:
+                continue
+            cur.execute(
+                "UPDATE sources SET country_code = %s WHERE source_id = %s",
+                (iso3, source_id),
+            )
+            updated += 1
+    conn.commit()
+    return updated
+
+
+def main() -> int:  # pragma: no cover
+    parser = argparse.ArgumentParser(description="Backfill sources.country_code")
+    parser.add_argument("--backfill", action="store_true")
+    args = parser.parse_args()
+    if not args.backfill:
+        parser.error("nothing to do; pass --backfill")
+    from pipeline.db import get_pooled_connection
+    conn, pool = get_pooled_connection()
+    try:
+        n = backfill_source_countries(conn)
+        logger.info("backfilled %d source countries", n)
+        print(f"backfilled {n} source countries")
+    finally:
+        pool.return_connection(conn)
+    return 0
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
