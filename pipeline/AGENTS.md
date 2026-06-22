@@ -11,9 +11,10 @@ All files in `pipeline/` except `workers/` (see child doc).
 ## Local Contracts
 
 - **Connection pool**: always call `get_pooled_connection()` from `pool.py`; always return with `pool.return_connection(conn)` in a `finally` block — never open raw `psycopg2` connections
-- **ACLED**: rate-limit to 1 req/s; cache responses in Redis with TTL = `SENTINEL_ACLED_POLL_HOURS × 3600`; fall back to GDELT-only on failure
+- **ACLED**: requires `ACLED_EMAIL`/`ACLED_PASSWORD` (myACLED OAuth password grant; Bearer token cached 24h in Redis/in-memory, ingestion skipped if unset); rate-limit to 1 req/s; cache responses in Redis with TTL = `SENTINEL_ACLED_POLL_HOURS × 3600`; fall back to GDELT-only on failure
 - **FR-WM-CONVERGENCE**: `bin_to_grid` fires when **2+ distinct CAMEO event types** co-occur in a 1°×1° cell within 24 h — not DBSCAN density
-- **conf_score**: `0.6 × source_density + 0.4 × geopolitical_diversity`; `source_density = tanh(sum(trust_weights)/10)` — must match specs.md FR-7/FR-8/FR-9 exactly
+- **conf_score**: `0.7 × source_density + 0.3 × geopolitical_diversity`; `source_density = tanh(sum(trust_weights)/3)` (env-configurable via `SENTINEL_CONF_W_DENSITY`, `SENTINEL_CONF_W_DIVERSITY`, `SENTINEL_CONF_DENSITY_DIVISOR`) — must match specs.md FR-7/FR-8/FR-9 exactly. Diversity reads `sources.country_code` over unique domains.
+- **source_country.py**: `resolve_country(url_or_domain)` maps domains to ISO-A3 via curated outlets + ccTLD fallback; `backfill_source_countries(conn)` one-time backfill with `python -m pipeline.source_country --backfill` CLI.
 - **LLM**: validate every sentence ends with `[N]` via `validate_citations()`; fall back to Ollama when NIM is unavailable
 - **Scheduler**: full cycle period controlled by `SENTINEL_POLL_INTERVAL_S` (default 900 s)
 
