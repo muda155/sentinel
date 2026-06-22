@@ -8,11 +8,13 @@ from pipeline.source_country import resolve_country
 
 
 def seed_demo_events(conn) -> list[int]:
-    # Convergence (FR-WM-CONVERGENCE) fires on 2+ *distinct event types* in a
-    # cell. All GDELT CAMEO 14-19 collapse to a single 'military_conflict' type,
-    # so a realistic convergent cell mixes GDELT military events with ACLED
-    # events (which carry distinct armed_conflict / civilian_violence labels).
-    # All co-located in the same 1x1 cell (lat 31, lon 34) and DBSCAN window.
+    # A cell is an active Convergence Zone at convergence_score>=1 (FR-WM-CONVERGENCE
+    # v1.7.0); 2+ distinct types raise the alert level but aren't required. All GDELT
+    # CAMEO 14-19 collapse to a single 'military_conflict' type, so this seed mixes
+    # GDELT military events with ACLED events (distinct armed_conflict / civilian_violence
+    # labels) to exercise the multi-type alert path. (For the single-type GDELT-only
+    # hotspot path, see test_workers_e2e._seed_single_type_gdelt.) All co-located in the
+    # same 1x1 cell (lat 31, lon 34) and DBSCAN window.
     rows = [
         # (source, gdelt_id, ext_id, cameo_or_label, lat, lon)
         ("GDELT", 9001, "9001", "19", 31.50, 34.45),

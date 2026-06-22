@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import math
 import os
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 import numpy as np
@@ -45,6 +46,24 @@ def assign_grid_cell(lat: float, lon: float, grid_size: float = 1.0) -> str:
 # Event type classification (FR-WM-CONVERGENCE)
 # ---------------------------------------------------------------------------
 
+def _cameo_root(cameo) -> int | None:
+    """Return the 2-digit CAMEO root for a code, or None if unparseable.
+
+    GDELT stores the full EventCode ('190', '1712'); the CAMEO taxonomy is
+    hierarchical and the root category is the first two digits ('19', '17').
+    A bare 2-digit code ('19', or int 19) is its own root.
+    """
+    if cameo is None:
+        return None
+    digits = str(cameo).strip()
+    if not digits:
+        return None
+    try:
+        return int(digits[:2]) if len(digits) >= 2 else int(digits)
+    except ValueError:
+        return None
+
+
 def classify_event_type(row) -> str:
     """Classify an event row into a World Monitor event type label.
 
@@ -66,14 +85,13 @@ def classify_event_type(row) -> str:
     source = str(row.get("source_system", "")).upper()
 
     if source == "GDELT":
-        cameo = row.get("cameo_code")
-        if cameo is not None:
-            try:
-                code = int(cameo)
-                if 14 <= code <= 19:
-                    return "military_conflict"
-            except (ValueError, TypeError):
-                pass
+        # GDELT EventCodes are hierarchical CAMEO codes 3-4 digits long
+        # ('190', '1712'); the military root is the first two digits (14-19).
+        # Comparing int('190') against [14,19] silently mislabeled every live
+        # event as 'unknown' and starved convergence of its only event type.
+        root = _cameo_root(row.get("cameo_code"))
+        if root is not None and 14 <= root <= 19:
+            return "military_conflict"
 
     elif source == "ACLED":
         # ACLED ingestion stores the normalised Sentinel label in cameo_code
@@ -381,6 +399,20 @@ class ClusterRepository:
         working_df = events_df.copy()
         working_df["cluster_label"] = labels
         clustered = working_df[working_df["cluster_label"] >= 0]
+
+        if cell_id is not None:
+            # Idempotent reclustering: drop this cell's prior hotspots (and their
+            # event links) so each pipeline tick refreshes the cell instead of
+            # accumulating a duplicate set of hotspots on every run. Runs even
+            # when there are no clusters, so a cell that ages out is cleared.
+            with self._conn.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM event_hotspot WHERE hotspot_id IN "
+                    "(SELECT hotspot_id FROM hotspots WHERE cell_id = %s)",
+                    (cell_id,),
+                )
+                cursor.execute("DELETE FROM hotspots WHERE cell_id = %s", (cell_id,))
+
         if clustered.empty:
             return {"hotspot_count": 0, "linked_events": 0}
 
@@ -784,6 +816,20 @@ def cluster_single_cell(conn, cell_id: str, *, dbscan_window_hours=None,
 
 
 
+def _dbscan_window_start(now: datetime, window_hours: int) -> datetime:
+    """Lower bound for the DBSCAN micro-clustering window.
+
+    GDELT events are stamped at midnight UTC (day-granular SQLDATE), so a plain
+    ``NOW() - window`` bound silently excludes the entire current day once NOW is
+    more than ``window`` hours past midnight — clustering goes blind for ~22h/day.
+    The bound floors to the start of the current UTC day so day-granular events
+    stay in window; a window longer than the elapsed day still reaches further
+    back (the floor only ever widens the window, never narrows it).
+    """
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return min(now - timedelta(hours=window_hours), day_start)
+
+
 def _load_cell_events(conn, cell_id: str, lookback_hours: int = 2) -> pd.DataFrame:
     """Load events for a specific grid cell within the DBSCAN window.
 
@@ -796,6 +842,9 @@ def _load_cell_events(conn, cell_id: str, lookback_hours: int = 2) -> pd.DataFra
         DataFrame with event_id, lat, lon, event_date, source_system,
         cameo_code, url, and grid_cell_id columns.
     """
+    window_start = _dbscan_window_start(
+        datetime.now(tz=timezone.utc), int(lookback_hours)
+    )
     query = """
         SELECT
             event_id,
@@ -811,10 +860,10 @@ def _load_cell_events(conn, cell_id: str, lookback_hours: int = 2) -> pd.DataFra
           -- GDELT event_date is day-granular (midnight UTC), so current-day
           -- events can be nominally ahead of NOW(); allow a 1-day tolerance.
           AND event_date < NOW() + INTERVAL '1 day'
-          AND event_date >= NOW() - (%s || ' hours')::interval
+          AND event_date >= %s
         ORDER BY event_date DESC
     """
-    df = pd.read_sql_query(query, conn, params=[cell_id, int(lookback_hours)])
+    df = pd.read_sql_query(query, conn, params=[cell_id, window_start])
     if df.empty:
         return df
     deduped = df.drop_duplicates(subset=["event_id"])

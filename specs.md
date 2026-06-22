@@ -13,7 +13,7 @@
 
 # Sentinel – Technical Specification Document
 
-**Document Version:** 1.6.0
+**Document Version:** 1.7.0
 **Date:** 2026‑06‑22  
 **Author:** FYP Candidate (role: Senior Software Architect & Technical Project Manager)  
 **Status:** Approved for Development  
@@ -243,7 +243,7 @@ The convergence module shall retrieve all events from the current UTC time minus
 ☑ Both windows are configurable via environment variables.
 
 **FR‑WM‑CONVERGENCE (adapted from World Monitor)**  
-The system shall bin all events from the 24-hour look-back window into a **1°×1° geographic grid**. Each cell tracks distinct event-type counts. When **2 or more distinct event types** co-occur in the same cell within the window, a **Convergence Zone** is recorded as an active cell.
+The system shall bin all events from the 24-hour look-back window into a **1°×1° geographic grid**. Each cell tracks distinct event-type counts and a `convergence_score`. A cell becomes an active **Convergence Zone** when its `convergence_score ≥ 1` (at least one classified event). Cells with **2 or more distinct event types** score higher and reach higher alert levels (see formula and alert table), but a single-event-type cell is still an active zone: real GDELT-only feeds carry a single `military_conflict` type, so gating activation on 2+ types yields no hotspots whenever ACLED is unavailable.
 
 Event type classification:
 | Event Source | Event Type Label |
@@ -252,6 +252,8 @@ Event type classification:
 | ACLED Battles / Explosions | `armed_conflict` |
 | ACLED Violence against civilians | `civilian_violence` |
 | ACLED Protests | `civil_unrest` |
+
+GDELT stores the full CAMEO `EventCode` (3–4 digits, e.g. `190`, `1712`); classification reads the **2-digit CAMEO root** (the first two digits) and maps roots 14–19 to `military_conflict`.
 
 Convergence scoring formula (exact World Monitor formula):
 ```
@@ -272,12 +274,12 @@ Alert level thresholds:
 
 **Acceptance Criteria:**  
 ☑ A synthetic dataset with 3 GDELT military events and 2 ACLED armed-conflict events in cell `32°N, 35°E` produces `type_score=50` (2 distinct types × 25), `count_boost=10` (min(25, 5×2)), `convergence_score=60`, alert level `High`. *(Note: `type_score` depends only on distinct event types, not event count — 2 types always produce `type_score=50` regardless of how many events.)*  
-☑ A cell with only 1 event type does not generate a Convergence Zone regardless of event count.  
+☑ A cell with only 1 event type is still an active Convergence Zone (`convergence_score ≥ 1`) and is eligible for DBSCAN clustering; its `alert_level` remains null until a second distinct type co-occurs.  
 ☑ Events spanning the antimeridian are assigned to the correct cell (lon < 0 assigned to western cell; no wrap-around error).  
 ☑ Grid cells are stored in and queryable from `grid_cells` table with PostGIS polygon geometry.
 
 **FR‑5‑DBSCAN_MICRO_CLUSTERING**  
-Within each active grid cell (`convergence_score ≥ 1` and `unique_event_types ≥ 2`), the system shall group events into sub-clusters using DBSCAN with a Haversine distance metric and a temporal penalty function.  
+Within each active grid cell (`convergence_score ≥ 1`), the system shall group events into sub-clusters using DBSCAN with a Haversine distance metric and a temporal penalty function. The DBSCAN look-back lower bound floors to the start of the current UTC day so day-granular GDELT events (stamped midnight UTC) remain in window throughout the day.  
 `eps` (spatial) = **50 km** (configurable via `SENTINEL_DBSCAN_EPS_KM`), `min_samples` = **3** (configurable via `SENTINEL_DBSCAN_MIN_SAMPLES`).  
 Temporal penalty: two events more than **1 hour apart** (configurable via `SENTINEL_MAX_TIME_DIFF_H`) are assigned infinite distance, preventing cross‑window clustering.  
 Centroid geometry shall be computed using `ST_Centroid(ST_Collect(point_geom))` via PostGIS — not Python coordinate mean — to ensure correctness near the antimeridian (±180° longitude).  
@@ -837,6 +839,7 @@ ln -s ../specs.md docs/spec.md
 
 | Version | Date | Change | Reason |
 |---|---|---|---|
+| 1.7.0 | 2026-06-22 | **GDELT-only convergence restored (FR-WM-CONVERGENCE / FR-5).** Relaxed the Convergence Zone activation guard from `unique_event_types ≥ 2` back to `convergence_score ≥ 1`: single-event-type cells are again active zones eligible for DBSCAN (alert_level still requires 2+ types). Documented that GDELT classification reads the **2-digit CAMEO root** of the full 3–4 digit `EventCode` (the prior `int(EventCode) in [14,19]` check mislabeled every live event as `unknown`). Floored the DBSCAN look-back lower bound to start-of-UTC-day so day-granular GDELT events (midnight UTC) stay in window all day. Reverses the 1.1.2 guard tightening. | Production runs without ACLED (subscription-gated) carry a single `military_conflict` type; the 2-type guard + the multi-digit CAMEO mislabel + the day-granular DBSCAN window together produced zero hotspots from real GDELT-only feeds. |
 | 1.5.0 | 2026-06-11 | **Dashboard usability & localization (Section 4.6).** Added FR-14 hotspot naming (curated-place layered resolution stored in `hotspots.name`, migration 012, backfill CLI), FR-15 grouped search (`GET /search` with events FTS migration 013; always-visible search box with Cmd+K focus), FR-16 source-article list (`GET /hotspots/{id}/events` with `citation_index` aligned to the LLM prompt's article ordering), and FR-17 bilingual UI (Vietnamese default, EN/VI toggle, client-side dictionaries). Naming/search UX adapted from World Monitor with attribution; fixed stale header version (was 1.3.0 while history recorded 1.4.0). | Dashboard lacked practical affordances: hotspots were labelled "Hotspot #N", there was no search, and stored article data (`events.title`/`url`) was never surfaced; FYP requires a Vietnamese-language UI. |
 | 1.4.0 | 2026-06-09 | **M3 React frontend delivered.** Next.js 16 dual-map frontend (deck.gl + MapLibre GL + globe.gl) replacing Streamlit; JWT auth with `users` table, `/auth/login`, Bearer-gated REST/SSE, role separation (analyst/admin); SSE live hotspot updates with exponential backoff (±500ms jitter); admin `trust_tier` editor (PATCH `/sources/{id}`); FR-13 visual contract (green/yellow/grey fill, red/orange ring); SITREP citation rendering; production default-secret guard; SQL-injection + auth-bypass tests; Locust SSE load test harness; containerized `frontend-next` service in Docker Compose; M3 deployment runbook. | Milestone M3 complete. |
 | 1.3.0 | 2026-06-08 | **M2 microservices delivered.** Redis Streams worker decomposition (6 workers: Ingestion, Grid-Cell, Clustering, Consensus, LLM, API) replacing the monolithic scheduler; FastAPI REST gateway with `/events` (GeoJSON, cursor pagination), `/hotspots`, `/hotspots/{id}/summary`, rate limiting (429); SSE `/hotspots/stream` tailing `hotspot_created` + `summary_ready`; full-stack `docker-compose.yml` (PostGIS + PgBouncer + Redis + 6 workers + API); GitHub Actions CI; in-process Prometheus metrics (`/metrics`) for cluster count, alert count, LLM latency, fallback rate. | M2 Sprint 7–9 complete; all Section 6.3/6.4 endpoints and workers operational. |
