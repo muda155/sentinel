@@ -614,8 +614,8 @@ def _register_acled_source(cursor, domain: str) -> int | None:
         source_id of the registered source, or None on failure.
     """
     cursor.execute(
-        "INSERT INTO sources (domain) VALUES (%s) ON CONFLICT (domain) DO NOTHING",
-        (domain,),
+        "INSERT INTO sources (domain, country_code) VALUES (%s, %s) ON CONFLICT (domain) DO NOTHING",
+        (domain, resolve_country(domain)),
     )
     cursor.execute("SELECT source_id FROM sources WHERE domain = %s", (domain,))
     result = cursor.fetchone()
