@@ -62,3 +62,30 @@ def test_backfill_updates_only_resolvable_null_country_sources():
     updated = backfill_source_countries(conn)
     assert updated == 2
     assert conn.committed is True
+
+
+import pandas as pd
+
+from pipeline.ingestion import GDELT2Ingestor
+
+
+def test_register_sources_passes_resolved_country(monkeypatch):
+    captured = []
+
+    class FakeCursor:
+        def execute(self, q, params=None):
+            captured.append(params)
+        def fetchone(self):
+            return (1,)
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return None
+
+    class FakeConn:
+        def cursor(self):
+            return FakeCursor()
+
+    df = pd.DataFrame({"SOURCEURL": ["https://www.reuters.com/x"]})
+    GDELT2Ingestor()._register_sources(df, FakeConn())
+    assert captured and captured[0][1] == "GBR"
