@@ -67,11 +67,13 @@ def test_batch_flows_to_hotspots_matching_monolith():
         # ACLED armed_conflict + civilian_violence) in one cell should produce:
         #   - convergence fires (>= 2 distinct types, FR-WM-CONVERGENCE)
         #   - exactly 1 hotspot (from DBSCAN on events in same 50km/1h window)
-        #   - conf_score ~ 11.8 (same country IL, unknown source trust_tier=4)
+        #   - conf_score ~9.3: one unknown source domain (trust 0.4), single
+        #     country -> tanh(0.4/3)*0.7*100. Matches the FR-7/8/9 calibration
+        #     target "thin / 1 unknown source -> grey".
         sig = monolith_hotspot_signature(conn)
         assert sig[0] == 1, f"expected 1 hotspot, got {sig[0]} with scores {sig[1]}"
         max_conf = sig[1][-1] if sig[1] else 0
-        assert 10 <= max_conf <= 15, f"expected conf_score ~11.8, got {max_conf}"
+        assert 8 <= max_conf <= 11, f"expected conf_score ~9.3, got {max_conf}"
     finally:
         # Clean up
         with conn.cursor() as cur:
