@@ -62,7 +62,7 @@ class ScoringRepository:
         with self._conn.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT e.url, e.country_code, COALESCE(s.trust_score, 0.4) as trust_score
+                SELECT s.domain, s.country_code, COALESCE(s.trust_score, 0.4) as trust_score
                 FROM event_hotspot eh
                 JOIN events e ON e.event_id = eh.event_id
                 LEFT JOIN sources s ON e.source_id = s.source_id
@@ -71,7 +71,7 @@ class ScoringRepository:
                 (hotspot_id,),
             )
             rows = cursor.fetchall()
-        return pd.DataFrame(rows, columns=["url", "country_code", "trust_score"])
+        return pd.DataFrame(rows, columns=["domain", "country_code", "trust_score"])
 
     def score_hotspot(self, hotspot_id: int) -> dict[str, float]:
         events_df = self._fetch_hotspot_events(hotspot_id)

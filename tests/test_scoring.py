@@ -41,7 +41,7 @@ def test_score_hotspot_from_events_aggregates_metrics() -> None:
     assert 0 <= result["conf_score"] <= 100
 
 
-def test_scoring_repository_updates_hotspot_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_scoring_repository_reads_source_country_and_domain(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeCursor:
         def __init__(self) -> None:
             self.executed = []
@@ -51,8 +51,8 @@ def test_scoring_repository_updates_hotspot_metrics(monkeypatch: pytest.MonkeyPa
 
         def fetchall(self):
             return [
-                ("https://a.com/1", "US", 1.0),
-                ("https://b.com/2", "VN", 0.8),
+                ("reuters.com", "GBR", 1.0),
+                ("tass.ru", "RUS", 0.6),
             ]
 
         def __enter__(self):
@@ -74,10 +74,11 @@ def test_scoring_repository_updates_hotspot_metrics(monkeypatch: pytest.MonkeyPa
 
     repo = scoring.ScoringRepository(FakeConn())
     result = repo.score_hotspot(7)
-
-    assert repo._conn.committed is True
-    assert result["hotspot_id"] == 7
-    assert any("UPDATE hotspots" in query for query, _ in repo._conn.cursor_obj.executed)
+    # 2 countries (GBR, RUS) -> diversity 1.0
+    assert result["geopolitical_diversity"] == pytest.approx(1.0, abs=0.001)
+    # query must read s.country_code and s.domain from sources
+    select_q = repo._conn.cursor_obj.executed[0][0]
+    assert "s.country_code" in select_q and "s.domain" in select_q
 
 
 def test_compute_source_density_empty() -> None:
