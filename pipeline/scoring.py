@@ -35,8 +35,23 @@ def geopolitical_diversity(country_codes: list[str]) -> float:
     return float(entropy / math.log2(len(unique)))
 
 
-def compute_conf_score(source_density: float, diversity: float) -> float:
-    return float((0.6 * source_density + 0.4 * diversity) * 100)
+def _weights() -> tuple[float, float]:
+    return (
+        float(os.getenv("SENTINEL_CONF_W_DENSITY", "0.7")),
+        float(os.getenv("SENTINEL_CONF_W_DIVERSITY", "0.3")),
+    )
+
+
+def compute_conf_score(
+    source_density: float,
+    diversity: float,
+    w_density: float | None = None,
+    w_diversity: float | None = None,
+) -> float:
+    wd, wv = _weights()
+    wd = w_density if w_density is not None else wd
+    wv = w_diversity if w_diversity is not None else wv
+    return float((wd * source_density + wv * diversity) * 100)
 
 
 def score_hotspot_from_events(events_df: pd.DataFrame) -> dict[str, float]:

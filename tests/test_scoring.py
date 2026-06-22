@@ -22,9 +22,35 @@ def test_geopolitical_diversity_expected_values() -> None:
     assert equal_four == pytest.approx(1.0, abs=0.0001)
 
 
-def test_compute_conf_score_weighted_to_100_scale() -> None:
-    assert scoring.compute_conf_score(1.0, 0.0) == pytest.approx(60.0, abs=0.01)
-    assert scoring.compute_conf_score(0.0, 1.0) == pytest.approx(40.0, abs=0.01)
+def test_compute_conf_score_default_weights_0_7_0_3():
+    assert scoring.compute_conf_score(1.0, 0.0) == pytest.approx(70.0, abs=0.01)
+    assert scoring.compute_conf_score(0.0, 1.0) == pytest.approx(30.0, abs=0.01)
+
+
+def test_compute_conf_score_explicit_weights():
+    assert scoring.compute_conf_score(1.0, 0.0, w_density=0.6, w_diversity=0.4) == pytest.approx(60.0, abs=0.01)
+
+
+def test_calibration_single_country_reputable_reaches_yellow():
+    # 3 reputable unique domains (Σtrust 2.0), 1 country -> ~41, yellow floor
+    df = pd.DataFrame({
+        "domain": ["reuters.com", "bbc.com", "dw.com"],
+        "country_code": ["GBR", "GBR", "GBR"],
+        "trust_score": [1.0, 0.6, 0.4],
+    })
+    conf = scoring.score_hotspot_from_events(df)["conf_score"]
+    assert 40 <= conf <= 50
+
+
+def test_calibration_cross_national_reaches_green():
+    # 4 domains (Σtrust 2.6), 2 countries -> ~77, green
+    df = pd.DataFrame({
+        "domain": ["reuters.com", "cnn.com", "tass.ru", "dw.com"],
+        "country_code": ["GBR", "USA", "RUS", "DEU"],
+        "trust_score": [1.0, 0.6, 0.6, 0.4],
+    })
+    conf = scoring.score_hotspot_from_events(df)["conf_score"]
+    assert conf >= 70
 
 
 def test_score_hotspot_from_events_aggregates_metrics() -> None:
