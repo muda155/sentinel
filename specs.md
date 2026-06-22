@@ -13,8 +13,8 @@
 
 # Sentinel – Technical Specification Document
 
-**Document Version:** 1.5.0
-**Date:** 2026‑06‑11  
+**Document Version:** 1.6.0
+**Date:** 2026‑06‑22  
 **Author:** FYP Candidate (role: Senior Software Architect & Technical Project Manager)  
 **Status:** Approved for Development  
 
@@ -306,25 +306,25 @@ A many‑to‑many link table `event_hotspot` shall associate events to their su
 *Design note: This scoring layer is Sentinel's original research contribution. It measures the **truthfulness/reliability** of the events within a hotspot, as distinct from the **convergence score** (which measures cross-domain signal co-occurrence using World Monitor's model). World Monitor does not compute per-hotspot source reliability or geopolitical diversity — this section is entirely Sentinel's extension.*
 
 **FR‑7‑SOURCE_DENSITY**  
-For each hotspot, compute `source_density = tanh( weighted_domains / 10 )`, where `weighted_domains = Σ trust_weight(domain_i)` across unique domain sources, weighted by source trust tier (see Section 6.1.3).  
+For each hotspot, compute `source_density = tanh( weighted_domains / SENTINEL_CONF_DENSITY_DIVISOR )` (default divisor `3`, configurable via env var), where `weighted_domains = Σ trust_weight(domain_i)` across unique domain sources, weighted by source trust tier (see Section 6.1.3).  
 **Acceptance Criteria:**  
-☑ With 20 unique Tier-1 domains (weight 1.0), `source_density ≈ 0.96`.  
-☑ With 1 unknown domain (weight 0.4), `source_density ≈ 0.040`.  
-☑ With 20 unknown domains (weight 0.4 each), effective weighted_domains = 8.0, `source_density ≈ 0.664`.
+☑ With 20 unique Tier-1 domains (weight 1.0), `tanh(20/3) ≈ 1.00`.  
+☑ With 1 unknown domain (weight 0.4), `tanh(0.4/3) ≈ 0.13`.  
+☑ With 3 reputable unique domains (Σ 2.0), `tanh(2.0/3) ≈ 0.58`.
 
 **FR‑8‑GEOPOLITICAL_DIVERSITY**  
-Compute diversity using Shannon entropy over country codes (from `sources` table):  
+Compute diversity using Shannon entropy over `country_code` from the `sources` table (the reporting outlet's country), computed over unique source domains:  
 `diversity = entropy / log2( N )` where N = number of unique countries present. Returns 0 if N ≤ 1.  
 **Acceptance Criteria:**  
 ☑ All events from one country → diversity = 0.  
 ☑ Events from 4 countries equally → diversity ≈ 1.0.
 
 **FR‑9‑CONFIDENCE_SCORE**  
-`conf_score = (0.6 × source_density + 0.4 × geopolitical_diversity) × 100` (scaled 0‑100). Store in `hotspots.conf_score`.  
+`conf_score = (W_density × source_density + W_diversity × geopolitical_diversity) × 100` (scaled 0‑100). Defaults: `W_density = 0.7`, `W_diversity = 0.3` (configurable via `SENTINEL_CONF_W_DENSITY`, `SENTINEL_CONF_W_DIVERSITY`). Store in `hotspots.conf_score`.  
 This is distinct from the `convergence_score` (FR-WM-CONVERGENCE) — convergence measures cross-domain co-occurrence (geographic signal), while confidence measures source reliability (truthfulness signal).  
 **Acceptance Criteria:**  
-☑ A hotspot with source_density=1.0 and diversity=0.0 → conf_score = 60.  
-☑ A hotspot with source_density=0.0 and diversity=1.0 → conf_score = 40.  
+☑ A hotspot with source_density=1.0 and diversity=0.0 → conf_score = 70.  
+☑ A hotspot with source_density=0.0 and diversity=1.0 → conf_score = 30.  
 ☑ A hotspot with source_density=0.5 and diversity=0.5 → conf_score = 50.
 
 ### 4.4 LLM Verification & Summarization
@@ -448,9 +448,9 @@ Source trust tier mapping (applied via `sources.trust_tier` column with generate
 | 4 | Aggregators, blogs, unknown | Google News, unrecognised domains | 0.4 |
 
 - `get_trust_weight(domain: str) -> float`: Looks up `sources.trust_tier` for the domain; returns `trust_weight` per table above; defaults to 0.4 for unknown domains.
-- `compute_source_density(domains: List[str]) -> float`: Computes `tanh(Σ trust_weight(d) / 10)`.
-- `geopolitical_diversity(country_codes: List[str]) -> float`: Uses `scipy.stats.entropy` normalised by `log2(N)`.
-- `score_hotspot(hotspot_id, db)` → updates `hotspots.conf_score` using `(0.6 × source_density + 0.4 × diversity) × 100`.
+- `compute_source_density(domains: List[str]) -> float`: Computes `tanh(Σ trust_weight(d) / SENTINEL_CONF_DENSITY_DIVISOR)` (default 3).
+- `geopolitical_diversity(country_codes: List[str]) -> float`: Uses Shannon entropy over `sources.country_code`, normalised by `log2(N)`, over unique source domains.
+- `score_hotspot(hotspot_id, db)` → updates `hotspots.conf_score` using `(W_density × source_density + W_diversity × diversity) × 100` (defaults 0.7/0.3).
 
 #### 6.1.4 LLM Verifier (`llm_verifier.py`)
 - `build_prompt(hotspot_data: dict)` → str. Formats numbered headline list with source attribution instruction.

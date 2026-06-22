@@ -4,6 +4,8 @@ events guaranteed to fire convergence + DBSCAN."""
 
 from __future__ import annotations
 
+from pipeline.source_country import resolve_country
+
 
 def seed_demo_events(conn) -> list[int]:
     # Convergence (FR-WM-CONVERGENCE) fires on 2+ *distinct event types* in a
@@ -22,17 +24,23 @@ def seed_demo_events(conn) -> list[int]:
     ids: list[int] = []
     with conn.cursor() as cur:
         for source, gid, ext, cameo, lat, lon in rows:
+            # Register a source so events carry source_id/domain like production
+            # ingestion does. All seed URLs share the 'seed' domain (one unknown
+            # source) -> thin hotspot. resolve_country('seed') is None.
+            url = f"https://seed/{ext}"
+            cur.execute("SELECT register_source(%s, %s)", (url, resolve_country(url)))
+            source_id = cur.fetchone()[0]
             cur.execute(
                 """
                 INSERT INTO events (source_system, gdelt_global_event_id, external_event_id,
-                    event_date, cameo_code, country_code, url, title, point_geom, grid_cell_id)
-                VALUES (%s, %s, %s, NOW(), %s, 'IL', %s, 'seed',
+                    event_date, cameo_code, country_code, url, title, source_id, point_geom, grid_cell_id)
+                VALUES (%s, %s, %s, NOW(), %s, 'IL', %s, 'seed', %s,
                         ST_SetSRID(ST_MakePoint(%s,%s),4326),
                         '1x1_LAT31_LON34')
                 ON CONFLICT (source_system, external_event_id, event_date) DO NOTHING
                 RETURNING event_id
                 """,
-                (source, gid, ext, str(cameo), f"https://seed/{ext}", lon, lat),
+                (source, gid, ext, str(cameo), url, source_id, lon, lat),
             )
             r = cur.fetchone()
             if r:

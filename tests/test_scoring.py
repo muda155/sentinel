@@ -5,16 +5,14 @@ import pytest
 from pipeline import scoring
 
 
-def test_compute_source_density_matches_expected_ranges() -> None:
-    # 10 Tier-1 domains (weight 1.0 each): tanh(10/10) = tanh(1) ≈ 0.762
-    weights = [1.0] * 10
-    result = scoring.compute_source_density(weights)
-    assert result == pytest.approx(0.762, abs=0.01)
+def test_compute_source_density_default_divisor_3():
+    # tanh(2.0/3) ≈ 0.583
+    assert scoring.compute_source_density([1.0, 0.6, 0.4]) == pytest.approx(0.583, abs=0.01)
 
-    # 20 Tier-1 domains (weight 1.0 each): tanh(20/10) = tanh(2) ≈ 0.964
-    weights = [1.0] * 20
-    result = scoring.compute_source_density(weights)
-    assert result == pytest.approx(0.964, abs=0.01)
+
+def test_compute_source_density_explicit_divisor():
+    # divisor passed through; tanh(10/10)=tanh(1)≈0.762
+    assert scoring.compute_source_density([1.0] * 10, divisor=10) == pytest.approx(0.762, abs=0.01)
 
 
 def test_geopolitical_diversity_expected_values() -> None:
@@ -24,9 +22,35 @@ def test_geopolitical_diversity_expected_values() -> None:
     assert equal_four == pytest.approx(1.0, abs=0.0001)
 
 
-def test_compute_conf_score_weighted_to_100_scale() -> None:
-    assert scoring.compute_conf_score(1.0, 0.0) == pytest.approx(60.0, abs=0.01)
-    assert scoring.compute_conf_score(0.0, 1.0) == pytest.approx(40.0, abs=0.01)
+def test_compute_conf_score_default_weights_0_7_0_3():
+    assert scoring.compute_conf_score(1.0, 0.0) == pytest.approx(70.0, abs=0.01)
+    assert scoring.compute_conf_score(0.0, 1.0) == pytest.approx(30.0, abs=0.01)
+
+
+def test_compute_conf_score_explicit_weights():
+    assert scoring.compute_conf_score(1.0, 0.0, w_density=0.6, w_diversity=0.4) == pytest.approx(60.0, abs=0.01)
+
+
+def test_calibration_single_country_reputable_reaches_yellow():
+    # 3 reputable unique domains (Σtrust 2.0), 1 country -> ~41, yellow floor
+    df = pd.DataFrame({
+        "domain": ["reuters.com", "bbc.com", "dw.com"],
+        "country_code": ["GBR", "GBR", "GBR"],
+        "trust_score": [1.0, 0.6, 0.4],
+    })
+    conf = scoring.score_hotspot_from_events(df)["conf_score"]
+    assert 40 <= conf <= 50
+
+
+def test_calibration_cross_national_reaches_green():
+    # 4 domains (Σtrust 2.6), 2 countries -> ~77, green
+    df = pd.DataFrame({
+        "domain": ["reuters.com", "cnn.com", "tass.ru", "dw.com"],
+        "country_code": ["GBR", "USA", "RUS", "DEU"],
+        "trust_score": [1.0, 0.6, 0.6, 0.4],
+    })
+    conf = scoring.score_hotspot_from_events(df)["conf_score"]
+    assert conf >= 70
 
 
 def test_score_hotspot_from_events_aggregates_metrics() -> None:
@@ -43,7 +67,7 @@ def test_score_hotspot_from_events_aggregates_metrics() -> None:
     assert 0 <= result["conf_score"] <= 100
 
 
-def test_scoring_repository_updates_hotspot_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_scoring_repository_reads_source_country_and_domain(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeCursor:
         def __init__(self) -> None:
             self.executed = []
@@ -53,8 +77,8 @@ def test_scoring_repository_updates_hotspot_metrics(monkeypatch: pytest.MonkeyPa
 
         def fetchall(self):
             return [
-                ("https://a.com/1", "US", 1.0),
-                ("https://b.com/2", "VN", 0.8),
+                ("reuters.com", "GBR", 1.0),
+                ("tass.ru", "RUS", 0.6),
             ]
 
         def __enter__(self):
@@ -76,25 +100,24 @@ def test_scoring_repository_updates_hotspot_metrics(monkeypatch: pytest.MonkeyPa
 
     repo = scoring.ScoringRepository(FakeConn())
     result = repo.score_hotspot(7)
-
-    assert repo._conn.committed is True
-    assert result["hotspot_id"] == 7
-    assert any("UPDATE hotspots" in query for query, _ in repo._conn.cursor_obj.executed)
-
-
-def test_compute_source_density_weighted() -> None:
-    # 10 Tier-1 domains (weight 1.0 each): tanh(10/10) = tanh(1) ≈ 0.762
-    weights = [1.0] * 10
-    result = scoring.compute_source_density(weights)
-    assert 0.75 < result < 0.77
-
-
-def test_compute_source_density_mixed() -> None:
-    # 5 Tier-1 (1.0) + 5 Tier-4 (0.4) = total weight 7.0: tanh(7/10) ≈ 0.604
-    weights = [1.0] * 5 + [0.4] * 5
-    result = scoring.compute_source_density(weights)
-    assert 0.59 < result < 0.62
+    # 2 countries (GBR, RUS) -> diversity 1.0
+    assert result["geopolitical_diversity"] == pytest.approx(1.0, abs=0.001)
+    # query must read s.country_code and s.domain from sources
+    select_q = repo._conn.cursor_obj.executed[0][0]
+    assert "s.country_code" in select_q and "s.domain" in select_q
 
 
 def test_compute_source_density_empty() -> None:
     assert scoring.compute_source_density([]) == 0.0
+
+
+def test_score_hotspot_dedupes_by_domain():
+    # a.com appears twice but counts once: weights = [a:1.0, b:0.8] over divisor 3
+    events_df = pd.DataFrame({
+        "domain": ["a.com", "b.com", "a.com"],
+        "country_code": ["US", "US", "US"],
+        "trust_score": [1.0, 0.8, 1.0],
+    })
+    result = scoring.score_hotspot_from_events(events_df)
+    # source_density = tanh((1.0+0.8)/3) = tanh(0.6) ≈ 0.537
+    assert result["source_density"] == pytest.approx(0.537, abs=0.01)

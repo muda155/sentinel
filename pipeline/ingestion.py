@@ -16,6 +16,7 @@ from psycopg2.extras import execute_values
 
 from pipeline.clustering import assign_grid_cell
 from pipeline.db import get_pooled_connection
+from pipeline.source_country import resolve_country
 
 try:
     import redis as _redis_lib
@@ -289,7 +290,9 @@ class GDELT2Ingestor:
         with conn.cursor() as cursor:
             for url in urls:
                 try:
-                    cursor.execute("SELECT register_source(%s)", (url,))
+                    cursor.execute(
+                        "SELECT register_source(%s, %s)", (url, resolve_country(url))
+                    )
                     result = cursor.fetchone()
                     if result:
                         url_to_source_id[url] = result[0]
@@ -611,8 +614,8 @@ def _register_acled_source(cursor, domain: str) -> int | None:
         source_id of the registered source, or None on failure.
     """
     cursor.execute(
-        "INSERT INTO sources (domain) VALUES (%s) ON CONFLICT (domain) DO NOTHING",
-        (domain,),
+        "INSERT INTO sources (domain, country_code) VALUES (%s, %s) ON CONFLICT (domain) DO NOTHING",
+        (domain, resolve_country(domain)),
     )
     cursor.execute("SELECT source_id FROM sources WHERE domain = %s", (domain,))
     result = cursor.fetchone()

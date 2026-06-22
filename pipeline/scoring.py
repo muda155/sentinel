@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 from collections import Counter
 
 import pandas as pd
@@ -9,10 +10,15 @@ import pandas as pd
 from pipeline.db import get_pooled_connection
 
 
-def compute_source_density(trust_weights: list[float]) -> float:
+def _density_divisor() -> float:
+    return float(os.getenv("SENTINEL_CONF_DENSITY_DIVISOR", "3"))
+
+
+def compute_source_density(trust_weights: list[float], divisor: float | None = None) -> float:
     if not trust_weights:
         return 0.0
-    return float(math.tanh(sum(trust_weights) / 10))
+    d = divisor if divisor is not None else _density_divisor()
+    return float(math.tanh(sum(trust_weights) / d))
 
 
 def geopolitical_diversity(country_codes: list[str]) -> float:
@@ -29,13 +35,31 @@ def geopolitical_diversity(country_codes: list[str]) -> float:
     return float(entropy / math.log2(len(unique)))
 
 
-def compute_conf_score(source_density: float, diversity: float) -> float:
-    return float((0.6 * source_density + 0.4 * diversity) * 100)
+def _weights() -> tuple[float, float]:
+    return (
+        float(os.getenv("SENTINEL_CONF_W_DENSITY", "0.7")),
+        float(os.getenv("SENTINEL_CONF_W_DIVERSITY", "0.3")),
+    )
+
+
+def compute_conf_score(
+    source_density: float,
+    diversity: float,
+    w_density: float | None = None,
+    w_diversity: float | None = None,
+) -> float:
+    wd, wv = _weights()
+    wd = w_density if w_density is not None else wd
+    wv = w_diversity if w_diversity is not None else wv
+    return float((wd * source_density + wv * diversity) * 100)
 
 
 def score_hotspot_from_events(events_df: pd.DataFrame) -> dict[str, float]:
-    trust_weights = [float(w) for w in events_df.get("trust_score", pd.Series(dtype=object)).tolist() if pd.notna(w)]
-    countries = [v for v in events_df.get("country_code", pd.Series(dtype=object)).tolist()]
+    df = events_df
+    if "domain" in df.columns and not df.empty:
+        df = df.dropna(subset=["domain"]).drop_duplicates(subset=["domain"])
+    trust_weights = [float(w) for w in df.get("trust_score", pd.Series(dtype=object)).tolist() if pd.notna(w)]
+    countries = [v for v in df.get("country_code", pd.Series(dtype=object)).tolist()]
     source_density = compute_source_density(trust_weights)
     diversity = geopolitical_diversity(countries)
     return {
@@ -53,7 +77,7 @@ class ScoringRepository:
         with self._conn.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT e.url, e.country_code, COALESCE(s.trust_score, 0.4) as trust_score
+                SELECT s.domain, s.country_code, COALESCE(s.trust_score, 0.4) as trust_score
                 FROM event_hotspot eh
                 JOIN events e ON e.event_id = eh.event_id
                 LEFT JOIN sources s ON e.source_id = s.source_id
@@ -62,7 +86,7 @@ class ScoringRepository:
                 (hotspot_id,),
             )
             rows = cursor.fetchall()
-        return pd.DataFrame(rows, columns=["url", "country_code", "trust_score"])
+        return pd.DataFrame(rows, columns=["domain", "country_code", "trust_score"])
 
     def score_hotspot(self, hotspot_id: int) -> dict[str, float]:
         events_df = self._fetch_hotspot_events(hotspot_id)
