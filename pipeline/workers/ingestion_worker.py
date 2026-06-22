@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 
 from pipeline.db import get_pooled_connection
 from pipeline.ingestion import ACLEDIngestor, GDELT2Ingestor
+from pipeline.retention import ensure_partitions
 from pipeline.streams import StreamBus
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,10 @@ class IngestionWorker:
         try:
             inserted = 0
             event_ids: list[int] = []
+            # Provision current + upcoming partitions before inserting so a
+            # month-rollover or back-dated row can't abort the batch insert
+            # with "no partition of relation events found for row".
+            ensure_partitions(conn)
             # Step 1: GDELT
             ingestor = GDELT2Ingestor()
             military_df = ingestor.run_once()

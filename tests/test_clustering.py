@@ -234,6 +234,53 @@ def test_classify_event_type_unknown_source() -> None:
     assert clustering.classify_event_type(row) == "unknown"
 
 
+def test_classify_event_type_gdelt_multidigit_cameo() -> None:
+    """Live GDELT EventCodes are 3-4 digits ('190', '1712'); the CAMEO root
+    (first two digits, 14-19) must classify as military_conflict, not 'unknown'.
+    Regression: int('190') is not in [14,19], which silently mislabeled every
+    real GDELT event and starved convergence of its only event type."""
+    clustering = importlib.import_module("pipeline.clustering")
+
+    for code in ["141", "150", "164", "173", "180", "190", "196", "1712", "1823"]:
+        row = {"source_system": "GDELT", "cameo_code": code}
+        assert clustering.classify_event_type(row) == "military_conflict", code
+
+    # Non-military roots (outside 14-19) stay unknown.
+    assert (
+        clustering.classify_event_type({"source_system": "GDELT", "cameo_code": "010"})
+        == "unknown"
+    )
+    assert (
+        clustering.classify_event_type({"source_system": "GDELT", "cameo_code": "100"})
+        == "unknown"
+    )
+
+
+def test_dbscan_window_start_floors_to_day_for_daily_data() -> None:
+    """GDELT events are stamped midnight UTC (day-granular SQLDATE). A 2h DBSCAN
+    window computed from NOW excludes them once NOW is >2h past midnight, so the
+    lower bound must floor to start-of-day UTC."""
+    from datetime import datetime, timezone
+
+    clustering = importlib.import_module("pipeline.clustering")
+
+    now = datetime(2026, 6, 22, 7, 52, tzinfo=timezone.utc)
+    start = clustering._dbscan_window_start(now, 2)
+    assert start == datetime(2026, 6, 22, 0, 0, tzinfo=timezone.utc)
+
+
+def test_dbscan_window_start_keeps_longer_window() -> None:
+    """A window longer than the time elapsed since midnight still reaches back
+    the full window (the day-floor only ever widens, never narrows)."""
+    from datetime import datetime, timezone
+
+    clustering = importlib.import_module("pipeline.clustering")
+
+    now = datetime(2026, 6, 22, 7, 52, tzinfo=timezone.utc)
+    start = clustering._dbscan_window_start(now, 48)
+    assert start == datetime(2026, 6, 20, 7, 52, tzinfo=timezone.utc)
+
+
 def test_compute_convergence_score() -> None:
     """Test: 2 types x 3 events -> type_score=50, count_boost=6, total=56."""
     clustering = importlib.import_module("pipeline.clustering")

@@ -38,7 +38,11 @@ class GridCellWorker(Worker):
             unique_types = len(cell.get("type_counts", {}))
             total_events = cell.get("total_events", 0)
             score = compute_convergence_score(unique_types, total_events)
-            if unique_types >= 2 and score >= 1:
+            # Fire on convergence_score>=1 (matching the monolith get_active_cells
+            # gate) rather than requiring 2+ distinct types. Real GDELT-only feeds
+            # carry a single 'military_conflict' type, so a 2-type gate produced
+            # zero hotspots without ACLED. DBSCAN still groups the events spatially.
+            if score >= 1:
                 out.append({
                     "cell_id": cell_id,
                     "convergence_score": float(score),

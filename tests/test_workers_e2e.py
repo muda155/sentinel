@@ -85,6 +85,111 @@ def test_batch_flows_to_hotspots_matching_monolith():
         conn.close()
 
 
+def _seed_single_type_gdelt(conn) -> list[int]:
+    """4 GDELT-only military events (3-4 digit CAMEO codes), co-located in one
+    1x1 cell with NOW() timestamps. All classify as the single 'military_conflict'
+    type, so this cell only fires convergence once single-type zones are allowed."""
+    rows = [
+        ("9101", "190", 31.50, 34.45),
+        ("9102", "180", 31.51, 34.46),
+        ("9103", "173", 31.49, 34.44),
+        ("9104", "1411", 31.52, 34.47),
+    ]
+    ids: list[int] = []
+    with conn.cursor() as cur:
+        for ext, cameo, lat, lon in rows:
+            url = f"https://seed/{ext}"
+            cur.execute("SELECT register_source(%s, %s)", (url, None))
+            source_id = cur.fetchone()[0]
+            cur.execute(
+                """
+                INSERT INTO events (source_system, gdelt_global_event_id,
+                    external_event_id, event_date, cameo_code, country_code, url,
+                    title, source_id, point_geom, grid_cell_id)
+                VALUES ('GDELT', %s, %s, NOW(), %s, 'IL', %s, 'seed', %s,
+                        ST_SetSRID(ST_MakePoint(%s,%s),4326), '1x1_LAT31_LON34')
+                ON CONFLICT (source_system, external_event_id, event_date) DO NOTHING
+                RETURNING event_id
+                """,
+                (int(ext), ext, cameo, url, source_id, lon, lat),
+            )
+            r = cur.fetchone()
+            if r:
+                ids.append(r[0])
+    conn.commit()
+    return ids
+
+
+def test_single_type_gdelt_cell_produces_hotspot():
+    """A GDELT-only cell (one event type) must still produce a hotspot: real
+    feeds have no ACLED, so the worker chain has to fire on convergence_score>=1,
+    not only on 2+ distinct types."""
+    dsn = os.getenv("SENTINEL_TEST_DB")
+    conn = psycopg2.connect(dsn)
+    try:
+        with conn.cursor() as cur:
+            for t in ("event_hotspot", "hotspots", "grid_cells", "events"):
+                cur.execute(f"DELETE FROM {t}")
+        conn.commit()
+
+        event_ids = _seed_single_type_gdelt(conn)
+        assert len(event_ids) >= 3, event_ids
+
+        bus = StreamBus(client=fakeredis.FakeStrictRedis(), block_ms=10, batch=100)
+        for w in (GridCellWorker, ClusteringWorker, ConsensusWorker):
+            bus.ensure_group(w.in_stream, w.group)
+        bus.publish("sentinel:ingested_events", {"batch_id": "s1", "event_ids": event_ids})
+
+        assert _drain(GridCellWorker(bus=bus, consumer="c")) >= 1
+        assert _drain(ClusteringWorker(bus=bus, consumer="c")) >= 1
+        _drain(ConsensusWorker(bus=bus, consumer="c"))
+
+        count, _ = monolith_hotspot_signature(conn)
+        assert count == 1, f"expected 1 hotspot from single-type GDELT cell, got {count}"
+    finally:
+        with conn.cursor() as cur:
+            for t in ("event_hotspot", "hotspots", "grid_cells", "events"):
+                cur.execute(f"DELETE FROM {t}")
+        conn.commit()
+        conn.close()
+
+
+def test_recluster_same_cell_is_idempotent():
+    """Re-running clustering for a cell must REFRESH its hotspots, not accumulate
+    duplicates. Each 15-min pipeline tick re-clusters the same events; without
+    per-cell cleanup the hotspots table (and the map) grows unboundedly."""
+    from pipeline.clustering import cluster_single_cell
+
+    dsn = os.getenv("SENTINEL_TEST_DB")
+    conn = psycopg2.connect(dsn)
+    try:
+        with conn.cursor() as cur:
+            for t in ("event_hotspot", "hotspots", "grid_cells", "events"):
+                cur.execute(f"DELETE FROM {t}")
+        conn.commit()
+        _seed_single_type_gdelt(conn)
+
+        cluster_single_cell(conn, "1x1_LAT31_LON34")
+        ids2 = cluster_single_cell(conn, "1x1_LAT31_LON34")
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) FROM hotspots WHERE cell_id = %s", ("1x1_LAT31_LON34",)
+            )
+            total = cur.fetchone()[0]
+        assert total == len(ids2), (
+            f"recluster duplicated hotspots: {total} rows for cell, "
+            f"second run produced {len(ids2)}"
+        )
+        assert total >= 1
+    finally:
+        with conn.cursor() as cur:
+            for t in ("event_hotspot", "hotspots", "grid_cells", "events"):
+                cur.execute(f"DELETE FROM {t}")
+        conn.commit()
+        conn.close()
+
+
 def test_unacked_message_is_replayed_via_claim():
     bus = StreamBus(client=fakeredis.FakeStrictRedis(), block_ms=10, batch=100)
     bus.ensure_group("sentinel:convergence_zone_detected", "cg:clustering")
