@@ -186,7 +186,7 @@ def run_pipeline() -> None:
 
         endpoint = os.getenv("NVIDIA_NIM_ENDPOINT", "")
         api_key = os.getenv("NVIDIA_NIM_API_KEY", "")
-        model = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.1-70b-instruct")
+        model = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct")
         ollama_endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
         threshold = float(os.getenv("SENTINEL_LLM_THRESHOLD", "40"))
 

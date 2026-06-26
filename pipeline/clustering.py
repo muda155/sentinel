@@ -939,7 +939,7 @@ def main() -> int:
         if args.run_llm:
             endpoint = os.getenv("NVIDIA_NIM_ENDPOINT", "")
             api_key = os.getenv("NVIDIA_NIM_API_KEY", "")
-            model = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.1-70b-instruct")
+            model = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct")
             if not endpoint or not api_key:
                 raise RuntimeError("NVIDIA_NIM_ENDPOINT and NVIDIA_NIM_API_KEY are required")
             llm_result = verify_hotspots_with_llm(
