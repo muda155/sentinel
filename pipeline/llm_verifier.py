@@ -20,12 +20,15 @@ def build_prompt(hotspot_data: dict) -> str:
     lines = [
         "Act as an intelligence analyst. Detect any factual conflicts.",
         (
-            "Summarise in 3-4 sentences. CRITICAL: You must follow the Attributed AI Briefs "
-            "methodology. Every single claim in your summary must end with a citation bracket "
-            "containing the index or URL of the source (e.g., 'Forces advanced 5km [1]'). "
-            "Do not hallucinate."
+            "Summarise in 3-4 sentences. CRITICAL: follow the Attributed AI Briefs "
+            "methodology. Every sentence MUST end with exactly ONE citation of the form "
+            "[N], where N is a single source index number, placed immediately before the "
+            "terminal period (e.g., 'Forces advanced 5km [1].'). Never put multiple numbers "
+            "in one bracket (no '[1, 2]') and never put a URL in the bracket; if several "
+            "sources support a claim, cite only the single most relevant index. Do not hallucinate."
         ),
-        "Output JSON: {conflict_detected: bool, conflict_detail: str, summary: str, sources_cited: [str]}",
+        "Output JSON only, no prose outside it: "
+        "{conflict_detected: bool, conflict_detail: str, summary: str, sources_cited: [str]}",
         "",
         f"Hotspot ID: {hotspot_data.get('hotspot_id')}",
         "Sources:",
@@ -38,8 +41,30 @@ def build_prompt(hotspot_data: dict) -> str:
     return "\n".join(lines)
 
 
+def _extract_json(text: str) -> dict:
+    """Parse a JSON object from an LLM response, tolerating markdown fences/prose.
+
+    Models (NIM Llama-3.1-70B included) frequently wrap the object in ```json
+    fences or prefix prose like ``**Output JSON:**``. Falls back to the first
+    ``{...}`` span when a direct parse fails.
+    """
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+        raise ValueError(f"LLM response is not valid JSON: {text[:200]}") from None
+
+
+def _llm_timeout(timeout: int | None) -> int:
+    if timeout is not None:
+        return timeout
+    return int(os.getenv("SENTINEL_LLM_TIMEOUT_S", "60"))
+
+
 def validate_citations(summary: str) -> None:
-    """Validate that every sentence ends with a numeric citation (FR-11).
+    r"""Validate that every sentence ends with a numeric citation (FR-11).
 
     Splits the summary into sentences and requires each to match
     ``r'.+\[\d+\][.!?]\s*$'``. Raises ``ValueError`` listing every
@@ -80,7 +105,7 @@ class LLMSummary(BaseModel):
 def call_ollama_fallback(
     prompt: str,
     endpoint: str = "http://localhost:11434",
-    timeout: int = 60,
+    timeout: int | None = None,
 ) -> tuple[dict, str]:
     """Call local Ollama as fallback when NIM is unavailable (FR-12)."""
     payload = {
@@ -88,30 +113,18 @@ def call_ollama_fallback(
         "prompt": prompt,
         "stream": False,
         "options": {
-            "temperature": 0,
-            "num_predict": 500,
+            "temperature": float(os.getenv("SENTINEL_LLM_TEMPERATURE", "0")),
+            "num_predict": int(os.getenv("SENTINEL_LLM_MAX_TOKENS", "500")),
         },
     }
     try:
         response = requests.post(
             f"{endpoint}/api/generate",
             json=payload,
-            timeout=timeout,
+            timeout=_llm_timeout(timeout),
         )
         response.raise_for_status()
-        raw = response.json()
-        text = raw.get("response", "")
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            # Try to extract JSON from the response
-            import re as _re
-
-            match = _re.search(r"\{.*\}", text, _re.DOTALL)
-            if match:
-                parsed = json.loads(match.group())
-            else:
-                raise ValueError(f"Ollama response is not valid JSON: {text[:200]}")
+        parsed = _extract_json(response.json().get("response", ""))
         summary = LLMSummary(**parsed)  # validates citations + types, fills defaults
         return summary.model_dump(), "llama-3-8b-ollama"
     except requests.RequestException as e:
@@ -124,14 +137,15 @@ def call_nim_api(
     api_key: str,
     model: str,
     retries: int = 3,
-    timeout: int = 15,
+    timeout: int | None = None,
     ollama_endpoint: str = "http://localhost:11434",
 ) -> tuple[dict, str]:
+    timeout = _llm_timeout(timeout)
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0,
-        "max_tokens": 500,
+        "temperature": float(os.getenv("SENTINEL_LLM_TEMPERATURE", "0")),
+        "max_tokens": int(os.getenv("SENTINEL_LLM_MAX_TOKENS", "500")),
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     last_error: Exception | None = None
@@ -140,7 +154,7 @@ def call_nim_api(
             response = requests.post(endpoint, headers=headers, json=payload, timeout=timeout)
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
-            parsed = json.loads(content)
+            parsed = _extract_json(content)
             summary = LLMSummary(**parsed)  # validates citations + types, fills defaults
             return summary.model_dump(), model
         except requests.Timeout:
@@ -261,7 +275,7 @@ def verify_hotspot(conn, hotspot_id: int) -> int | None:
     Returns the created llm_summaries.summary_id or None if NIM+Ollama fail."""
     endpoint = os.getenv("NVIDIA_NIM_ENDPOINT", "")
     api_key = os.getenv("NVIDIA_NIM_API_KEY", "")
-    model = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.1-70b-instruct")
+    model = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct")
     ollama_endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
 
     repo = LLMRepository(conn)
@@ -302,7 +316,7 @@ def main() -> int:
     args = _build_parser().parse_args()
     endpoint = os.getenv("NVIDIA_NIM_ENDPOINT", "")
     api_key = os.getenv("NVIDIA_NIM_API_KEY", "")
-    model = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.1-70b-instruct")
+    model = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct")
     ollama_endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
     if not endpoint or not api_key:
         raise RuntimeError("NVIDIA_NIM_ENDPOINT and NVIDIA_NIM_API_KEY are required")

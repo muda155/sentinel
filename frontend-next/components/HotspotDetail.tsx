@@ -4,6 +4,7 @@ import { api, Hotspot, HotspotEvent, HotspotSummary } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
 import { parseCitations } from "@/lib/citations";
+import { sitrepState } from "@/lib/sitrep";
 import { buildSubtitle } from "@/lib/subtitle";
 import TrustTierEditor from "@/components/TrustTierEditor";
 
@@ -58,7 +59,11 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
               )}
             </p>
           ) : (
-            <p>{t("detail.noSitrep")}</p>
+            <p>
+              {sitrepState(summary.summary, summary.conf_score) === "pending"
+                ? t("detail.sitrepPending")
+                : t("detail.noSitrepBelowThreshold")}
+            </p>
           )}
         </>
       ) : <p>{t("detail.loading")}</p>}

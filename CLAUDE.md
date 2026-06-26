@@ -40,7 +40,7 @@ Sentinel is a geopolitical OSINT pipeline: ingest → cluster → score → veri
 3. **Grid-cell convergence** (`pipeline/clustering.py:bin_to_grid`) — bins events into 1°×1° cells; a cell becomes an active zone when `convergence_score ≥ 1` (≥1 classified event in 24h). 2+ distinct event types raise the alert level but aren't required to activate, so GDELT-only feeds still produce hotspots (FR-WM-CONVERGENCE)
 4. **DBSCAN clustering** (`pipeline/clustering.py:run_clustering_pipeline`) — per-cell micro-clustering using haversine distance; produces precise hotspots stored in `hotspots` table
 5. **Consensus Confidence Scoring** (`pipeline/scoring.py`) — computes `conf_score` (0–100) per hotspot: `0.7 × source_density + 0.3 × geopolitical_diversity`, where `source_density = tanh(Σ trust over unique domains / 3)` (env-configurable via `SENTINEL_CONF_W_DENSITY`, `SENTINEL_CONF_W_DIVERSITY`, `SENTINEL_CONF_DENSITY_DIVISOR`). Geopolitical diversity reads `sources.country_code` over unique domains.
-6. **LLM Verification** (`pipeline/llm_verifier.py`) — NVIDIA NIM (Llama-3.1-70B) generates SITREP with mandatory citations per sentence; falls back to local Ollama on NIM failure
+6. **LLM Verification** (`pipeline/llm_verifier.py`) — NVIDIA NIM (`NVIDIA_NIM_MODEL`, default `meta/llama-3.3-70b-instruct`) generates SITREP with mandatory single-index `[N]` citations per sentence; falls back to local Ollama on NIM failure
 
 The scheduler (`APScheduler`) runs the full cycle every `SENTINEL_POLL_INTERVAL_S` seconds (default 900).
 

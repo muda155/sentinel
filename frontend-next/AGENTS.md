@@ -20,7 +20,7 @@ All files in `frontend-next/`, including `lib/`, `components/`, `app/`, `__tests
 - Color mapping lives in `lib/colors.ts` — the single source of truth for FR-13 colors.
 - i18n: all UI strings via `useT()` from `lib/i18n.tsx`; dictionaries in `lib/locales/` (vi default, key parity enforced by test). Place names, titles, SITREPs stay English.
 - `SearchBar` (Cmd+K) calls `GET /search` via `api.search`; selection flies the map (`focus` prop on `MapView`) and opens `HotspotDetail`.
-- `HotspotDetail` header uses `hotspot.name` (fallback `Hotspot #N`); sources list numbers match SITREP `[N]` via `citation_index` from `GET /hotspots/{id}/events`.
+- `HotspotDetail` header uses `hotspot.name` (fallback `Hotspot #N`); sources list numbers match SITREP `[N]` via `citation_index` from `GET /hotspots/{id}/events`. When the summary text is empty, `lib/sitrep.ts:sitrepState()` decides the message: `below_threshold` (conf_score ≤ `LLM_THRESHOLD`, won't generate) vs `pending` (conf_score > threshold, awaiting LLM). `LLM_THRESHOLD` (40) mirrors `SENTINEL_LLM_THRESHOLD` and the `> threshold` gate in `pipeline/llm_verifier.py`.
 - SSE stream handling lives in `lib/sse.ts` with exponential backoff (1s→30s, ±500ms jitter).
 - Auth context in `lib/auth.tsx` wraps the app; `useAuth()` exposes `token`, `user`, `login()`, `logout()`, `isAdmin`.
 - Login page at `/login`; unauthenticated users are redirected there from `/`.

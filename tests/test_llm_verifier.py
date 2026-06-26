@@ -16,7 +16,8 @@ def test_build_prompt_contains_sources_and_citation_directive() -> None:
     }
     prompt = llm_verifier.build_prompt(data)
     assert "Act as an intelligence analyst" in prompt
-    assert "must end with a citation bracket" in prompt
+    assert "exactly ONE citation" in prompt
+    assert "[N]" in prompt
     assert "https://a.com/1" in prompt
     assert "https://b.com/2" in prompt
 
@@ -297,6 +298,58 @@ def test_call_nim_api_returns_validated_dict(monkeypatch: pytest.MonkeyPatch) ->
     assert model_used == "meta/llama-3.1-70b-instruct"
     assert result["conflict_detail"] == ""       # default filled by model
     assert result["sources_cited"] == ["1"]       # coerced to str
+
+
+def test_call_nim_api_parses_markdown_fenced_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    """NIM frequently wraps JSON in ```json fences / prose; it must still parse."""
+    ok = mock.Mock()
+    ok.raise_for_status.return_value = None
+    ok.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": (
+                        "**Output JSON:**\n```json\n"
+                        '{"conflict_detected": false, '
+                        '"summary": "Calm conditions persisted [1].", '
+                        '"sources_cited": [1]}\n```'
+                    )
+                }
+            }
+        ]
+    }
+    monkeypatch.setattr("pipeline.llm_verifier.requests.post", mock.Mock(return_value=ok))
+
+    result, model_used = llm_verifier.call_nim_api(
+        prompt="test",
+        endpoint="https://example.com/v1/chat/completions",
+        api_key="secret",
+        model="meta/llama-3.1-70b-instruct",
+    )
+    assert result["summary"] == "Calm conditions persisted [1]."
+    assert result["sources_cited"] == ["1"]
+
+
+def test_call_nim_api_uses_env_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default read timeout is env-configurable via SENTINEL_LLM_TIMEOUT_S."""
+    monkeypatch.setenv("SENTINEL_LLM_TIMEOUT_S", "60")
+    ok = mock.Mock()
+    ok.raise_for_status.return_value = None
+    ok.json.return_value = {
+        "choices": [
+            {"message": {"content": '{"conflict_detected": false, "summary": "Quiet [1].", "sources_cited": [1]}'}}
+        ]
+    }
+    post_mock = mock.Mock(return_value=ok)
+    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
+
+    llm_verifier.call_nim_api(
+        prompt="test",
+        endpoint="https://example.com/v1/chat/completions",
+        api_key="secret",
+        model="meta/llama-3.1-70b-instruct",
+    )
+    assert post_mock.call_args.kwargs["timeout"] == 60
 
 
 def test_fetch_hotspot_articles_order_is_deterministic():
