@@ -15,6 +15,8 @@ class Hotspot(BaseModel):
     alert_level: str
     event_count: int
     name: str | None = None
+    end_window: datetime | None = None
+    created_at: datetime | None = None
 
 
 class HotspotSummary(BaseModel):
