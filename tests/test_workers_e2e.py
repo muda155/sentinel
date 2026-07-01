@@ -13,9 +13,12 @@ from pipeline.workers.consensus_worker import ConsensusWorker
 from pipeline.workers.gridcell_worker import GridCellWorker
 from tests.helpers_seed import monolith_hotspot_signature, seed_demo_events
 
-pytestmark = pytest.mark.skipif(
-    not os.getenv("SENTINEL_TEST_DB"), reason="needs live PostGIS via SENTINEL_TEST_DB"
-)
+pytestmark = [
+    pytest.mark.destructive,
+    pytest.mark.skipif(
+        not os.getenv("SENTINEL_TEST_DB"), reason="needs live PostGIS via SENTINEL_TEST_DB"
+    ),
+]
 
 
 def _drain(worker):

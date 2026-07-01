@@ -13,7 +13,7 @@
 
 # Sentinel – Technical Specification Document
 
-**Document Version:** 1.7.0
+**Document Version:** 1.8.0
 **Date:** 2026‑06‑22  
 **Author:** FYP Candidate (role: Senior Software Architect & Technical Project Manager)  
 **Status:** Approved for Development  
@@ -394,6 +394,28 @@ The dashboard shall be bilingual with **Vietnamese as the default locale** and a
 **Acceptance Criteria:**  
 ☑ First load renders Vietnamese; toggling to EN persists across reload.  
 ☑ A vitest test asserts `vi.ts` declares every key present in `en.ts`.
+
+### 4.7 Analyst Triage & Map Clarity (M5 extension)
+
+*Design reference: `docs/superpowers/specs/2026-07-01-map-triage-clarity-design.md`. Clarity techniques (show-less-by-default, time-as-filter, "what's new" emphasis, encoding legend) are adapted from World Monitor (`koala73/worldmonitor`, AGPL-3.0) — approach credited, no code or data copied verbatim. The convergence gate cuts noise upstream; these FRs let the analyst triage downstream. Filtering is client-side over the bounded (≤200) `/hotspots` payload — no new query params. `GET /hotspots` and `GET /hotspots/{id}` shall additionally return `end_window` and `created_at` (existing `hotspots` columns; no migration).*
+
+**FR‑18‑MAP_FILTERS**  
+The dashboard shall provide an over-map filter panel (`components/FilterPanel.tsx`) and an encoding legend (`components/Legend.tsx`). Filters: a **confidence** slider (min `conf_score`, 0–100 step 5), **alert-level** include checkboxes (Critical/High/Medium), and a **time-window** selector (`6h/24h/48h/7d/all`, filtering on `end_window`). The panel shows a "**Showing X of Y**" counter and a Reset control. Filter logic is a pure module `lib/filters.ts` (`passesFilter`, `applyFilters`, `DEFAULT_FILTERS`, `TIME_WINDOWS`) applied in `app/page.tsx`; `MapView` becomes presentational, receiving the already-filtered list via a lifted `lib/useHotspots.ts` hook (fetch + SSE). The legend decodes FR‑13 using `lib/colors.ts` swatches (fill: green >70 / yellow 40–70 / grey <40; ring: red = Critical, orange = High). All strings via `useT()`.  
+**Acceptance Criteria:**  
+☑ Raising the confidence slider removes lower-score markers and updates the "Showing X of Y" counter; unchecking an alert level hides those markers; selecting "24h" hides hotspots whose `end_window` is older than 24 hours.  
+☑ Malformed/absent `end_window` fails open (hotspot remains visible); a vitest suite covers `passesFilter` predicates and the window boundary.
+
+**FR‑19‑MAP_DECLUTTER**  
+The map shall show less by default. `DEFAULT_FILTERS.minConf = 40` establishes a deliberate, adjustable noise floor: grey (`conf_score < 40`) markers are hidden on load and revealed by dragging the slider to 0. At low zoom, nearby markers may be clustered into a labelled count badge (via `supercluster` feeding a `ScatterplotLayer` + `TextLayer`) that expands on zoom-in; clustering is a separable sub-step and its absence shall not block the noise-floor default.  
+**Acceptance Criteria:**  
+☑ First load renders no grey markers; the counter reflects the hidden count; dragging confidence to 0 reveals them.  
+☑ When clustering is enabled, dense regions collapse to labelled badges at world zoom and expand on zoom-in.
+
+**FR‑20‑WHATS_NEW**  
+The dashboard shall visually distinguish hotspots new since the analyst's last visit. `lib/whatsnew.ts` (`isNew`, `countNew`, `LAST_SEEN_KEY = "sentinel_hotspots_last_seen"`) compares each hotspot's `created_at` against a `localStorage` timestamp; on mount the app computes the "new" set then writes `now()` for the next visit (SSE-added hotspots also count as new within the session). New hotspots render with a translucent highlight `ScatterplotLayer` beneath the main markers, and the filter panel shows an "**N** new" chip. `localStorage` unavailable degrades to "nothing new" with no error.  
+**Acceptance Criteria:**  
+☑ A hotspot with `created_at` after the stored timestamp renders highlighted and increments the "N new" chip; reloading after viewing clears it.  
+☑ A vitest suite covers `isNew` (null last-seen → all new) and `countNew`.
 
 ---
 
@@ -839,6 +861,7 @@ ln -s ../specs.md docs/spec.md
 
 | Version | Date | Change | Reason |
 |---|---|---|---|
+| 1.8.0 | 2026-07-01 | **Analyst triage & map clarity (Section 4.7, M5).** Added FR-18 map filters (confidence slider + alert-level checkboxes + time-window selector + "Showing X of Y" counter + FR-13 legend; client-side over the ≤200 payload), FR-19 map de-clutter (default noise floor `minConf=40`; optional `supercluster` marker clustering), and FR-20 "what's new" highlighting (`created_at` vs `localStorage` last-seen). `GET /hotspots` and `GET /hotspots/{id}` now also return `end_window` and `created_at` (existing columns, no migration). `MapView` refactored to presentational; data fetch/SSE lifted into `lib/useHotspots.ts`; pure logic in `lib/filters.ts` + `lib/whatsnew.ts`. Clarity techniques adapted from World Monitor with attribution. | The convergence gate cuts noise upstream, but analysts had no downstream triage: no filtering, no recency, no legend, no "what changed" — every marker looked equally worth investigating. |
 | 1.7.0 | 2026-06-22 | **GDELT-only convergence restored (FR-WM-CONVERGENCE / FR-5).** Relaxed the Convergence Zone activation guard from `unique_event_types ≥ 2` back to `convergence_score ≥ 1`: single-event-type cells are again active zones eligible for DBSCAN (alert_level still requires 2+ types). Documented that GDELT classification reads the **2-digit CAMEO root** of the full 3–4 digit `EventCode` (the prior `int(EventCode) in [14,19]` check mislabeled every live event as `unknown`). Floored the DBSCAN look-back lower bound to start-of-UTC-day so day-granular GDELT events (midnight UTC) stay in window all day. Reverses the 1.1.2 guard tightening. | Production runs without ACLED (subscription-gated) carry a single `military_conflict` type; the 2-type guard + the multi-digit CAMEO mislabel + the day-granular DBSCAN window together produced zero hotspots from real GDELT-only feeds. |
 | 1.5.0 | 2026-06-11 | **Dashboard usability & localization (Section 4.6).** Added FR-14 hotspot naming (curated-place layered resolution stored in `hotspots.name`, migration 012, backfill CLI), FR-15 grouped search (`GET /search` with events FTS migration 013; always-visible search box with Cmd+K focus), FR-16 source-article list (`GET /hotspots/{id}/events` with `citation_index` aligned to the LLM prompt's article ordering), and FR-17 bilingual UI (Vietnamese default, EN/VI toggle, client-side dictionaries). Naming/search UX adapted from World Monitor with attribution; fixed stale header version (was 1.3.0 while history recorded 1.4.0). | Dashboard lacked practical affordances: hotspots were labelled "Hotspot #N", there was no search, and stored article data (`events.title`/`url`) was never surfaced; FYP requires a Vietnamese-language UI. |
 | 1.4.0 | 2026-06-09 | **M3 React frontend delivered.** Next.js 16 dual-map frontend (deck.gl + MapLibre GL + globe.gl) replacing Streamlit; JWT auth with `users` table, `/auth/login`, Bearer-gated REST/SSE, role separation (analyst/admin); SSE live hotspot updates with exponential backoff (±500ms jitter); admin `trust_tier` editor (PATCH `/sources/{id}`); FR-13 visual contract (green/yellow/grey fill, red/orange ring); SITREP citation rendering; production default-secret guard; SQL-injection + auth-bypass tests; Locust SSE load test harness; containerized `frontend-next` service in Docker Compose; M3 deployment runbook. | Milestone M3 complete. |

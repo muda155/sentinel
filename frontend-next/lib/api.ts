@@ -3,6 +3,7 @@ export type Hotspot = {
   conf_score: number; convergence_score: number;
   alert_level: "Critical" | "High" | "Medium"; event_count: number;
   name: string | null;
+  end_window: string; created_at: string;
 };
 export type HotspotSummary = {
   summary: string; conflict_detected: boolean; sources_cited: string[];
