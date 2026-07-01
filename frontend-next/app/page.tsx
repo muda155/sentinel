@@ -8,6 +8,7 @@ import { useAuth } from "@/lib/auth";
 import HotspotDetail from "@/components/HotspotDetail";
 import LanguageToggle from "@/components/LanguageToggle";
 import { useT } from "@/lib/i18n";
+import { useHotspots } from "@/lib/useHotspots";
 
 const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
 const GlobeView = dynamic(() => import("@/components/GlobeToggle"), { ssr: false });
@@ -22,6 +23,7 @@ export default function Page() {
   const [showHeat, setShowHeat] = useState(false);
   const [cells, setCells] = useState<GridCell[]>([]);
   const [globe, setGlobe] = useState(false);
+  const { hotspots } = useHotspots(token);
 
   const handleSearchSelect = (h: Hotspot) => {
     setFocus({ lat: h.lat, lon: h.lon });
@@ -50,7 +52,7 @@ export default function Page() {
   return (
     <main style={{ position: "absolute", inset: 0 }}>
       <SearchBar token={token} onSelectHotspot={handleSearchSelect} />
-      {globe ? <GlobeView /> : <MapView onSelect={setSelected} extraLayers={heatLayer} token={token} focus={focus} />}
+      {globe ? <GlobeView /> : <MapView onSelect={setSelected} extraLayers={heatLayer} hotspots={hotspots} focus={focus} />}
       <div style={{ position: "absolute", top: 12, left: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <label style={{ background: "#111", color: "#eee", padding: "8px 12px", borderRadius: 6, cursor: "pointer" }}>
           <input type="checkbox" checked={showHeat} onChange={(e) => setShowHeat(e.target.checked)} /> {t("header.heatmap")}

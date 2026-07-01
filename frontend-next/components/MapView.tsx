@@ -5,19 +5,17 @@ import { ScatterplotLayer } from "@deck.gl/layers";
 import { FlyToInterpolator } from "@deck.gl/core";
 import { Map } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
-import { api, Hotspot } from "@/lib/api";
+import { Hotspot } from "@/lib/api";
 import { fillColor, ringColor } from "@/lib/colors";
-import { connectHotspotStream } from "@/lib/sse";
 
 const INITIAL_VIEW = { longitude: 30, latitude: 30, zoom: 2, pitch: 0, bearing: 0 };
 const MAP_STYLE = process.env.NEXT_PUBLIC_MAP_STYLE ?? "https://demotiles.maplibre.org/style.json";
 
 export default function MapView({
-  onSelect, extraLayers = [], token, focus,
-}: { onSelect?: (h: Hotspot) => void; extraLayers?: unknown[];
-     token?: string | null; focus?: { lat: number; lon: number } | null }) {
+  hotspots, onSelect, extraLayers = [], focus,
+}: { hotspots: Hotspot[]; onSelect?: (h: Hotspot) => void;
+     extraLayers?: unknown[]; focus?: { lat: number; lon: number } | null }) {
   const [viewState, setViewState] = useState<Record<string, unknown>>(INITIAL_VIEW);
-  const [hotspots, setHotspots] = useState<Hotspot[]>([]);
 
   useEffect(() => {
     if (!focus) return;
@@ -26,26 +24,6 @@ export default function MapView({
       transitionDuration: 1200, transitionInterpolator: new FlyToInterpolator(),
     }));
   }, [focus]);
-
-  // Fetch hotspots on mount
-  useEffect(() => {
-    api.hotspots(token).then(setHotspots).catch(() => setHotspots([]));
-  }, [token]);
-
-  // SSE live updates: re-fetch on push
-  useEffect(() => {
-    if (!token) return;
-    const base = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
-    const cleanup = connectHotspotStream(base, token, {
-      onHotspot: () => {
-        api.hotspots(token).then(setHotspots).catch(() => {});
-      },
-      onSummary: () => {
-        api.hotspots(token).then(setHotspots).catch(() => {});
-      },
-    });
-    return cleanup;
-  }, [token]);
 
   // Render highest-confidence markers last so they paint on top of lower-score
   // ones when hotspots overlap (green > yellow > grey z-order).
