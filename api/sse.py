@@ -28,15 +28,24 @@ def _enrich(payload: dict) -> dict:
 
 
 async def hotspot_event_source(bus: StreamBus, consumer: str):
+    # StreamBus.read/ack and _enrich are synchronous blocking I/O (Redis
+    # xreadgroup(block=...), pooled DB). Run them off the event loop via
+    # asyncio.to_thread so a live SSE stream never starves concurrent REST
+    # requests sharing this event loop.
     for s in STREAMS:
         bus.ensure_group(s, SSE_GROUP)
     while True:
         got = False
         for s in STREAMS:
-            for mid, data in bus.read(s, SSE_GROUP, consumer):
+            messages = await asyncio.to_thread(bus.read, s, SSE_GROUP, consumer)
+            for mid, data in messages:
                 got = True
-                frame = _enrich(data) if s.endswith("hotspot_created") else data
+                frame = (
+                    await asyncio.to_thread(_enrich, data)
+                    if s.endswith("hotspot_created")
+                    else data
+                )
                 yield {"event": s.split(":")[-1], "data": json.dumps(frame)}
-                bus.ack(s, SSE_GROUP, mid)
+                await asyncio.to_thread(bus.ack, s, SSE_GROUP, mid)
         if not got:
             await asyncio.sleep(0.5)
