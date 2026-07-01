@@ -6,10 +6,14 @@ import os
 
 import psycopg2
 
+# event_date uses date_trunc('month', now()) rather than a literal so it always
+# lands in the current-month partition (migration 010 only provisions through the
+# current month on a fresh DB; a hardcoded past date has no partition). It is
+# stable within a run, so the duplicate-key conflict still fires.
 _INSERT = """
     INSERT INTO events (source_system, external_event_id, event_date,
                         gdelt_global_event_id, point_geom, grid_cell_id)
-    VALUES ('TEST', %s, '2026-06-15T00:00:00Z', %s,
+    VALUES ('TEST', %s, date_trunc('month', now()), %s,
             ST_SetSRID(ST_MakePoint(2.35, 48.85), 4326), '1x1_LAT48_LON2')
     ON CONFLICT (source_system, external_event_id, event_date) DO NOTHING
 """
@@ -56,7 +60,7 @@ def test_duplicate_event_is_deduplicated(live_conn):
     insert = """
         INSERT INTO events (source_system, external_event_id, event_date,
                             gdelt_global_event_id, point_geom, grid_cell_id)
-        VALUES ('TEST', 'dup-1', '2026-06-15T00:00:00Z', 99999,
+        VALUES ('TEST', 'dup-1', date_trunc('month', now()), 99999,
                 ST_SetSRID(ST_MakePoint(2.35, 48.85), 4326), '1x1_LAT48_LON2')
         ON CONFLICT (source_system, external_event_id, event_date) DO NOTHING
     """
