@@ -10,7 +10,7 @@ import LanguageToggle from "@/components/LanguageToggle";
 import { useT } from "@/lib/i18n";
 import { useHotspots } from "@/lib/useHotspots";
 import { applyFilters, DEFAULT_FILTERS, HotspotFilters } from "@/lib/filters";
-import { countNew, getLastSeen, isNew, markSeen } from "@/lib/whatsnew";
+import { countNew, getLastSeen, isNew } from "@/lib/whatsnew";
 
 const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
 const GlobeView = dynamic(() => import("@/components/GlobeToggle"), { ssr: false });
@@ -41,12 +41,10 @@ export default function Page() {
   const handleSearchSelect = (h: Hotspot) => {
     setFocus({ lat: h.lat, lon: h.lon });
     setSelected(h);
-    markSeen();
   };
 
   const handleSelectHotspot = (h: Hotspot) => {
     setSelected(h);
-    markSeen();
   };
 
   useEffect(() => {

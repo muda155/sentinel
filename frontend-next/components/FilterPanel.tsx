@@ -8,6 +8,7 @@ import {
 } from "@/lib/filters";
 import { useT } from "@/lib/i18n";
 import { markSeen } from "@/lib/whatsnew";
+import { RING_RED, RING_ORANGE, RING_MEDIUM_SWATCH } from "@/lib/colors";
 
 const TIME_OPTIONS: TimeWindow[] = ["6h", "12h", "24h", "48h", "72h", "all"];
 const ALERT_LEVELS: AlertLevel[] = ["Critical", "High", "Medium"];
@@ -73,8 +74,8 @@ export default function FilterPanel({ filters, onChange, visible, total, newCoun
         </legend>
         <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
           {ALERT_LEVELS.map((level) => {
-            const checked = filters.alertLevels.size === 0 || filters.alertLevels.has(level);
-            const ringColor = level === "Critical" ? "#dc2626" : level === "High" ? "#f97316" : "#555";
+            const checked = filters.alertLevels.has(level);
+            const ringColor = level === "Critical" ? RING_RED : level === "High" ? RING_ORANGE : RING_MEDIUM_SWATCH;
             return (
               <label key={level} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
                 <input

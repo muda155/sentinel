@@ -5,6 +5,9 @@ import { createClusterIndex, getClusterData, type ClusterFeature } from "@/lib/c
 interface ClusterHookResult {
   clusters: ClusterFeature[];
   leaves: Hotspot[];
+  /** Supercluster index, cast to any — only used for getClusterExpansionZoom(). */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  index: any;
 }
 
 /**
@@ -17,13 +20,19 @@ export function useCluster(
   bounds: [number, number, number, number] | null,
   zoom: number,
 ): ClusterHookResult {
+  // Stable key avoids rebuilding the index on every parent re-render
+  // when the hotspot array identity changes but content hasn't (≤200 items).
+  const hotspotKey = hotspots.length > 0
+    ? hotspots.map((h) => h.hotspot_id).join(",")
+    : "";
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const index: any = useMemo(() => createClusterIndex(hotspots), [hotspots]);
+  const index: any = useMemo(() => createClusterIndex(hotspots), [hotspotKey]);
 
   return useMemo(() => {
     if (!bounds || hotspots.length === 0) {
-      return { clusters: [], leaves: [] };
+      return { clusters: [], leaves: [], index };
     }
-    return getClusterData(index, bounds, zoom);
+    return { ...getClusterData(index, bounds, zoom), index };
   }, [index, bounds, zoom, hotspots.length]);
 }

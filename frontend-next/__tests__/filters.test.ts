@@ -110,10 +110,10 @@ describe("applyFilters", () => {
     expect(result.total).toBe(3);
   });
 
-  it("DEFAULT_FILTERS has minConf=40", () => {
+  it("DEFAULT_FILTERS has minConf=40 and all alert levels selected", () => {
     expect(DEFAULT_FILTERS.minConf).toBe(40);
     expect(DEFAULT_FILTERS.timeWindow).toBe("all");
-    expect(DEFAULT_FILTERS.alertLevels).toBeInstanceOf(Set);
+    expect(DEFAULT_FILTERS.alertLevels).toEqual(new Set(["Critical", "High", "Medium"]));
   });
 
   it("TIME_WINDOW_HOURS maps correctly", () => {

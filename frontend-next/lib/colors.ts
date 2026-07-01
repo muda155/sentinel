@@ -7,6 +7,15 @@ export function fillColor(confScore: number): RGBA {
   return [148, 163, 184, 200];                      // grey
 }
 
+// Hex constants derived from the RGBA functions above.
+// Single source of truth — update hex values when RGBA changes.
+export const FILL_GREEN = "#22c55e";
+export const FILL_YELLOW = "#eab308";
+export const FILL_GREY = "#94a3b8";
+export const RING_RED = "#dc2626";
+export const RING_ORANGE = "#f97316";
+export const RING_MEDIUM_SWATCH = "#555";
+
 // FR-13: red ring = Critical, orange = High, none = Medium.
 export function ringColor(alertLevel: string): RGBA {
   if (alertLevel === "Critical") return [220, 38, 38, 255];

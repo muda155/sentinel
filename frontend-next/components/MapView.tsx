@@ -27,7 +27,7 @@ export default function MapView({
 
   const zoom = Number(viewState.zoom ?? 2);
 
-  const { clusters, leaves } = useCluster(hotspots, WORLD_BBOX, zoom);
+  const { clusters, leaves, index } = useCluster(hotspots, WORLD_BBOX, zoom);
 
   useEffect(() => {
     if (!focus) return;
@@ -62,11 +62,25 @@ export default function MapView({
     [leaves],
   );
 
+  const handleClusterClick = (info: { object?: ClusterFeature }) => {
+    if (!info.object) return;
+    const { cluster_id, lon, lat } = info.object;
+    const expansionZoom = index.getClusterExpansionZoom(cluster_id);
+    setViewState((vs) => ({
+      ...vs,
+      longitude: lon,
+      latitude: lat,
+      zoom: expansionZoom + 1,
+      transitionDuration: 800,
+      transitionInterpolator: new FlyToInterpolator(),
+    }));
+  };
+
   const clusterLayer = zoom < CLUSTER_ZOOM_THRESHOLD && clusters.length > 0
     ? new ScatterplotLayer<ClusterFeature>({
         id: "clusters",
         data: clusters,
-        pickable: false,
+        pickable: true,
         radiusUnits: "pixels",
         getPosition: (d) => [d.lon, d.lat],
         getRadius: clusterRadius,
@@ -75,6 +89,7 @@ export default function MapView({
         lineWidthUnits: "pixels",
         getLineWidth: 1,
         getLineColor: [80, 140, 220, 255],
+        onClick: handleClusterClick,
       })
     : null;
 

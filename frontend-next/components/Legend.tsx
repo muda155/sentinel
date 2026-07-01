@@ -1,5 +1,6 @@
 "use client";
 import { useT } from "@/lib/i18n";
+import { FILL_GREEN, FILL_YELLOW, FILL_GREY, RING_RED, RING_ORANGE, RING_MEDIUM_SWATCH } from "@/lib/colors";
 
 export default function Legend() {
   const { t } = useT();
@@ -28,22 +29,22 @@ export default function Legend() {
       <div style={{ color: "#aaa", fontSize: 11, textTransform: "uppercase", letterSpacing: 1, marginBottom: 2 }}>
         Fill (confidence)
       </div>
-      {row("#22c55e", t("legend.highConfidence"))}
-      {row("#eab308", t("legend.mediumConfidence"))}
-      {row("#94a3b8", t("legend.lowConfidence"))}
+      {row(FILL_GREEN, t("legend.highConfidence"))}
+      {row(FILL_YELLOW, t("legend.mediumConfidence"))}
+      {row(FILL_GREY, t("legend.lowConfidence"))}
       <div style={{ color: "#aaa", fontSize: 11, textTransform: "uppercase", letterSpacing: 1, marginTop: 6, marginBottom: 2 }}>
         Ring (alert level)
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, lineHeight: 1.6 }}>
-        <span style={{ width: 10, height: 10, borderRadius: "50%", border: "2px solid #dc2626", background: "transparent" }} />
+        <span style={{ width: 10, height: 10, borderRadius: "50%", border: `2px solid ${RING_RED}`, background: "transparent" }} />
         {t("legend.criticalAlert")}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, lineHeight: 1.6 }}>
-        <span style={{ width: 10, height: 10, borderRadius: "50%", border: "2px solid #f97316", background: "transparent" }} />
+        <span style={{ width: 10, height: 10, borderRadius: "50%", border: `2px solid ${RING_ORANGE}`, background: "transparent" }} />
         {t("legend.highAlert")}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, lineHeight: 1.6 }}>
-        <span style={{ width: 10, height: 10, borderRadius: "50%", border: "2px solid #555", background: "transparent" }} />
+        <span style={{ width: 10, height: 10, borderRadius: "50%", border: `2px solid ${RING_MEDIUM_SWATCH}`, background: "transparent" }} />
         {t("legend.mediumAlert")}
       </div>
     </div>

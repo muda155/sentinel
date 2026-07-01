@@ -19,10 +19,11 @@ export interface HotspotFilters {
   timeWindow: TimeWindow;
 }
 
-/** FR-19: default noise floor hides grey (<40) markers on load. */
+/** FR-19: default noise floor hides grey (<40) markers on load.
+ *  FR-18: all alert levels selected = no constraint (all visible). */
 export const DEFAULT_FILTERS: HotspotFilters = {
   minConf: 40,
-  alertLevels: new Set<AlertLevel>(),
+  alertLevels: new Set<AlertLevel>(["Critical", "High", "Medium"]),
   timeWindow: "all",
 };
 
