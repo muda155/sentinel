@@ -9,10 +9,13 @@ import HotspotDetail from "@/components/HotspotDetail";
 import LanguageToggle from "@/components/LanguageToggle";
 import { useT } from "@/lib/i18n";
 import { useHotspots } from "@/lib/useHotspots";
+import { applyFilters, DEFAULT_FILTERS, HotspotFilters } from "@/lib/filters";
 
 const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
 const GlobeView = dynamic(() => import("@/components/GlobeToggle"), { ssr: false });
 const SearchBar = dynamic(() => import("@/components/SearchBar"), { ssr: false });
+const FilterPanel = dynamic(() => import("@/components/FilterPanel"), { ssr: false });
+const Legend = dynamic(() => import("@/components/Legend"), { ssr: false });
 
 export default function Page() {
   const { token, user, hydrated, logout } = useAuth();
@@ -23,7 +26,9 @@ export default function Page() {
   const [showHeat, setShowHeat] = useState(false);
   const [cells, setCells] = useState<GridCell[]>([]);
   const [globe, setGlobe] = useState(false);
+  const [filters, setFilters] = useState<HotspotFilters>(DEFAULT_FILTERS);
   const { hotspots } = useHotspots(token);
+  const { filtered: filteredHotspots, total } = applyFilters(hotspots, filters);
 
   const handleSearchSelect = (h: Hotspot) => {
     setFocus({ lat: h.lat, lon: h.lon });
@@ -52,7 +57,7 @@ export default function Page() {
   return (
     <main style={{ position: "absolute", inset: 0 }}>
       <SearchBar token={token} onSelectHotspot={handleSearchSelect} />
-      {globe ? <GlobeView /> : <MapView onSelect={setSelected} extraLayers={heatLayer} hotspots={hotspots} focus={focus} />}
+      {globe ? <GlobeView /> : <MapView onSelect={setSelected} extraLayers={heatLayer} hotspots={filteredHotspots} focus={focus} />}
       <div style={{ position: "absolute", top: 12, left: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <label style={{ background: "#111", color: "#eee", padding: "8px 12px", borderRadius: 6, cursor: "pointer" }}>
           <input type="checkbox" checked={showHeat} onChange={(e) => setShowHeat(e.target.checked)} /> {t("header.heatmap")}
@@ -61,6 +66,10 @@ export default function Page() {
           {globe ? "2D Map" : t("header.globe")}
         </button>
         <LanguageToggle />
+        <Legend />
+      </div>
+      <div style={{ position: "absolute", top: 12, right: 12 }}>
+        <FilterPanel filters={filters} onChange={setFilters} visible={filteredHotspots.length} total={total} />
       </div>
       <div style={{ position: "absolute", bottom: 12, right: 12, display: "flex", gap: 8, alignItems: "center" }}>
         <span style={{ color: "#aaa", fontSize: 12 }}>{user.username} ({user.role})</span>

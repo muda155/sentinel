@@ -23,5 +23,18 @@ export const en = {
   "eventType.civilian_violence": "violence against civilians",
   "eventType.civil_unrest": "protests",
   "eventType.unknown": "unclassified",
+  "filter.confidence": "Min confidence",
+  "filter.alertLevel": "Alert level",
+  "filter.timeWindow": "Time window",
+  "filter.showing": "Showing {n} of {m}",
+  "filter.reset": "Reset filters",
+  "filter.all": "All time",
+  "filter.hours": "{h}h",
+  "legend.highConfidence": "High (>70)",
+  "legend.mediumConfidence": "Medium (40–70)",
+  "legend.lowConfidence": "Low (<40)",
+  "legend.criticalAlert": "Critical (red ring)",
+  "legend.highAlert": "High (orange ring)",
+  "legend.mediumAlert": "Medium (no ring)",
 } as const;
 export type MessageKey = keyof typeof en;
