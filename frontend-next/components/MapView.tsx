@@ -27,7 +27,7 @@ export default function MapView({
 
   const zoom = Number(viewState.zoom ?? 2);
 
-  const { clusters, leaves, index } = useCluster(hotspots, WORLD_BBOX, zoom);
+  const { clusters, leaves, getExpansionZoom } = useCluster(hotspots, WORLD_BBOX, zoom);
 
   useEffect(() => {
     if (!focus) return;
@@ -65,7 +65,7 @@ export default function MapView({
   const handleClusterClick = (info: { object?: ClusterFeature }) => {
     if (!info.object) return;
     const { cluster_id, lon, lat } = info.object;
-    const expansionZoom = index.getClusterExpansionZoom(cluster_id);
+    const expansionZoom = getExpansionZoom(cluster_id);
     setViewState((vs) => ({
       ...vs,
       longitude: lon,

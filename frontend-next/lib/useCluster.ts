@@ -1,38 +1,41 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import type { Hotspot } from "@/lib/api";
-import { createClusterIndex, getClusterData, type ClusterFeature } from "@/lib/clustering";
+import {
+  createClusterIndex,
+  getClusterData,
+  getExpansionZoom,
+  type ClusterFeature,
+} from "@/lib/clustering";
 
 interface ClusterHookResult {
   clusters: ClusterFeature[];
   leaves: Hotspot[];
-  /** Supercluster index, cast to any — only used for getClusterExpansionZoom(). */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  index: any;
+  /** Zoom at which a cluster expands into its children (for click-to-zoom). */
+  getExpansionZoom: (clusterId: number) => number;
 }
 
 /**
- * Hook that maintains a supercluster index and returns clusters + leaves
- * for the current viewport bounding box and zoom level.
- * Rebuilds the index only when hotspots change.
+ * Maintains a supercluster index and returns clusters + leaves for the current
+ * viewport bounding box and zoom level. The index is rebuilt only when the
+ * `hotspots` reference changes, so callers must pass a stable (memoized) array
+ * to avoid rebuilding on unrelated re-renders.
  */
 export function useCluster(
   hotspots: Hotspot[],
   bounds: [number, number, number, number] | null,
   zoom: number,
 ): ClusterHookResult {
-  // Stable key avoids rebuilding the index on every parent re-render
-  // when the hotspot array identity changes but content hasn't (≤200 items).
-  const hotspotKey = hotspots.length > 0
-    ? hotspots.map((h) => h.hotspot_id).join(",")
-    : "";
+  const index = useMemo(() => createClusterIndex(hotspots), [hotspots]);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const index: any = useMemo(() => createClusterIndex(hotspots), [hotspotKey]);
+  const expansionZoom = useCallback(
+    (clusterId: number) => getExpansionZoom(index, clusterId),
+    [index],
+  );
 
-  return useMemo(() => {
-    if (!bounds || hotspots.length === 0) {
-      return { clusters: [], leaves: [], index };
-    }
-    return { ...getClusterData(index, bounds, zoom), index };
-  }, [index, bounds, zoom, hotspots.length]);
+  const data = useMemo(() => {
+    if (!bounds) return { clusters: [], leaves: [] };
+    return getClusterData(index, bounds, zoom);
+  }, [index, bounds, zoom]);
+
+  return { ...data, getExpansionZoom: expansionZoom };
 }

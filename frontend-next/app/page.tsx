@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
@@ -29,14 +29,22 @@ export default function Page() {
   const [globe, setGlobe] = useState(false);
   const [filters, setFilters] = useState<HotspotFilters>(DEFAULT_FILTERS);
   const { hotspots } = useHotspots(token);
-  const { filtered: filteredHotspots, total } = applyFilters(hotspots, filters);
+  // Memoize so filteredHotspots keeps a stable reference across unrelated
+  // re-renders (e.g. selecting a hotspot), which keeps the cluster index from
+  // rebuilding; it recomputes only when hotspots or filters actually change.
+  const { filtered: filteredHotspots, total } = useMemo(
+    () => applyFilters(hotspots, filters),
+    [hotspots, filters],
+  );
 
   const lastSeen = getLastSeen();
   const newCount = countNew(hotspots, lastSeen);
-  const newHotspotIds = new Set(
-    hotspots.filter((h) => isNew(h.created_at, lastSeen)).map((h) => h.hotspot_id),
-  );
-  const newHotspots = filteredHotspots.filter((h) => newHotspotIds.has(h.hotspot_id));
+  const newHotspots = useMemo(() => {
+    const newIds = new Set(
+      hotspots.filter((h) => isNew(h.created_at, lastSeen)).map((h) => h.hotspot_id),
+    );
+    return filteredHotspots.filter((h) => newIds.has(h.hotspot_id));
+  }, [hotspots, filteredHotspots, lastSeen]);
 
   const handleSearchSelect = (h: Hotspot) => {
     setFocus({ lat: h.lat, lon: h.lon });

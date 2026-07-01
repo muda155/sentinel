@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Hotspot } from "@/lib/api";
-import { createClusterIndex, getClusterData, ClusterResult } from "@/lib/clustering";
+import { createClusterIndex, getClusterData, getExpansionZoom, ClusterResult } from "@/lib/clustering";
 
 function makeHotspot(overrides: Partial<Hotspot> & { lat: number; lon: number }): Hotspot {
   return {
@@ -79,5 +79,19 @@ describe("getClusterData", () => {
     const result = getClusterData(index, [-180, -90, 180, 90], 0);
     expect(result.clusters).toEqual([]);
     expect(result.leaves).toEqual([]);
+  });
+});
+
+describe("getExpansionZoom", () => {
+  it("returns a finite zoom deeper than the clustered view", () => {
+    const hotspots = Array.from({ length: 5 }, (_, i) =>
+      makeHotspot({ hotspot_id: i, lat: 10.001 + i * 0.001, lon: 20.001 + i * 0.001 })
+    );
+    const index = createClusterIndex(hotspots);
+    const { clusters } = getClusterData(index, [-180, -90, 180, 90], 0);
+    expect(clusters.length).toBeGreaterThanOrEqual(1);
+    const zoom = getExpansionZoom(index, clusters[0].cluster_id);
+    expect(Number.isFinite(zoom)).toBe(true);
+    expect(zoom).toBeGreaterThan(0);
   });
 });

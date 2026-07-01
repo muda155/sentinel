@@ -17,6 +17,10 @@ export interface ClusterResult {
   leaves: Hotspot[];
 }
 
+/** A supercluster index over hotspot points. Encapsulates supercluster so
+ *  callers stay decoupled from the library. */
+export type HotspotClusterIndex = Supercluster<HotspotProps>;
+
 // Properties stored in supercluster for each hotspot feature.
 interface HotspotProps {
   hotspot_id: number;
@@ -61,7 +65,7 @@ function fromProps(p: HotspotProps, lon: number, lat: number): Hotspot {
  * Create a Supercluster index from hotspots.
  * Configures radius (60px) and maxZoom (12) so clustering activates at world/continent zoom.
  */
-export function createClusterIndex(hotspots: Hotspot[]): Supercluster<HotspotProps> {
+export function createClusterIndex(hotspots: Hotspot[]): HotspotClusterIndex {
   const index = new Supercluster<HotspotProps>({
     radius: 60,
     maxZoom: 12,
@@ -82,7 +86,7 @@ export function createClusterIndex(hotspots: Hotspot[]): Supercluster<HotspotPro
  * return the clusters and unclustered leaf hotspots.
  */
 export function getClusterData(
-  index: Supercluster<HotspotProps>,
+  index: HotspotClusterIndex,
   bbox: [number, number, number, number],
   zoom: number,
 ): ClusterResult {
@@ -110,4 +114,12 @@ export function getClusterData(
   }
 
   return { clusters, leaves };
+}
+
+/**
+ * Zoom level at which a cluster expands into its children. Keeps the
+ * supercluster instance encapsulated so map components never touch it.
+ */
+export function getExpansionZoom(index: HotspotClusterIndex, clusterId: number): number {
+  return index.getClusterExpansionZoom(clusterId);
 }
