@@ -28,6 +28,10 @@ All files in `frontend-next/`, including `lib/`, `components/`, `app/`, `__tests
 - `TrustTierEditor` (admin-only) lists sources with dropdowns to PATCH `/sources/{id}` trust_tier.
 - `api.ts` provides typed `sources()` and `updateTrustTier()` methods; all api methods accept `string | null` token.
 - SITREP citation parsing in `lib/citations.ts` renders `[N]` markers as superscript links.
+- SITREP citation parsing in `lib/citations.ts` renders `[N]` markers as superscript links.
+- **FR-18**: `lib/filters.ts` provides `HotspotFilters`, `DEFAULT_FILTERS` (minConf=40), `passesFilter()`, `applyFilters()` — client-side filtering. `components/FilterPanel.tsx` renders confidence slider, alert-level checkboxes, time-window selector, showing-X-of-Y counter, reset button. `components/Legend.tsx` renders FR-13 color swatches.
+- **FR-19**: `lib/clustering.ts` wraps supercluster (radius=60, maxZoom=12); `lib/useCluster.ts` hook returns `{clusters, leaves}` for current zoom. `MapView` renders cluster circles with count labels at zoom < 7 via `TextLayer`, individual markers via `ScatterplotLayer` at all zooms.
+- **FR-20**: `lib/whatsnew.ts` provides `isNew()`, `countNew()`, `markSeen()`, `getLastSeen()` (localStorage key `sentinel_hotspots_last_seen`). `MapView` accepts `newHotspots` prop to render translucent highlight layer. `FilterPanel` accepts `newCount` prop to display "N new" chip + "Mark seen" button.
 - Containerized via `Dockerfile` + `.dockerignore` for Docker Compose deployment.
 
 ## Work Guidance
