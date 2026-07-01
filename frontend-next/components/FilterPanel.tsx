@@ -7,6 +7,7 @@ import {
   TIME_WINDOW_HOURS,
 } from "@/lib/filters";
 import { useT } from "@/lib/i18n";
+import { markSeen } from "@/lib/whatsnew";
 
 const TIME_OPTIONS: TimeWindow[] = ["6h", "12h", "24h", "48h", "72h", "all"];
 const ALERT_LEVELS: AlertLevel[] = ["Critical", "High", "Medium"];
@@ -14,11 +15,13 @@ const ALERT_LEVELS: AlertLevel[] = ["Critical", "High", "Medium"];
 interface Props {
   filters: HotspotFilters;
   onChange: (filters: HotspotFilters) => void;
+  onRefresh?: () => void;
   visible: number;
   total: number;
+  newCount?: number;
 }
 
-export default function FilterPanel({ filters, onChange, visible, total }: Props) {
+export default function FilterPanel({ filters, onChange, visible, total, newCount = 0 }: Props) {
   const { t } = useT();
 
   const toggleLevel = (level: AlertLevel) => {
@@ -110,6 +113,27 @@ export default function FilterPanel({ filters, onChange, visible, total }: Props
 
       {/* Counter */}
       <div style={{ fontSize: 12, color: "#aaa", textAlign: "center" }}>{showing}</div>
+
+      {/* What's-new chip */}
+      {newCount > 0 && (
+        <div style={{ display: "flex", gap: 6, alignItems: "center", justifyContent: "center" }}>
+          <span style={{
+            background: "#1e3a5f", color: "#7dd3fc", borderRadius: 10,
+            padding: "2px 10px", fontSize: 11, fontWeight: 600,
+          }}>
+            {t("whatsnew.new").replace("{n}", String(newCount))}
+          </span>
+          <button
+            onClick={() => { markSeen(); onChange({ ...filters }); }}
+            style={{
+              background: "transparent", color: "#888", border: "1px solid #444",
+              borderRadius: 4, padding: "2px 8px", cursor: "pointer", fontSize: 11,
+            }}
+          >
+            {t("whatsnew.markSeen")}
+          </button>
+        </div>
+      )}
 
       {/* Reset */}
       <button

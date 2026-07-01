@@ -19,9 +19,10 @@ const COUNT_COLOR: [number, number, number, number] = [120, 180, 255, 200];
 const COUNT_TEXT_COLOR: [number, number, number, number] = [255, 255, 255, 255];
 
 export default function MapView({
-  hotspots, onSelect, extraLayers = [], focus,
+  hotspots, onSelect, extraLayers = [], focus, newHotspots = [],
 }: { hotspots: Hotspot[]; onSelect?: (h: Hotspot) => void;
-     extraLayers?: unknown[]; focus?: { lat: number; lon: number } | null }) {
+     extraLayers?: unknown[]; focus?: { lat: number; lon: number } | null;
+     newHotspots?: Hotspot[] }) {
   const [viewState, setViewState] = useState<Record<string, unknown>>(INITIAL_VIEW);
 
   const zoom = Number(viewState.zoom ?? 2);
@@ -37,6 +38,22 @@ export default function MapView({
   }, [focus]);
 
   const clusterRadius = (c: ClusterFeature) => Math.min(14 + Math.log2(c.point_count) * 6, 40);
+
+  const highlightLayer = newHotspots.length > 0
+    ? new ScatterplotLayer<Hotspot>({
+        id: "new-hotspot-highlight",
+        data: newHotspots,
+        pickable: false,
+        radiusUnits: "pixels",
+        getPosition: (d) => [d.lon, d.lat],
+        getRadius: 16,
+        getFillColor: [120, 200, 255, 60],
+        stroked: true,
+        lineWidthUnits: "pixels",
+        getLineWidth: 2,
+        getLineColor: [120, 200, 255, 120],
+      })
+    : null;
 
   // Render highest-confidence markers last so they paint on top of lower-score
   // ones when hotspots overlap (green > yellow > grey z-order).
@@ -98,6 +115,7 @@ export default function MapView({
       controller
       layers={[
         ...(extraLayers as never[]),
+        ...(highlightLayer ? [highlightLayer] : []),
         ...(clusterLayer ? [clusterLayer] : []),
         ...(clusterTextLayer ? [clusterTextLayer] : []),
         hotspotLayer,

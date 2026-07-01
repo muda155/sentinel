@@ -36,5 +36,7 @@ export const en = {
   "legend.criticalAlert": "Critical (red ring)",
   "legend.highAlert": "High (orange ring)",
   "legend.mediumAlert": "Medium (no ring)",
+  "whatsnew.new": "{n} new",
+  "whatsnew.markSeen": "Mark seen",
 } as const;
 export type MessageKey = keyof typeof en;

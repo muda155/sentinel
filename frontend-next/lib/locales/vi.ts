@@ -38,4 +38,6 @@ export const vi: Record<MessageKey, string> = {
   "legend.criticalAlert": "Nghiêm trọng (viền đỏ)",
   "legend.highAlert": "Cao (viền cam)",
   "legend.mediumAlert": "Trung bình (không viền)",
+  "whatsnew.new": "{n} mới",
+  "whatsnew.markSeen": "Đã xem",
 };
