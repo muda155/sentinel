@@ -13,6 +13,7 @@ All files in `api/`, including `api/routes/`.
 - All SQL lives in `api/queries.py` — no inline SQL in route handlers or `sse.py`
 - Rate limiting enforced via `ratelimit.py` — do not bypass for any endpoint
 - SSE streams are in `api/sse.py` and `api/routes/stream.py`; keep them separate from request/response routes
+- SSE generators run on the shared asyncio event loop: every synchronous blocking call inside them (Redis `StreamBus.read`/`ack` with `block=`, pooled DB reads like `_enrich`) MUST be wrapped in `asyncio.to_thread`. A blocking call left on the loop starves all concurrent REST requests — a live stream once hung `/hotspots` for minutes. Covered by `test_sse_read_does_not_block_event_loop`.
 - Pydantic schemas in `api/schemas.py` are the API contract — changing field names is a breaking change
 - Metrics exported via `api/metrics.py`; add new counters/gauges there, not inline
 
