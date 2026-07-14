@@ -34,7 +34,6 @@ export const en = {
   "filter.window.3d": "Last 3 days",
   "filter.window.7d": "Last 7 days",
   "filter.window.30d": "Last 30 days",
-  "filter.title": "Filters",
   "legend.title": "Legend",
   "legend.fill": "Fill (confidence)",
   "legend.ring": "Ring (alert level)",

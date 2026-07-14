@@ -39,6 +39,15 @@ def test_health():
     assert client.get("/health").json() == {"status": "ok"}
 
 
+def test_hotspots_include_timestamps():
+    client = TestClient(create_app())
+    r = client.get("/hotspots?limit=5", headers=_AUTH)
+    assert r.status_code == 200
+    for h in r.json():
+        assert "end_window" in h
+        assert "created_at" in h
+
+
 def test_hotspots_excludes_rows_older_than_max_age():
     client = TestClient(create_app())
     r = client.get("/hotspots?limit=200&min_conf=0&max_age_hours=24", headers=_AUTH)

@@ -39,6 +39,7 @@ class IngestionWorker:
                 from pipeline.retention import delete_stale_hotspots
                 delete_stale_hotspots(conn)
             except Exception:
+                conn.rollback()
                 logger.warning("stale hotspot cleanup failed (continuing)", exc_info=True)
             # Step 1: GDELT
             ingestor = GDELT2Ingestor()

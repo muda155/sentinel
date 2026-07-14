@@ -1,5 +1,4 @@
 "use client";
-import { useState } from "react";
 import {
   HotspotFilters,
   DEFAULT_FILTERS,
@@ -26,7 +25,6 @@ interface Props {
 
 export default function FilterPanel({ filters, onChange, visible, total, newCount = 0 }: Props) {
   const { t } = useT();
-  const [collapsed, setCollapsed] = useState(false);
 
   const toggleLevel = (level: AlertLevel) => {
     const next = new Set(filters.alertLevels);
@@ -38,26 +36,6 @@ export default function FilterPanel({ filters, onChange, visible, total, newCoun
   const showing = t("filter.showing")
     .replace("{n}", String(visible))
     .replace("{m}", String(total));
-
-  const newChip = newCount > 0 && (
-    <div style={{ display: "flex", gap: 6, alignItems: "center", justifyContent: "center" }}>
-      <span style={{
-        background: "#1e3a5f", color: "#7dd3fc", borderRadius: 10,
-        padding: "2px 10px", fontSize: 11, fontWeight: 600,
-      }}>
-        {t("whatsnew.new").replace("{n}", String(newCount))}
-      </span>
-      <button
-        onClick={() => { markSeen(); onChange({ ...filters }); }}
-        style={{
-          background: "transparent", color: "#888", border: "1px solid #444",
-          borderRadius: 4, padding: "2px 8px", cursor: "pointer", fontSize: 11,
-        }}
-      >
-        {t("whatsnew.markSeen")}
-      </button>
-    </div>
-  );
 
   return (
     <div
@@ -74,28 +52,6 @@ export default function FilterPanel({ filters, onChange, visible, total, newCoun
         gap: 10,
       }}
     >
-      {/* Header with collapse toggle */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-        <span style={{ color: "#eee", fontSize: 13, fontWeight: 600 }}>{t("filter.title")}</span>
-        <button
-          aria-label={t("filter.title")}
-          aria-expanded={!collapsed}
-          onClick={() => setCollapsed((c) => !c)}
-          style={{
-            background: "transparent", color: "#aaa", border: "none",
-            cursor: "pointer", fontSize: 13, lineHeight: 1, padding: 2,
-          }}
-        >
-          {collapsed ? "▸" : "▾"}
-        </button>
-      </div>
-
-      {/* Always-visible summary: count + what's-new */}
-      <div style={{ fontSize: 12, color: "#aaa", textAlign: "center" }}>{showing}</div>
-      {newChip}
-
-      {collapsed ? null : (
-      <>
       {/* Confidence slider */}
       <label style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         <span style={{ color: "#aaa", fontSize: 11, textTransform: "uppercase", letterSpacing: 1 }}>
@@ -157,6 +113,30 @@ export default function FilterPanel({ filters, onChange, visible, total, newCoun
         </select>
       </label>
 
+      {/* Counter */}
+      <div style={{ fontSize: 12, color: "#aaa", textAlign: "center" }}>{showing}</div>
+
+      {/* What's-new chip */}
+      {newCount > 0 && (
+        <div style={{ display: "flex", gap: 6, alignItems: "center", justifyContent: "center" }}>
+          <span style={{
+            background: "#1e3a5f", color: "#7dd3fc", borderRadius: 10,
+            padding: "2px 10px", fontSize: 11, fontWeight: 600,
+          }}>
+            {t("whatsnew.new").replace("{n}", String(newCount))}
+          </span>
+          <button
+            onClick={() => { markSeen(); onChange({ ...filters }); }}
+            style={{
+              background: "transparent", color: "#888", border: "1px solid #444",
+              borderRadius: 4, padding: "2px 8px", cursor: "pointer", fontSize: 11,
+            }}
+          >
+            {t("whatsnew.markSeen")}
+          </button>
+        </div>
+      )}
+
       {/* Reset */}
       <button
         onClick={() => onChange(DEFAULT_FILTERS)}
@@ -167,8 +147,6 @@ export default function FilterPanel({ filters, onChange, visible, total, newCoun
       >
         {t("filter.reset")}
       </button>
-      </>
-      )}
     </div>
   );
 }

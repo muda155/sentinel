@@ -36,7 +36,6 @@ export const vi: Record<MessageKey, string> = {
   "filter.window.3d": "3 ngày qua",
   "filter.window.7d": "7 ngày qua",
   "filter.window.30d": "30 ngày qua",
-  "filter.title": "Bộ lọc",
   "legend.title": "Chú giải",
   "legend.fill": "Màu (độ tin cậy)",
   "legend.ring": "Viền (mức cảnh báo)",
