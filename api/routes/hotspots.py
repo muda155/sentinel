@@ -14,12 +14,14 @@ router = APIRouter()
 @router.get("/hotspots", response_model=list[Hotspot])
 def list_hotspots(limit: int = Query(50, le=200), min_conf: float = 0.0,
                   min_convergence: float = 0.0, alert_level: str | None = None,
+                  max_age_hours: int = Query(720, ge=1),
                   _rate_limit: None = Depends(limit_hotspots),
                   _user: dict = Depends(get_current_user)):
     conn, pool = get_pooled_connection()
     try:
         rows = queries.fetch_hotspots(conn, limit=limit, min_conf=min_conf,
-                                      min_convergence=min_convergence, alert_level=alert_level)
+                                      min_convergence=min_convergence, alert_level=alert_level,
+                                      max_age_hours=max_age_hours)
     finally:
         pool.return_connection(conn)
     return rows

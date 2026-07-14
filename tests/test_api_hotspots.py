@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -38,10 +39,10 @@ def test_health():
     assert client.get("/health").json() == {"status": "ok"}
 
 
-def test_hotspots_include_timestamps():
+def test_hotspots_excludes_rows_older_than_max_age():
     client = TestClient(create_app())
-    r = client.get("/hotspots?limit=5", headers=_AUTH)
+    r = client.get("/hotspots?limit=200&min_conf=0&max_age_hours=24", headers=_AUTH)
     assert r.status_code == 200
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
     for h in r.json():
-        assert "end_window" in h
-        assert "created_at" in h
+        assert datetime.fromisoformat(h["end_window"]) >= cutoff
