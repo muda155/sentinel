@@ -11,7 +11,7 @@ All files in `db/`.
 ## Local Contracts
 
 - Migrations in `db/init/` are applied once in numeric order — never modify an already-applied migration; always add a new numbered file
-- Current highest migration: `012_gdelt_event_id_nullable.sql` — next must be `013_*.sql`
+- Current highest migration: `018_hotspots_end_window_index.sql` — next must be `019_*.sql`
 - Key tables: `events` (partitioned by `event_date`), `hotspots`, `grid_cells`, `sources` (with `trust_tier`), `event_hotspot`
 - `sources.trust_tier` feeds the scoring formula — changes to trust tiers require a scoring review
 
