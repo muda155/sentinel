@@ -4,13 +4,14 @@ import {
   DEFAULT_FILTERS,
   AlertLevel,
   TimeWindow,
-  TIME_WINDOW_HOURS,
+  TIME_WINDOW_LABEL,
 } from "@/lib/filters";
 import { useT } from "@/lib/i18n";
+import type { MessageKey } from "@/lib/locales/en";
 import { markSeen } from "@/lib/whatsnew";
 import { RING_RED, RING_ORANGE, RING_MEDIUM_SWATCH } from "@/lib/colors";
 
-const TIME_OPTIONS: TimeWindow[] = ["6h", "12h", "24h", "48h", "72h", "all"];
+const TIME_OPTIONS: TimeWindow[] = ["24h", "3d", "7d", "30d"];
 const ALERT_LEVELS: AlertLevel[] = ["Critical", "High", "Medium"];
 
 interface Props {
@@ -106,7 +107,7 @@ export default function FilterPanel({ filters, onChange, visible, total, newCoun
         >
           {TIME_OPTIONS.map((opt) => (
             <option key={opt} value={opt}>
-              {opt === "all" ? t("filter.all") : t("filter.hours").replace("{h}", String(TIME_WINDOW_HOURS[opt]))}
+              {t(TIME_WINDOW_LABEL[opt] as MessageKey)}
             </option>
           ))}
         </select>

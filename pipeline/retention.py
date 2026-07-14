@@ -46,6 +46,30 @@ def _retention_days() -> int:
     return int(os.getenv("SENTINEL_RETENTION_DAYS", "90"))
 
 
+def _hotspot_ttl_hours() -> int:
+    return int(os.getenv("SENTINEL_HOTSPOT_TTL_HOURS", "720"))
+
+
+def delete_stale_hotspots(conn, max_age_hours: int | None = None) -> int:
+    """Delete hotspots whose newest member event is older than the TTL.
+
+    Hotspots never expire on their own: a grid cell that ages out of the
+    convergence window is never re-enqueued to the clustering worker, so its
+    hotspot rows are orphaned forever and keep rendering. This bounds the table
+    to a rolling window. `event_hotspot` links are removed via ON DELETE CASCADE.
+    """
+    hours = _hotspot_ttl_hours() if max_age_hours is None else max_age_hours
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM hotspots WHERE end_window < now() - make_interval(hours => %s)",
+            (hours,),
+        )
+        deleted = cur.rowcount
+    conn.commit()
+    logger.info("Deleted %s stale hotspots (older than %sh)", deleted, hours)
+    return deleted
+
+
 def ensure_partitions(conn, today: date | None = None, ahead: int = 3) -> list[str]:
     """Create the current + `ahead` future monthly partitions if missing."""
     today = today or date.today()

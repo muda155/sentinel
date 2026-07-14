@@ -76,10 +76,9 @@ describe("passesFilter", () => {
     expect(passesFilter(h, filters)).toBe(false);
   });
 
-  it("'all' time window always passes", () => {
-    const ancient = new Date(0);
-    const h = makeHotspot({ end_window: ancient.toISOString() });
-    const filters: HotspotFilters = { ...DEFAULT_FILTERS, timeWindow: "all" };
+  it("'7d' time window always passes for recent hotspots", () => {
+    const h = makeHotspot({ end_window: new Date().toISOString() });
+    const filters: HotspotFilters = { ...DEFAULT_FILTERS, timeWindow: "7d" };
     expect(passesFilter(h, filters)).toBe(true);
   });
 
@@ -103,25 +102,39 @@ describe("applyFilters", () => {
       makeHotspot({ hotspot_id: 2, conf_score: 30, alert_level: "Medium" }),
       makeHotspot({ hotspot_id: 3, conf_score: 50, alert_level: "High" }),
     ];
-    const filters: HotspotFilters = { minConf: 40, alertLevels: new Set(), timeWindow: "all" };
+    const filters: HotspotFilters = { minConf: 40, alertLevels: new Set(), timeWindow: "7d" };
     const result = applyFilters(hotspots, filters);
     expect(result.filtered).toHaveLength(2);
     expect(result.filtered.map((h) => h.hotspot_id)).toEqual([1, 3]);
     expect(result.total).toBe(3);
   });
 
-  it("DEFAULT_FILTERS has minConf=40 and all alert levels selected", () => {
+  it("DEFAULT_FILTERS has minConf=40, default 7d, all alert levels selected", () => {
     expect(DEFAULT_FILTERS.minConf).toBe(40);
-    expect(DEFAULT_FILTERS.timeWindow).toBe("all");
+    expect(DEFAULT_FILTERS.timeWindow).toBe("7d");
     expect(DEFAULT_FILTERS.alertLevels).toEqual(new Set(["Critical", "High", "Medium"]));
   });
 
-  it("TIME_WINDOW_HOURS maps correctly", () => {
-    expect(TIME_WINDOW_HOURS["6h"]).toBe(6);
-    expect(TIME_WINDOW_HOURS["12h"]).toBe(12);
+  it("TIME_WINDOW_HOURS maps the four supported windows", () => {
     expect(TIME_WINDOW_HOURS["24h"]).toBe(24);
-    expect(TIME_WINDOW_HOURS["48h"]).toBe(48);
-    expect(TIME_WINDOW_HOURS["72h"]).toBe(72);
-    expect(TIME_WINDOW_HOURS["all"]).toBe(Infinity);
+    expect(TIME_WINDOW_HOURS["3d"]).toBe(72);
+    expect(TIME_WINDOW_HOURS["7d"]).toBe(168);
+    expect(TIME_WINDOW_HOURS["30d"]).toBe(720);
+  });
+
+  it("hides a 5-day-old hotspot when window is 3d", () => {
+    const h = makeHotspot({
+      end_window: new Date(Date.now() - 5 * 24 * 3600_000).toISOString(),
+    });
+    const filters: HotspotFilters = { ...DEFAULT_FILTERS, minConf: 0, timeWindow: "3d" };
+    expect(passesFilter(h, filters)).toBe(false);
+  });
+
+  it("shows a 5-day-old hotspot when window is 7d", () => {
+    const h = makeHotspot({
+      end_window: new Date(Date.now() - 5 * 24 * 3600_000).toISOString(),
+    });
+    const filters: HotspotFilters = { ...DEFAULT_FILTERS, minConf: 0, timeWindow: "7d" };
+    expect(passesFilter(h, filters)).toBe(true);
   });
 });

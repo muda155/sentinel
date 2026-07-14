@@ -23,17 +23,19 @@ def run_pipeline() -> None:
     # Step 0: Partition maintenance + retention (M1, spec Section 6.2.1)
     try:
         step_start = time.monotonic()
-        from pipeline.retention import apply_retention, ensure_partitions
+        from pipeline.retention import apply_retention, delete_stale_hotspots, ensure_partitions
 
         conn, pool = get_pooled_connection()
         try:
             ensured = ensure_partitions(conn)
             dropped = apply_retention(conn)
+            stale_hotspots = delete_stale_hotspots(conn)
         finally:
             pool.return_connection(conn)
         logger.info("Step 0: Partition maintenance complete", extra={
             "step": "partition_maintenance", "duration_s": round(time.monotonic() - step_start, 2),
             "partitions_ensured": len(ensured), "partitions_dropped": dropped,
+            "stale_hotspots_deleted": stale_hotspots,
         })
     except Exception as e:  # never crash the cycle on maintenance
         logger.warning("Step 0 failed: partition maintenance (continuing)", extra={

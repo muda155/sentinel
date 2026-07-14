@@ -6,7 +6,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 
-def fetch_grid_cells(conn, *, min_convergence=1.0) -> list[dict]:
+def fetch_grid_cells(conn, *, min_convergence=1.0, max_age_hours=720) -> list[dict]:
     q = """
         SELECT cell_id, ST_Y(ST_Centroid(cell_geom)) lat, ST_X(ST_Centroid(cell_geom)) lon,
                COALESCE(convergence_score,0) convergence_score,
@@ -18,17 +18,18 @@ def fetch_grid_cells(conn, *, min_convergence=1.0) -> list[dict]:
                COALESCE(total_events,0) total_events
         FROM grid_cells
         WHERE COALESCE(convergence_score,0) >= %s
+          AND (%s IS NULL OR updated_at >= now() - make_interval(hours => %s))
         ORDER BY convergence_score DESC
         LIMIT 2000
     """
     with conn.cursor() as cur:
-        cur.execute(q, (min_convergence,))
+        cur.execute(q, (min_convergence, max_age_hours, max_age_hours))
         cols = [c[0] for c in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
 def fetch_hotspots(conn, *, limit=50, min_conf=0.0, min_convergence=0.0,
-                   alert_level=None) -> list[dict[str, Any]]:
+                   alert_level=None, max_age_hours=720) -> list[dict[str, Any]]:
     limit = max(1, min(int(limit), 200))   # spec: max 200
     q = """
         SELECT h.hotspot_id, ST_Y(h.centroid_geom) lat, ST_X(h.centroid_geom) lon,
@@ -40,11 +41,13 @@ def fetch_hotspots(conn, *, limit=50, min_conf=0.0, min_convergence=0.0,
         WHERE COALESCE(h.conf_score,0) >= %s
           AND COALESCE(g.convergence_score,h.convergence_score,0) >= %s
           AND (%s IS NULL OR h.alert_level = %s)
+          AND (%s IS NULL OR h.end_window >= now() - make_interval(hours => %s))
         ORDER BY h.conf_score DESC NULLS LAST, h.hotspot_id DESC
         LIMIT %s
     """
     with conn.cursor() as cur:
-        cur.execute(q, (min_conf, min_convergence, alert_level, alert_level, limit))
+        cur.execute(q, (min_conf, min_convergence, alert_level, alert_level,
+                        max_age_hours, max_age_hours, limit))
         cols = [c[0] for c in cur.description]
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 

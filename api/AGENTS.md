@@ -16,6 +16,7 @@ All files in `api/`, including `api/routes/`.
 - SSE generators run on the shared asyncio event loop: every synchronous blocking call inside them (Redis `StreamBus.read`/`ack` with `block=`, pooled DB reads like `_enrich`) MUST be wrapped in `asyncio.to_thread`. A blocking call left on the loop starves all concurrent REST requests — a live stream once hung `/hotspots` for minutes. Covered by `test_sse_read_does_not_block_event_loop`.
 - Pydantic schemas in `api/schemas.py` are the API contract — changing field names is a breaking change
 - Metrics exported via `api/metrics.py`; add new counters/gauges there, not inline
+- `GET /hotspots` and `GET /grid_cells` accept `max_age_hours` (default 720 = 30 days); rows whose `end_window` (hotspots) / `updated_at` (grid_cells) is older are excluded. This is the server-side guard against stale hotspots accumulating in the response window — do not remove it. `max_age_hours=None` in `queries.py` disables the cap (used only by internal callers/tests).
 
 ## Work Guidance
 
