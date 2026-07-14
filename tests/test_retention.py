@@ -23,3 +23,15 @@ def test_partitions_to_drop_ignores_non_partition_names():
     existing = ["events", "events_new", "events_2026_01"]
     got = partitions_to_drop(existing, keep_from=date(2026, 6, 1))
     assert got == ["events_2026_01"]
+
+
+def test_hotspot_ttl_hours_default(monkeypatch):
+    from pipeline.retention import _hotspot_ttl_hours
+    monkeypatch.delenv("SENTINEL_HOTSPOT_TTL_HOURS", raising=False)
+    assert _hotspot_ttl_hours() == 720
+
+
+def test_hotspot_ttl_hours_env_override(monkeypatch):
+    from pipeline.retention import _hotspot_ttl_hours
+    monkeypatch.setenv("SENTINEL_HOTSPOT_TTL_HOURS", "48")
+    assert _hotspot_ttl_hours() == 48

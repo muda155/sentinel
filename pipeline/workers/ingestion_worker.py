@@ -33,6 +33,13 @@ class IngestionWorker:
             # month-rollover or back-dated row can't abort the batch insert
             # with "no partition of relation events found for row".
             ensure_partitions(conn)
+            # Bound hotspot table to a rolling window — aged-out cells are never
+            # re-clustered, so their hotspots would otherwise render forever.
+            try:
+                from pipeline.retention import delete_stale_hotspots
+                delete_stale_hotspots(conn)
+            except Exception:
+                logger.warning("stale hotspot cleanup failed (continuing)", exc_info=True)
             # Step 1: GDELT
             ingestor = GDELT2Ingestor()
             military_df = ingestor.run_once()
