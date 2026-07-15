@@ -31,7 +31,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   const cited = events.filter((e) => e.citation_index !== null);
 
   return (
-    <aside style={{ position: "absolute", top: 12, right: 12, width: 340, maxHeight: "90vh", overflowY: "auto", background: "#111", color: "#eee", padding: 16, borderRadius: 8 }}>
+    <aside style={{ width: 340, flexShrink: 0, height: "100%", overflowY: "auto", background: "#111", color: "#eee", padding: 16, boxSizing: "border-box" }}>
       <button onClick={onClose} style={{ float: "right" }}>&times;</button>
       <h3 style={{ marginBottom: 2 }}>{hotspot.name ?? `Hotspot #${hotspot.hotspot_id}`}</h3>
       <p style={{ marginTop: 0, fontSize: 12, color: "#9ca3af" }}>{buildSubtitle(events, t)}</p>

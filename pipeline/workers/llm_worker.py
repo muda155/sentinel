@@ -3,6 +3,7 @@ Reuses pipeline.llm_verifier (citation validation + fallback unchanged)."""
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 from datetime import datetime, timezone
@@ -11,6 +12,8 @@ from api.metrics import METRICS
 from pipeline.db import get_pooled_connection
 from pipeline.llm_verifier import LLMRepository, build_prompt, call_nim_api
 from pipeline.workers.base import Worker
+
+logger = logging.getLogger("sentinel.llm_worker")
 
 
 class LLMWorker(Worker):
@@ -23,6 +26,8 @@ class LLMWorker(Worker):
         conn, pool = get_pooled_connection()
         try:
             repo = LLMRepository(conn)
+            if repo.summary_exists(hotspot_id):
+                return []
             articles = repo.fetch_hotspot_articles(hotspot_id)
             if not articles:
                 return []
@@ -33,10 +38,19 @@ class LLMWorker(Worker):
             ollama_endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
 
             t0 = time.monotonic()
-            result, model_used = call_nim_api(
-                prompt, endpoint=endpoint, api_key=api_key, model=model,
-                ollama_endpoint=ollama_endpoint,
-            )
+            try:
+                result, model_used = call_nim_api(
+                    prompt, endpoint=endpoint, api_key=api_key, model=model,
+                    ollama_endpoint=ollama_endpoint,
+                )
+            except Exception as exc:
+                # Ack instead of leaving pending: the stale-claim sweep would
+                # otherwise retry a permanently failing call every ~60s and
+                # starve the queue. The next tick re-emits llm_needed for any
+                # hotspot still lacking a summary, so nothing is lost.
+                METRICS.inc("llm_failed_total")
+                logger.warning("LLM generation failed for hotspot %s: %s", hotspot_id, exc)
+                return []
             elapsed = time.monotonic() - t0
             METRICS.observe("llm_latency_seconds", elapsed)
 

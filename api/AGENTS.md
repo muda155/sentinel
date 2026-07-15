@@ -17,6 +17,7 @@ All files in `api/`, including `api/routes/`.
 - Pydantic schemas in `api/schemas.py` are the API contract — changing field names is a breaking change
 - Metrics exported via `api/metrics.py`; add new counters/gauges there, not inline
 - `GET /hotspots` and `GET /grid_cells` accept `max_age_hours` (default 720 = 30 days); rows whose `end_window` (hotspots) / `updated_at` (grid_cells) is older are excluded. This is the server-side guard against stale hotspots accumulating in the response window — do not remove it. `max_age_hours=None` in `queries.py` disables the cap (used only by internal callers/tests).
+- `fetch_hotspot_events` excludes `is_noise` links and must stay in lockstep (filter + ORDER BY) with `LLMRepository.fetch_hotspot_articles` — FR-16 citation numbering depends on it.
 
 ## Work Guidance
 

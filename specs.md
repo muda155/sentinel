@@ -13,7 +13,7 @@
 
 # Sentinel – Technical Specification Document
 
-**Document Version:** 1.8.0
+**Document Version:** 1.9.0
 **Date:** 2026‑06‑22  
 **Author:** FYP Candidate (role: Senior Software Architect & Technical Project Manager)  
 **Status:** Approved for Development  
@@ -282,12 +282,14 @@ Alert level thresholds:
 Within each active grid cell (`convergence_score ≥ 1`), the system shall group events into sub-clusters using DBSCAN with a Haversine distance metric and a temporal penalty function. The DBSCAN look-back lower bound floors to the start of the current UTC day so day-granular GDELT events (stamped midnight UTC) remain in window throughout the day.  
 `eps` (spatial) = **50 km** (configurable via `SENTINEL_DBSCAN_EPS_KM`), `min_samples` = **3** (configurable via `SENTINEL_DBSCAN_MIN_SAMPLES`).  
 Temporal penalty: two events more than **1 hour apart** (configurable via `SENTINEL_MAX_TIME_DIFF_H`) are assigned infinite distance, preventing cross‑window clustering.  
+Geo-precision gate: events whose `geo_precision` (GDELT `ActionGeo_Type`; ACLED rows store 4) is below `SENTINEL_MIN_GEO_PRECISION` (default 2) are excluded from DBSCAN input — country-centroid geocodes (type 1) place mention-level articles at one shared point and would otherwise mint spurious country-level hotspots with thematically unrelated sources. `NULL` precision (legacy rows) fails open. Grid-cell convergence (FR-WM-CONVERGENCE) is unaffected and continues to bin all events.  
 Centroid geometry shall be computed using `ST_Centroid(ST_Collect(point_geom))` via PostGIS — not Python coordinate mean — to ensure correctness near the antimeridian (±180° longitude).  
 **Acceptance Criteria:**  
 ☑ Two events 10 km and 30 min apart within the same cell are clustered; two events 60 km apart are separated.  
 ☑ DBSCAN runs independently per cell (not globally), keeping the distance matrix O(n²) bounded by cell size.  
 ☑ Noise points within a cell are still associated to the hotspot via `event_hotspot` with `is_noise = true`.  
-☑ A synthetic dataset with events spanning lon=179° and lon=-179° produces a centroid near the antimeridian, not near 0°.
+☑ A synthetic dataset with events spanning lon=179° and lon=-179° produces a centroid near the antimeridian, not near 0°.  
+☑ A cell containing only `geo_precision = 1` events yields no hotspot; adding ≥ `min_samples` precise events (`geo_precision ≥ 2`) yields a hotspot containing only the precise events.
 
 **FR‑6‑HOTSPOT_STORAGE**  
 Each sub-cluster within an active grid cell shall be stored in the `hotspots` table with:  
@@ -298,6 +300,7 @@ Each sub-cluster within an active grid cell shall be stored in the `hotspots` ta
 - `event_count`, `unique_sources`, `unique_event_types`.  
 A many‑to‑many link table `event_hotspot` shall associate events to their sub-cluster within the hotspot.  
 `convergence_score` and `alert_level` are stored once in `grid_cells` and accessed via JOIN on `cell_id`; they are not duplicated in `hotspots`.  
+Re-clustering is identity-stable: a sub-cluster whose non-noise event membership is unchanged keeps its existing `hotspot_id` row (and dependent `llm_summaries`); only sub-clusters with changed membership are replaced.  
 **Acceptance Criteria:**  
 ☑ After convergence detection, `SELECT COUNT(*) FROM hotspots h JOIN grid_cells g USING (cell_id) WHERE g.alert_level IN ('High', 'Critical')` > 0 for a high‑density real dataset (e.g., Ukraine).  
 ☑ Every non‑noise event appears in exactly one hotspot.  
@@ -352,9 +355,9 @@ For each qualifying hotspot, construct a prompt containing:
 
 **FR‑12‑NIM_API_CALL**  
 The system shall POST the prompt to the NVIDIA NIM API endpoint with `temperature=SENTINEL_LLM_TEMPERATURE`, `max_tokens=SENTINEL_LLM_MAX_TOKENS`, and retry on `429 Too Many Requests` up to 3 times with exponential backoff (1s, 2s, 4s).  
-On NIM failure (429 exhausted, timeout >15s, or 5xx), the system shall automatically fall back to a local Llama-3-8B model via Ollama (`http://localhost:11434`). Both paths emit `llm_model_version` to `llm_summaries` for audit.  
+On NIM failure (429 exhausted, timeout > SENTINEL_LLM_TIMEOUT_S seconds, or 5xx), the system shall automatically fall back to a local Llama-3-8B model via Ollama at OLLAMA_ENDPOINT (default http://localhost:11434; containerized workers must use http://host.docker.internal:11434 — localhost inside a container is the container itself). Both paths emit `llm_model_version` to `llm_summaries` for audit.  
 **Acceptance Criteria:**  
-☑ Successful response in < 15 s for 90 % of calls.  
+☑ Successful response within SENTINEL_LLM_TIMEOUT_S for 90 % of calls.  
 ☑ On simulated 429 × 3, fallback to Ollama is triggered; `llm_model_version` = `"llama-3-8b-ollama"`.  
 ☑ Parsed JSON is stored in `llm_summaries` with validated citations.
 
@@ -384,7 +387,7 @@ The system shall expose `GET /search?q=<text>` (Bearer-gated, rate-limited) retu
 ☑ Cmd+K focuses the search input from anywhere in the dashboard; Esc closes the dropdown.
 
 **FR‑16‑SOURCE_ARTICLES**  
-The system shall expose `GET /hotspots/{id}/events` (Bearer-gated, rate-limited, 404 on unknown id) returning the hotspot's linked events with `{event_id, title, url, domain, source_system, event_type_label, event_date, trust_tier, trust_score, citation_index}`. `citation_index` is the event's 1-based position in the exact article ordering used by `LLMRepository.fetch_hotspot_articles()` (URL-bearing events, `ORDER BY event_date DESC, event_id DESC`), so the numbering matches the SITREP's `[N]` citation markers by construction; both queries share the `event_id DESC` tiebreaker. URL-less events append after cited rows with `citation_index = NULL`. The detail panel shall render a "Sources (N)" list — citation number, title linking to `url` (`target="_blank" rel="noopener noreferrer"`), domain, trust-tier badge, date — and clicking a `[N]` marker in the SITREP scrolls to and highlights row N.  
+The system shall expose `GET /hotspots/{id}/events` (Bearer-gated, rate-limited, 404 on unknown id) returning the hotspot's linked events with `{event_id, title, url, domain, source_system, event_type_label, event_date, trust_tier, trust_score, citation_index}`. `citation_index` is the event's 1-based position in the exact article ordering used by `LLMRepository.fetch_hotspot_articles()` (URL-bearing events, `ORDER BY event_date DESC, event_id DESC`), so the numbering matches the SITREP's `[N]` citation markers by construction; both queries share the `event_id DESC` tiebreaker. Noise-flagged links (`event_hotspot.is_noise = true`, FR-5) are excluded from both the LLM prompt articles and this endpoint — the two queries filter and order in lockstep, so `[N]` numbering alignment is preserved by construction. URL-less events append after cited rows with `citation_index = NULL`. The detail panel shall render a "Sources (N)" list — citation number, title linking to `url` (`target="_blank" rel="noopener noreferrer"`), domain, trust-tier badge, date — and clicking a `[N]` marker in the SITREP scrolls to and highlights row N.  
 **Acceptance Criteria:**  
 ☑ For a hotspot with a SITREP, every `[N]` marker resolves to the Nth row of the sources list.  
 ☑ Trust-tier badge colors follow `lib/colors.ts` conventions.
@@ -400,7 +403,7 @@ The dashboard shall be bilingual with **Vietnamese as the default locale** and a
 *Design reference: `docs/superpowers/specs/2026-07-01-map-triage-clarity-design.md`. Clarity techniques (show-less-by-default, time-as-filter, "what's new" emphasis, encoding legend) are adapted from World Monitor (`koala73/worldmonitor`, AGPL-3.0) — approach credited, no code or data copied verbatim. The convergence gate cuts noise upstream; these FRs let the analyst triage downstream. Filtering is client-side over the bounded (≤200) `/hotspots` payload — no new query params. `GET /hotspots` and `GET /hotspots/{id}` shall additionally return `end_window` and `created_at` (existing `hotspots` columns; no migration).*
 
 **FR‑18‑MAP_FILTERS**  
-The dashboard shall provide an over-map filter panel (`components/FilterPanel.tsx`) and an encoding legend (`components/Legend.tsx`). Filters: a **confidence** slider (min `conf_score`, 0–100 step 5), **alert-level** include checkboxes (Critical/High/Medium), and a **time-window** selector (`6h/24h/48h/7d/all`, filtering on `end_window`). The panel shows a "**Showing X of Y**" counter and a Reset control. Filter logic is a pure module `lib/filters.ts` (`passesFilter`, `applyFilters`, `DEFAULT_FILTERS`, `TIME_WINDOWS`) applied in `app/page.tsx`; `MapView` becomes presentational, receiving the already-filtered list via a lifted `lib/useHotspots.ts` hook (fetch + SSE). The legend decodes FR‑13 using `lib/colors.ts` swatches (fill: green >70 / yellow 40–70 / grey <40; ring: red = Critical, orange = High). All strings via `useT()`.  
+The dashboard shall provide an over-map filter panel (`components/FilterPanel.tsx`) and an encoding legend (`components/Legend.tsx`). Filters: a **confidence** slider (min `conf_score`, 0–100 step 5), **alert-level** include checkboxes (Critical/High/Medium), and a **time-window** selector (`24h/3d/7d/30d`, default `7d`, filtering on `end_window`; the widest option matches the server-side 30-day `max_age_hours` cap). The panel shows a "**Showing X of Y**" counter and a Reset control. Filter logic is a pure module `lib/filters.ts` (`passesFilter`, `applyFilters`, `DEFAULT_FILTERS`, `TIME_WINDOWS`) applied in `app/page.tsx`; `MapView` becomes presentational, receiving the already-filtered list via a lifted `lib/useHotspots.ts` hook (fetch + SSE). The legend decodes FR‑13 using `lib/colors.ts` swatches (fill: green >70 / yellow 40–70 / grey <40; ring: red = Critical, orange = High). All strings via `useT()`.  
 **Acceptance Criteria:**  
 ☑ Raising the confidence slider removes lower-score markers and updates the "Showing X of Y" counter; unchecking an alert level hides those markers; selecting "24h" hides hotspots whose `end_window` is older than 24 hours.  
 ☑ Malformed/absent `end_window` fails open (hotspot remains visible); a vitest suite covers `passesFilter` predicates and the window boundary.
@@ -479,7 +482,7 @@ Source trust tier mapping (applied via `sources.trust_tier` column with generate
 #### 6.1.4 LLM Verifier (`llm_verifier.py`)
 - `build_prompt(hotspot_data: dict)` → str. Formats numbered headline list with source attribution instruction.
 - `validate_citations(summary: str)` → raises `ValueError` listing uncited sentences (regex: `r'.+\[\d+\][.!?]\s*$'` per sentence).
-- `call_nim_api(prompt: str)` → dict (parsed JSON). Uses `requests.post` with retry logic; on failure (429 exhausted, timeout >15s, 5xx), calls `call_ollama_fallback(prompt)`.
+- `call_nim_api(prompt: str)` → dict (parsed JSON). Uses `requests.post` with retry logic; on failure (429 exhausted, timeout > SENTINEL_LLM_TIMEOUT_S, 5xx), calls `call_ollama_fallback(prompt)`.
 - `call_ollama_fallback(prompt: str)` → dict. Posts to `http://localhost:11434/api/generate`.
 - Pydantic model `LLMSummary` validates the JSON response and runs `validate_citations` as a field validator.
 - Class `LLMRepository` to store validated results, setting `llm_model_version` to distinguish NIM vs. Ollama paths.
@@ -520,6 +523,7 @@ erDiagram
         text url
         text title
         text grid_cell_id "FK → grid_cells.cell_id"
+        int geo_precision "GDELT ActionGeo_Type; NULL=unknown (fail-open)"
     }
     
     SOURCES {
@@ -657,7 +661,7 @@ ALTER TABLE event_hotspot ADD COLUMN is_noise BOOLEAN DEFAULT false;
 | Regression Tests | Sprint 3–4 | Re‑run on a fixed historical dataset (e.g., 2024‑02‑24 Ukraine escalation) | Scripted pipeline run | Cluster count, convergence scores, and conf_scores match expected values |
 | Performance Tests | Sprint 3–4 | Measure batch processing time with 5k and 10k events | `time` CLI, `cProfile` | NFR‑1 compliance |
 | Security Tests | Production (M2+) | JWT auth enforcement (NFR‑5), input sanitization, OWASP Top 10, SQL/command injection | `pytest`, OWASP ZAP, SQLMap | Zero injection vectors; auth bypass failures |
-| LLM/NIM Failure Tests | Sprint 3–4 | Simulate 504, 429, timeout >15s, malformed JSON; assert graceful degradation and Ollama fallback | `pytest`, `requests-mock` | All failures degrade gracefully; retries within 60s; `llm_model_version` correctly reflects fallback |
+| LLM/NIM Failure Tests | Sprint 3–4 | Simulate 504, 429, timeout > SENTINEL_LLM_TIMEOUT_S, malformed JSON; assert graceful degradation and Ollama fallback | `pytest`, `requests-mock` | All failures degrade gracefully; retries within 60s; `llm_model_version` correctly reflects fallback |
 | Citation Validation Tests | Sprint 3 | `validate_citations()` unit tests covering: all cited, none cited, partially cited, edge-case punctuation | `pytest` | Uncited sentences raise `ValueError`; valid summaries pass |
 | Geographic Edge Case Tests | Sprint 2–3 | Grid-cell binning and DBSCAN covering antimeridian (±180°), polar coordinates (lat ±90°) | `pytest`, synthetic datasets | Cells correctly assigned; centroids computed via PostGIS; distance calculations within 0.1% of haversine reference |
 | Convergence Formula Tests | Sprint 2 | Unit tests for `compute_convergence_score()` against World Monitor formula examples | `pytest` | Taiwan Strait example: 3 types + 6 events → score 87; single-type cell → no hotspot |
@@ -729,7 +733,7 @@ The next epic takes Sentinel from the validated monolithic foundation to a produ
 | # | Risk | Impact | Mitigation |
 |---|------|--------|------------|
 | R1 | GDELT / ACLED data noise & duplicates | High | Source trust scoring pipeline: assign tier weights per domain stored in `sources.trust_tier`; weight `source_density` in FR-7 by `trust_weight`; DB composite unique constraint on `(source_system, external_event_id)`; `ON CONFLICT DO NOTHING` in `ingestion.py`. |
-| R2 | NVIDIA NIM latency / rate limit | Medium | Local fallback Llama-3-8B via Ollama: detect 429 or timeout >15s; route to `call_ollama_fallback()`; both paths emit `llm_model_version`; threshold gating (FR-10) reduces call volume. |
+| R2 | NVIDIA NIM latency / rate limit | Medium | Local fallback Llama-3-8B via Ollama: detect 429 or timeout > SENTINEL_LLM_TIMEOUT_S; route to `call_ollama_fallback()`; both paths emit `llm_model_version`; threshold gating (FR-10) reduces call volume. |
 | R3 | Clustering parameter sensitivity | High | HDBSCAN adaptive option; manual validation set; PostGIS `ST_DWithin` pre-filtering; grid-cell convergence is parameter-free and provides stable fallback. |
 | R4 | PostgreSQL operational burden | Low | Docker Compose for local dev; connection pooling from Sprint 1; PgBouncer in production. |
 | R5 | External Documentation Dependency | Medium | (1) Archive static copies of World Monitor docs at `docs/world_monitor_archive/<date>/`; (2) FR-WM-CONVERGENCE fully defines the algorithm in Sentinel's own terms — no external URL required to implement it; (3) World Monitor docs URLs pinned in the agent directive header. |
@@ -784,9 +788,11 @@ SENTINEL_DBSCAN_MIN_SAMPLES=3
 SENTINEL_MAX_TIME_DIFF_H=1
 SENTINEL_LLM_THRESHOLD=40
 SENTINEL_GRID_SIZE_DEG=1.0
+SENTINEL_MIN_GEO_PRECISION=2
 SENTINEL_ACLED_POLL_HOURS=24
 SENTINEL_LLM_MAX_TOKENS=500
 SENTINEL_LLM_TEMPERATURE=0.0
+SENTINEL_LLM_TIMEOUT_S=180
 SENTINEL_POLL_INTERVAL_S=900
 SENTINEL_RETENTION_DAYS=90
 
@@ -808,9 +814,11 @@ All parameters are read from environment variables (prefixed `SENTINEL_`) with d
 | `SENTINEL_MAX_TIME_DIFF_H` | 1 | FR-5 | Temporal penalty threshold (hours) |
 | `SENTINEL_LLM_THRESHOLD` | 40 | FR-10 | Minimum conf_score for LLM gate |
 | `SENTINEL_GRID_SIZE_DEG` | 1.0 | FR-WM | Grid-cell size in degrees |
+| `SENTINEL_MIN_GEO_PRECISION` | 2 | FR-5 | Minimum geo_precision for DBSCAN input (1=country centroid excluded; NULL fails open) |
 | `SENTINEL_ACLED_POLL_HOURS` | 24 | FR-1b | ACLED fetch interval (hours) |
 | `SENTINEL_LLM_MAX_TOKENS` | 500 | FR-12 | Max tokens in NIM response |
 | `SENTINEL_LLM_TEMPERATURE` | 0.0 | FR-12 | LLM sampling temperature |
+| `SENTINEL_LLM_TIMEOUT_S` | 60 | FR-12 | NIM/Ollama request timeout (seconds); env sets 180 for 70B NIM |
 | `SENTINEL_POLL_INTERVAL_S` | 900 | FR-0 | Pipeline schedule interval (seconds) |
 | `SENTINEL_RETENTION_DAYS` | 90 | §6.2.1 (M1) | Rolling-window retention for `events`; partitions older than this are dropped |
 
@@ -861,6 +869,7 @@ ln -s ../specs.md docs/spec.md
 
 | Version | Date | Change | Reason |
 |---|---|---|---|
+| 1.9.0 | 2026-07-15 | Stable hotspot identity across re-clustering (FR-6 note); LLM skip-if-summarised + ack-on-failure; FR-12 timeout text corrected to SENTINEL_LLM_TIMEOUT_S; FR-5 geo-precision gate (SENTINEL_MIN_GEO_PRECISION, events.geo_precision, migration 019); FR-16 is_noise exclusion; FR-18 window list corrected to shipped values; detail panel docked (no map overlay); SSE refetch debounce. | Diagnosed production defects: every tick deleted + recreated hotspots so CASCADE wiped finished SITREPs while a dead Ollama fallback poisoned the LLM queue; GDELT country-centroid (ActionGeo_Type=1) piles minted fake country hotspots with unrelated sources; the detail-panel overlay swallowed marker clicks across the right quarter of the map. |
 | 1.8.0 | 2026-07-01 | **Analyst triage & map clarity (Section 4.7, M5).** Added FR-18 map filters (confidence slider + alert-level checkboxes + time-window selector + "Showing X of Y" counter + FR-13 legend; client-side over the ≤200 payload), FR-19 map de-clutter (default noise floor `minConf=40`; optional `supercluster` marker clustering), and FR-20 "what's new" highlighting (`created_at` vs `localStorage` last-seen). `GET /hotspots` and `GET /hotspots/{id}` now also return `end_window` and `created_at` (existing columns, no migration). `MapView` refactored to presentational; data fetch/SSE lifted into `lib/useHotspots.ts`; pure logic in `lib/filters.ts` + `lib/whatsnew.ts`. Clarity techniques adapted from World Monitor with attribution. | The convergence gate cuts noise upstream, but analysts had no downstream triage: no filtering, no recency, no legend, no "what changed" — every marker looked equally worth investigating. |
 | 1.7.0 | 2026-06-22 | **GDELT-only convergence restored (FR-WM-CONVERGENCE / FR-5).** Relaxed the Convergence Zone activation guard from `unique_event_types ≥ 2` back to `convergence_score ≥ 1`: single-event-type cells are again active zones eligible for DBSCAN (alert_level still requires 2+ types). Documented that GDELT classification reads the **2-digit CAMEO root** of the full 3–4 digit `EventCode` (the prior `int(EventCode) in [14,19]` check mislabeled every live event as `unknown`). Floored the DBSCAN look-back lower bound to start-of-UTC-day so day-granular GDELT events (midnight UTC) stay in window all day. Reverses the 1.1.2 guard tightening. | Production runs without ACLED (subscription-gated) carry a single `military_conflict` type; the 2-type guard + the multi-digit CAMEO mislabel + the day-granular DBSCAN window together produced zero hotspots from real GDELT-only feeds. |
 | 1.5.0 | 2026-06-11 | **Dashboard usability & localization (Section 4.6).** Added FR-14 hotspot naming (curated-place layered resolution stored in `hotspots.name`, migration 012, backfill CLI), FR-15 grouped search (`GET /search` with events FTS migration 013; always-visible search box with Cmd+K focus), FR-16 source-article list (`GET /hotspots/{id}/events` with `citation_index` aligned to the LLM prompt's article ordering), and FR-17 bilingual UI (Vietnamese default, EN/VI toggle, client-side dictionaries). Naming/search UX adapted from World Monitor with attribution; fixed stale header version (was 1.3.0 while history recorded 1.4.0). | Dashboard lacked practical affordances: hotspots were labelled "Hotspot #N", there was no search, and stored article data (`events.title`/`url`) was never surfaced; FYP requires a Vietnamese-language UI. |

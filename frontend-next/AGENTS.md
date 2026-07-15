@@ -25,6 +25,8 @@ All files in `frontend-next/`, including `lib/`, `components/`, `app/`, `__tests
 - Auth context in `lib/auth.tsx` wraps the app; `useAuth()` exposes `token`, `user`, `login()`, `logout()`, `isAdmin`.
 - Login page at `/login`; unauthenticated users are redirected there from `/`.
 - SSE stream in `MapView` uses `connectHotspotStream` with the Bearer token; re-fetches hotspots on push events.
+- Layout: `app/page.tsx` is a flex row — a `position:relative; flex:1; minWidth:0` map container (all overlay controls anchor to it) with `HotspotDetail` as a flex **sibling** column (340px, full height). The detail panel must never absolutely overlay the map: an overlay panel created a ~370×713px click dead zone that swallowed marker clicks and hid `FilterPanel`.
+- `lib/useHotspots.ts` wraps SSE refetches in `trailingDebounce(fn, 3000)` (`lib/debounce.ts`, returns a `DebouncedFn` with `.cancel()`) — one refetch per burst, or `/hotspots` (60 req/min) 429s during pipeline ticks; the effect cleanup calls `.cancel()` so no refetch fires after unmount/token change.
 - `TrustTierEditor` (admin-only) lists sources with dropdowns to PATCH `/sources/{id}` trust_tier.
 - `api.ts` provides typed `sources()` and `updateTrustTier()` methods; all api methods accept `string | null` token.
 - SITREP citation parsing in `lib/citations.ts` renders `[N]` markers as superscript links.

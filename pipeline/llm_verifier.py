@@ -195,6 +195,7 @@ class LLMRepository:
                 FROM event_hotspot eh
                 JOIN events e ON e.event_id = eh.event_id
                 WHERE eh.hotspot_id = %s
+                  AND NOT COALESCE(eh.is_noise, false)
                 ORDER BY e.event_date DESC, e.event_id DESC
                 """,
                 (hotspot_id,),
@@ -209,10 +210,24 @@ class LLMRepository:
     def candidate_hotspots(self, threshold: float) -> list[int]:
         with self._conn.cursor() as cursor:
             cursor.execute(
-                "SELECT hotspot_id FROM hotspots WHERE COALESCE(conf_score,0) > %s ORDER BY hotspot_id",
+                """
+                SELECT h.hotspot_id FROM hotspots h
+                WHERE COALESCE(h.conf_score,0) > %s
+                  AND NOT EXISTS (
+                    SELECT 1 FROM llm_summaries ls WHERE ls.hotspot_id = h.hotspot_id
+                  )
+                ORDER BY h.hotspot_id
+                """,
                 (threshold,),
             )
             return [int(row[0]) for row in cursor.fetchall()]
+
+    def summary_exists(self, hotspot_id: int) -> bool:
+        with self._conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT 1 FROM llm_summaries WHERE hotspot_id = %s", (hotspot_id,)
+            )
+            return cursor.fetchone() is not None
 
     def save_summary(self, hotspot_id: int, result: dict, model: str) -> None:
         with self._conn.cursor() as cursor:

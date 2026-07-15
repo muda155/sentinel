@@ -193,6 +193,43 @@ def test_recluster_same_cell_is_idempotent():
         conn.close()
 
 
+def test_hotspots_created_metric_counts_only_new():
+    """Kept (membership-unchanged) hotspots are re-emitted each tick for
+    rescoring but must not inflate hotspots_created_total."""
+    from api.metrics import METRICS
+
+    dsn = os.getenv("SENTINEL_TEST_DB")
+    conn = psycopg2.connect(dsn)
+    try:
+        with conn.cursor() as cur:
+            for t in ("event_hotspot", "hotspots", "grid_cells", "events"):
+                cur.execute(f"DELETE FROM {t}")
+        conn.commit()
+        _seed_single_type_gdelt(conn)
+
+        bus = StreamBus(client=fakeredis.FakeStrictRedis(), block_ms=10, batch=100)
+        bus.ensure_group(ClusteringWorker.in_stream, ClusteringWorker.group)
+        worker = ClusteringWorker(bus=bus, consumer="c")
+
+        METRICS.reset()
+        bus.publish(ClusteringWorker.in_stream,
+                    {"cell_id": "1x1_LAT31_LON34", "convergence_score": 88.0})
+        assert _drain(worker) == 1
+        first = METRICS.snapshot().get("hotspots_created_total", 0)
+        assert first >= 1
+
+        bus.publish(ClusteringWorker.in_stream,
+                    {"cell_id": "1x1_LAT31_LON34", "convergence_score": 88.0})
+        assert _drain(worker) == 1
+        assert METRICS.snapshot().get("hotspots_created_total", 0) == first
+    finally:
+        with conn.cursor() as cur:
+            for t in ("event_hotspot", "hotspots", "grid_cells", "events"):
+                cur.execute(f"DELETE FROM {t}")
+        conn.commit()
+        conn.close()
+
+
 def test_unacked_message_is_replayed_via_claim():
     bus = StreamBus(client=fakeredis.FakeStrictRedis(), block_ms=10, batch=100)
     bus.ensure_group("sentinel:convergence_zone_detected", "cg:clustering")

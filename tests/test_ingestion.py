@@ -443,3 +443,30 @@ def test_acled_fetch_multipage_pagination(monkeypatch: pytest.MonkeyPatch) -> No
     assert get_mock.call_args_list[0].kwargs["params"]["page"] == 1
     # page 2 params
     assert get_mock.call_args_list[1].kwargs["params"]["page"] == 2
+
+
+def test_build_event_records_carries_geo_precision(synthetic_gdelt_df):
+    df = GDELT2Ingestor._normalize_columns(synthetic_gdelt_df.copy())
+    df["ActionGeo_Type"] = [1, 4, 3, 1, 2, 5]
+    records = list(GDELT2Ingestor._build_event_records(df))
+    assert records, "expected records from valid coordinates"
+    assert records[0][8] == 1
+    assert records[1][8] == 4
+
+
+def test_build_event_records_tolerates_missing_geo_type(synthetic_gdelt_df):
+    df = GDELT2Ingestor._normalize_columns(synthetic_gdelt_df.copy())
+    records = list(GDELT2Ingestor._build_event_records(df))
+    assert records
+    assert all(r[8] is None for r in records)
+
+
+def test_augment_records_appends_geo_precision(synthetic_gdelt_df):
+    df = GDELT2Ingestor._normalize_columns(synthetic_gdelt_df.copy())
+    df["ActionGeo_Type"] = [1, 4, 3, 1, 2, 5]
+    ingestor = GDELT2Ingestor()
+    records = list(ingestor._build_event_records(df))
+    augmented = ingestor._augment_records(records, {})
+    # geo_precision is the last field, after grid_cell_id
+    assert augmented[0][-1] == 1
+    assert augmented[1][-1] == 4

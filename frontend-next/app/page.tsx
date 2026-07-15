@@ -75,27 +75,29 @@ export default function Page() {
     : [];
 
   return (
-    <main style={{ position: "absolute", inset: 0 }}>
-      <SearchBar token={token} onSelectHotspot={handleSearchSelect} />
-      {globe ? <GlobeView /> : <MapView onSelect={handleSelectHotspot} extraLayers={heatLayer} hotspots={filteredHotspots} focus={focus} newHotspots={newHotspots} />}
-      <div style={{ position: "absolute", top: 12, left: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <label style={{ background: "#111", color: "#eee", padding: "8px 12px", borderRadius: 6, cursor: "pointer" }}>
-          <input type="checkbox" checked={showHeat} onChange={(e) => setShowHeat(e.target.checked)} /> {t("header.heatmap")}
-        </label>
-        <button onClick={() => setGlobe((g) => !g)} style={{ background: "#111", color: "#eee", padding: "8px 12px", borderRadius: 6, border: "none", cursor: "pointer" }}>
-          {globe ? "2D Map" : t("header.globe")}
-        </button>
-        <LanguageToggle />
-        <Legend />
-      </div>
-      <div style={{ position: "absolute", top: 12, right: 12 }}>
-        <FilterPanel filters={filters} onChange={setFilters} visible={filteredHotspots.length} total={total} newCount={newCount} />
-      </div>
-      <div style={{ position: "absolute", bottom: 12, right: 12, display: "flex", gap: 8, alignItems: "center" }}>
-        <span style={{ color: "#aaa", fontSize: 12 }}>{user.username} ({user.role})</span>
-        <button onClick={logout} style={{ background: "#333", color: "#eee", padding: "6px 12px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 12 }}>
-          {t("header.logout")}
-        </button>
+    <main style={{ position: "absolute", inset: 0, display: "flex" }}>
+      <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+        <SearchBar token={token} onSelectHotspot={handleSearchSelect} />
+        {globe ? <GlobeView /> : <MapView onSelect={handleSelectHotspot} extraLayers={heatLayer} hotspots={filteredHotspots} focus={focus} newHotspots={newHotspots} />}
+        <div style={{ position: "absolute", top: 12, left: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <label style={{ background: "#111", color: "#eee", padding: "8px 12px", borderRadius: 6, cursor: "pointer" }}>
+            <input type="checkbox" checked={showHeat} onChange={(e) => setShowHeat(e.target.checked)} /> {t("header.heatmap")}
+          </label>
+          <button onClick={() => setGlobe((g) => !g)} style={{ background: "#111", color: "#eee", padding: "8px 12px", borderRadius: 6, border: "none", cursor: "pointer" }}>
+            {globe ? "2D Map" : t("header.globe")}
+          </button>
+          <LanguageToggle />
+          <Legend />
+        </div>
+        <div style={{ position: "absolute", top: 12, right: 12 }}>
+          <FilterPanel filters={filters} onChange={setFilters} visible={filteredHotspots.length} total={total} newCount={newCount} />
+        </div>
+        <div style={{ position: "absolute", bottom: 12, right: 12, display: "flex", gap: 8, alignItems: "center" }}>
+          <span style={{ color: "#aaa", fontSize: 12 }}>{user.username} ({user.role})</span>
+          <button onClick={logout} style={{ background: "#333", color: "#eee", padding: "6px 12px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 12 }}>
+            {t("header.logout")}
+          </button>
+        </div>
       </div>
       {selected && <HotspotDetail hotspot={selected} onClose={() => setSelected(null)} />}
     </main>

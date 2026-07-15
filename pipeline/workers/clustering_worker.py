@@ -20,6 +20,7 @@ class ClusteringWorker(Worker):
         cell_id = data["cell_id"]
         conn, pool = get_pooled_connection()
         try:
+            before = self._existing_cell_hotspot_ids(conn, cell_id)
             hotspot_ids = cluster_single_cell(conn, cell_id)
             conn.commit()   # persist DML before read queries
             out = []
@@ -30,10 +31,23 @@ class ClusteringWorker(Worker):
                     "lat": row[0], "lon": row[1],
                     "ts": datetime.now(timezone.utc).isoformat(),
                 })
-            METRICS.inc("hotspots_created_total", len(out))
+            # Kept (membership-unchanged) hotspots are re-emitted so consensus
+            # rescoring and LLM retry keep working, but they aren't "created".
+            METRICS.inc(
+                "hotspots_created_total",
+                sum(1 for hid in hotspot_ids if hid not in before),
+            )
             return out
         finally:
             pool.return_connection(conn)
+
+    @staticmethod
+    def _existing_cell_hotspot_ids(conn, cell_id: str) -> set[int]:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT hotspot_id FROM hotspots WHERE cell_id = %s", (cell_id,)
+            )
+            return {int(r[0]) for r in cur.fetchall()}
 
     @staticmethod
     def _hotspot_centroid(conn, hotspot_id: int):

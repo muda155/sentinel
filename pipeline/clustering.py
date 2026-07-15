@@ -400,21 +400,32 @@ class ClusterRepository:
         working_df["cluster_label"] = labels
         clustered = working_df[working_df["cluster_label"] >= 0]
 
+        existing_by_members: dict[tuple[int, ...], int] = {}
         if cell_id is not None:
-            # Idempotent reclustering: drop this cell's prior hotspots (and their
-            # event links) so each pipeline tick refreshes the cell instead of
-            # accumulating a duplicate set of hotspots on every run. Runs even
-            # when there are no clusters, so a cell that ages out is cleared.
+            # Idempotent reclustering with stable identity: a cluster whose
+            # non-noise membership is unchanged keeps its hotspot_id, so its
+            # llm_summaries row survives the tick (ON DELETE CASCADE otherwise
+            # wiped every finished SITREP ~15 min after generation). Hotspots
+            # with no matching cluster are deleted below, so aged-out cells
+            # are still cleared.
             with self._conn.cursor() as cursor:
                 cursor.execute(
-                    "DELETE FROM event_hotspot WHERE hotspot_id IN "
-                    "(SELECT hotspot_id FROM hotspots WHERE cell_id = %s)",
+                    """
+                    SELECT eh.hotspot_id, array_agg(eh.event_id ORDER BY eh.event_id)
+                    FROM event_hotspot eh
+                    JOIN hotspots h ON h.hotspot_id = eh.hotspot_id
+                    WHERE h.cell_id = %s AND NOT COALESCE(eh.is_noise, false)
+                    GROUP BY eh.hotspot_id
+                    """,
                     (cell_id,),
                 )
-                cursor.execute("DELETE FROM hotspots WHERE cell_id = %s", (cell_id,))
+                existing_by_members = {
+                    tuple(int(e) for e in row[1]): int(row[0])
+                    for row in cursor.fetchall()
+                }
 
-        if clustered.empty:
-            return {"hotspot_count": 0, "linked_events": 0}
+        if clustered.empty and not existing_by_members:
+            return {"hotspot_count": 0, "linked_events": 0, "hotspot_ids": []}
 
         hotspot_count = 0
         linked_rows = 0
@@ -423,6 +434,12 @@ class ClusterRepository:
         with self._conn.cursor() as cursor:
             for label, group in clustered.groupby("cluster_label"):
                 group_event_ids = [int(eid) for eid in group["event_id"].tolist()]
+                members = tuple(sorted(group_event_ids))
+                kept_id = existing_by_members.pop(members, None)
+                if kept_id is not None:
+                    hotspot_ids.append(kept_id)
+                    hotspot_count += 1
+                    continue
 
                 if cell_id is not None:
                     # -- Per-cell DBSCAN mode: PostGIS centroid --
@@ -523,6 +540,15 @@ class ClusterRepository:
                 )
                 linked_rows += len(event_links)
                 hotspot_count += 1
+
+            if cell_id is not None and existing_by_members:
+                stale_ids = list(existing_by_members.values())
+                cursor.execute(
+                    "DELETE FROM event_hotspot WHERE hotspot_id = ANY(%s)", (stale_ids,)
+                )
+                cursor.execute(
+                    "DELETE FROM hotspots WHERE hotspot_id = ANY(%s)", (stale_ids,)
+                )
 
             # Noise handling (per-cell DBSCAN mode only)
             if cell_id is not None:
@@ -845,6 +871,7 @@ def _load_cell_events(conn, cell_id: str, lookback_hours: int = 2) -> pd.DataFra
     window_start = _dbscan_window_start(
         datetime.now(tz=timezone.utc), int(lookback_hours)
     )
+    min_geo = int(os.getenv("SENTINEL_MIN_GEO_PRECISION", "2"))
     query = """
         SELECT
             event_id,
@@ -861,9 +888,13 @@ def _load_cell_events(conn, cell_id: str, lookback_hours: int = 2) -> pd.DataFra
           -- events can be nominally ahead of NOW(); allow a 1-day tolerance.
           AND event_date < NOW() + INTERVAL '1 day'
           AND event_date >= %s
+          -- Country-centroid geocodes (GDELT ActionGeo_Type=1) pile unrelated
+          -- mention-level articles onto one point and mint fake hotspots;
+          -- NULL = unknown precision, fails open.
+          AND (geo_precision IS NULL OR geo_precision >= %s)
         ORDER BY event_date DESC
     """
-    df = pd.read_sql_query(query, conn, params=[cell_id, window_start])
+    df = pd.read_sql_query(query, conn, params=[cell_id, window_start, min_geo])
     if df.empty:
         return df
     deduped = df.drop_duplicates(subset=["event_id"])
