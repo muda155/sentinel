@@ -18,7 +18,11 @@ export function useHotspots(token: string | null): { hotspots: Hotspot[] } {
     // A pipeline tick re-emits every hotspot; without a debounce that is one
     // /hotspots refetch per SSE event and the 60 req/min limit 429s.
     const debounced = trailingDebounce(refetch, 3000);
-    return connectHotspotStream(base, token, { onHotspot: debounced, onSummary: debounced });
+    const disconnect = connectHotspotStream(base, token, { onHotspot: debounced, onSummary: debounced });
+    return () => {
+      debounced.cancel();
+      disconnect();
+    };
   }, [token]);
 
   return { hotspots };

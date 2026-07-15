@@ -24,6 +24,15 @@ describe("trailingDebounce", () => {
     expect(fn).toHaveBeenCalledTimes(2);
   });
 
+  it("cancel drops the pending call", () => {
+    const fn = vi.fn();
+    const debounced = trailingDebounce(fn, 3000);
+    debounced();
+    debounced.cancel();
+    vi.advanceTimersByTime(3000);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
   it("resets the window on each call within the window", () => {
     const fn = vi.fn();
     const debounced = trailingDebounce(fn, 3000);
