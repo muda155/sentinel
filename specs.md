@@ -352,9 +352,9 @@ For each qualifying hotspot, construct a prompt containing:
 
 **FR‑12‑NIM_API_CALL**  
 The system shall POST the prompt to the NVIDIA NIM API endpoint with `temperature=SENTINEL_LLM_TEMPERATURE`, `max_tokens=SENTINEL_LLM_MAX_TOKENS`, and retry on `429 Too Many Requests` up to 3 times with exponential backoff (1s, 2s, 4s).  
-On NIM failure (429 exhausted, timeout >15s, or 5xx), the system shall automatically fall back to a local Llama-3-8B model via Ollama (`http://localhost:11434`). Both paths emit `llm_model_version` to `llm_summaries` for audit.  
+On NIM failure (429 exhausted, timeout > SENTINEL_LLM_TIMEOUT_S seconds, or 5xx), the system shall automatically fall back to a local Llama-3-8B model via Ollama at OLLAMA_ENDPOINT (default http://localhost:11434; containerized workers must use http://host.docker.internal:11434 — localhost inside a container is the container itself). Both paths emit `llm_model_version` to `llm_summaries` for audit.  
 **Acceptance Criteria:**  
-☑ Successful response in < 15 s for 90 % of calls.  
+☑ Successful response within SENTINEL_LLM_TIMEOUT_S for 90 % of calls.  
 ☑ On simulated 429 × 3, fallback to Ollama is triggered; `llm_model_version` = `"llama-3-8b-ollama"`.  
 ☑ Parsed JSON is stored in `llm_summaries` with validated citations.
 
@@ -479,7 +479,7 @@ Source trust tier mapping (applied via `sources.trust_tier` column with generate
 #### 6.1.4 LLM Verifier (`llm_verifier.py`)
 - `build_prompt(hotspot_data: dict)` → str. Formats numbered headline list with source attribution instruction.
 - `validate_citations(summary: str)` → raises `ValueError` listing uncited sentences (regex: `r'.+\[\d+\][.!?]\s*$'` per sentence).
-- `call_nim_api(prompt: str)` → dict (parsed JSON). Uses `requests.post` with retry logic; on failure (429 exhausted, timeout >15s, 5xx), calls `call_ollama_fallback(prompt)`.
+- `call_nim_api(prompt: str)` → dict (parsed JSON). Uses `requests.post` with retry logic; on failure (429 exhausted, timeout > SENTINEL_LLM_TIMEOUT_S, 5xx), calls `call_ollama_fallback(prompt)`.
 - `call_ollama_fallback(prompt: str)` → dict. Posts to `http://localhost:11434/api/generate`.
 - Pydantic model `LLMSummary` validates the JSON response and runs `validate_citations` as a field validator.
 - Class `LLMRepository` to store validated results, setting `llm_model_version` to distinguish NIM vs. Ollama paths.
@@ -657,7 +657,7 @@ ALTER TABLE event_hotspot ADD COLUMN is_noise BOOLEAN DEFAULT false;
 | Regression Tests | Sprint 3–4 | Re‑run on a fixed historical dataset (e.g., 2024‑02‑24 Ukraine escalation) | Scripted pipeline run | Cluster count, convergence scores, and conf_scores match expected values |
 | Performance Tests | Sprint 3–4 | Measure batch processing time with 5k and 10k events | `time` CLI, `cProfile` | NFR‑1 compliance |
 | Security Tests | Production (M2+) | JWT auth enforcement (NFR‑5), input sanitization, OWASP Top 10, SQL/command injection | `pytest`, OWASP ZAP, SQLMap | Zero injection vectors; auth bypass failures |
-| LLM/NIM Failure Tests | Sprint 3–4 | Simulate 504, 429, timeout >15s, malformed JSON; assert graceful degradation and Ollama fallback | `pytest`, `requests-mock` | All failures degrade gracefully; retries within 60s; `llm_model_version` correctly reflects fallback |
+| LLM/NIM Failure Tests | Sprint 3–4 | Simulate 504, 429, timeout > SENTINEL_LLM_TIMEOUT_S, malformed JSON; assert graceful degradation and Ollama fallback | `pytest`, `requests-mock` | All failures degrade gracefully; retries within 60s; `llm_model_version` correctly reflects fallback |
 | Citation Validation Tests | Sprint 3 | `validate_citations()` unit tests covering: all cited, none cited, partially cited, edge-case punctuation | `pytest` | Uncited sentences raise `ValueError`; valid summaries pass |
 | Geographic Edge Case Tests | Sprint 2–3 | Grid-cell binning and DBSCAN covering antimeridian (±180°), polar coordinates (lat ±90°) | `pytest`, synthetic datasets | Cells correctly assigned; centroids computed via PostGIS; distance calculations within 0.1% of haversine reference |
 | Convergence Formula Tests | Sprint 2 | Unit tests for `compute_convergence_score()` against World Monitor formula examples | `pytest` | Taiwan Strait example: 3 types + 6 events → score 87; single-type cell → no hotspot |
@@ -729,7 +729,7 @@ The next epic takes Sentinel from the validated monolithic foundation to a produ
 | # | Risk | Impact | Mitigation |
 |---|------|--------|------------|
 | R1 | GDELT / ACLED data noise & duplicates | High | Source trust scoring pipeline: assign tier weights per domain stored in `sources.trust_tier`; weight `source_density` in FR-7 by `trust_weight`; DB composite unique constraint on `(source_system, external_event_id)`; `ON CONFLICT DO NOTHING` in `ingestion.py`. |
-| R2 | NVIDIA NIM latency / rate limit | Medium | Local fallback Llama-3-8B via Ollama: detect 429 or timeout >15s; route to `call_ollama_fallback()`; both paths emit `llm_model_version`; threshold gating (FR-10) reduces call volume. |
+| R2 | NVIDIA NIM latency / rate limit | Medium | Local fallback Llama-3-8B via Ollama: detect 429 or timeout > SENTINEL_LLM_TIMEOUT_S; route to `call_ollama_fallback()`; both paths emit `llm_model_version`; threshold gating (FR-10) reduces call volume. |
 | R3 | Clustering parameter sensitivity | High | HDBSCAN adaptive option; manual validation set; PostGIS `ST_DWithin` pre-filtering; grid-cell convergence is parameter-free and provides stable fallback. |
 | R4 | PostgreSQL operational burden | Low | Docker Compose for local dev; connection pooling from Sprint 1; PgBouncer in production. |
 | R5 | External Documentation Dependency | Medium | (1) Archive static copies of World Monitor docs at `docs/world_monitor_archive/<date>/`; (2) FR-WM-CONVERGENCE fully defines the algorithm in Sentinel's own terms — no external URL required to implement it; (3) World Monitor docs URLs pinned in the agent directive header. |
@@ -787,6 +787,7 @@ SENTINEL_GRID_SIZE_DEG=1.0
 SENTINEL_ACLED_POLL_HOURS=24
 SENTINEL_LLM_MAX_TOKENS=500
 SENTINEL_LLM_TEMPERATURE=0.0
+SENTINEL_LLM_TIMEOUT_S=180
 SENTINEL_POLL_INTERVAL_S=900
 SENTINEL_RETENTION_DAYS=90
 
@@ -811,6 +812,7 @@ All parameters are read from environment variables (prefixed `SENTINEL_`) with d
 | `SENTINEL_ACLED_POLL_HOURS` | 24 | FR-1b | ACLED fetch interval (hours) |
 | `SENTINEL_LLM_MAX_TOKENS` | 500 | FR-12 | Max tokens in NIM response |
 | `SENTINEL_LLM_TEMPERATURE` | 0.0 | FR-12 | LLM sampling temperature |
+| `SENTINEL_LLM_TIMEOUT_S` | 60 | FR-12 | NIM/Ollama request timeout (seconds); env sets 180 for 70B NIM |
 | `SENTINEL_POLL_INTERVAL_S` | 900 | FR-0 | Pipeline schedule interval (seconds) |
 | `SENTINEL_RETENTION_DAYS` | 90 | §6.2.1 (M1) | Rolling-window retention for `events`; partitions older than this are dropped |
 
