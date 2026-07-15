@@ -81,3 +81,33 @@ def test_llm_worker_acks_summarised_hotspot_without_llm_call(conn, monkeypatch):
     bus.publish("sentinel:llm_needed", {"hotspot_id": hid, "conf_score": 90.0})
     assert worker.run_once() == 1
     assert bus.pending_count("sentinel:llm_needed", "cg:llm") == 0
+
+
+def _seed_hotspot_without_summary(conn) -> int:
+    seed_demo_events(conn)
+    hid = cluster_single_cell(conn, CELL)[0]
+    with conn.cursor() as cur:
+        cur.execute("UPDATE hotspots SET conf_score = 90 WHERE hotspot_id = %s", (hid,))
+    conn.commit()
+    return hid
+
+
+def test_llm_worker_acks_on_llm_failure(conn, monkeypatch):
+    """A dead NIM + dead Ollama fallback must not leave the message pending
+    forever (the 60s stale-claim sweep re-ran it in a tight loop and starved
+    the queue). Ack and rely on next-tick re-emission."""
+    hid = _seed_hotspot_without_summary(conn)
+
+    def _fail(*args, **kwargs):
+        raise RuntimeError("Ollama fallback failed: connection refused")
+
+    monkeypatch.setattr("pipeline.workers.llm_worker.call_nim_api", _fail)
+    bus = StreamBus(client=fakeredis.FakeStrictRedis(), block_ms=10, batch=100)
+    worker = LLMWorker(bus=bus, consumer="c")
+    worker.setup()
+    bus.publish("sentinel:llm_needed", {"hotspot_id": hid, "conf_score": 90.0})
+    worker.run_once()
+    assert bus.pending_count("sentinel:llm_needed", "cg:llm") == 0
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM llm_summaries WHERE hotspot_id = %s", (hid,))
+        assert cur.fetchone()[0] == 0
