@@ -871,6 +871,7 @@ def _load_cell_events(conn, cell_id: str, lookback_hours: int = 2) -> pd.DataFra
     window_start = _dbscan_window_start(
         datetime.now(tz=timezone.utc), int(lookback_hours)
     )
+    min_geo = int(os.getenv("SENTINEL_MIN_GEO_PRECISION", "2"))
     query = """
         SELECT
             event_id,
@@ -887,9 +888,13 @@ def _load_cell_events(conn, cell_id: str, lookback_hours: int = 2) -> pd.DataFra
           -- events can be nominally ahead of NOW(); allow a 1-day tolerance.
           AND event_date < NOW() + INTERVAL '1 day'
           AND event_date >= %s
+          -- Country-centroid geocodes (GDELT ActionGeo_Type=1) pile unrelated
+          -- mention-level articles onto one point and mint fake hotspots;
+          -- NULL = unknown precision, fails open.
+          AND (geo_precision IS NULL OR geo_precision >= %s)
         ORDER BY event_date DESC
     """
-    df = pd.read_sql_query(query, conn, params=[cell_id, window_start])
+    df = pd.read_sql_query(query, conn, params=[cell_id, window_start, min_geo])
     if df.empty:
         return df
     deduped = df.drop_duplicates(subset=["event_id"])
