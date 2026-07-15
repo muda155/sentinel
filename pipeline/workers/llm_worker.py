@@ -23,6 +23,8 @@ class LLMWorker(Worker):
         conn, pool = get_pooled_connection()
         try:
             repo = LLMRepository(conn)
+            if repo.summary_exists(hotspot_id):
+                return []
             articles = repo.fetch_hotspot_articles(hotspot_id)
             if not articles:
                 return []
