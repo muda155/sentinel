@@ -282,12 +282,14 @@ Alert level thresholds:
 Within each active grid cell (`convergence_score ≥ 1`), the system shall group events into sub-clusters using DBSCAN with a Haversine distance metric and a temporal penalty function. The DBSCAN look-back lower bound floors to the start of the current UTC day so day-granular GDELT events (stamped midnight UTC) remain in window throughout the day.  
 `eps` (spatial) = **50 km** (configurable via `SENTINEL_DBSCAN_EPS_KM`), `min_samples` = **3** (configurable via `SENTINEL_DBSCAN_MIN_SAMPLES`).  
 Temporal penalty: two events more than **1 hour apart** (configurable via `SENTINEL_MAX_TIME_DIFF_H`) are assigned infinite distance, preventing cross‑window clustering.  
+Geo-precision gate: events whose `geo_precision` (GDELT `ActionGeo_Type`; ACLED rows store 4) is below `SENTINEL_MIN_GEO_PRECISION` (default 2) are excluded from DBSCAN input — country-centroid geocodes (type 1) place mention-level articles at one shared point and would otherwise mint spurious country-level hotspots with thematically unrelated sources. `NULL` precision (legacy rows) fails open. Grid-cell convergence (FR-WM-CONVERGENCE) is unaffected and continues to bin all events.  
 Centroid geometry shall be computed using `ST_Centroid(ST_Collect(point_geom))` via PostGIS — not Python coordinate mean — to ensure correctness near the antimeridian (±180° longitude).  
 **Acceptance Criteria:**  
 ☑ Two events 10 km and 30 min apart within the same cell are clustered; two events 60 km apart are separated.  
 ☑ DBSCAN runs independently per cell (not globally), keeping the distance matrix O(n²) bounded by cell size.  
 ☑ Noise points within a cell are still associated to the hotspot via `event_hotspot` with `is_noise = true`.  
-☑ A synthetic dataset with events spanning lon=179° and lon=-179° produces a centroid near the antimeridian, not near 0°.
+☑ A synthetic dataset with events spanning lon=179° and lon=-179° produces a centroid near the antimeridian, not near 0°.  
+☑ A cell containing only `geo_precision = 1` events yields no hotspot; adding ≥ `min_samples` precise events (`geo_precision ≥ 2`) yields a hotspot containing only the precise events.
 
 **FR‑6‑HOTSPOT_STORAGE**  
 Each sub-cluster within an active grid cell shall be stored in the `hotspots` table with:  
@@ -384,7 +386,7 @@ The system shall expose `GET /search?q=<text>` (Bearer-gated, rate-limited) retu
 ☑ Cmd+K focuses the search input from anywhere in the dashboard; Esc closes the dropdown.
 
 **FR‑16‑SOURCE_ARTICLES**  
-The system shall expose `GET /hotspots/{id}/events` (Bearer-gated, rate-limited, 404 on unknown id) returning the hotspot's linked events with `{event_id, title, url, domain, source_system, event_type_label, event_date, trust_tier, trust_score, citation_index}`. `citation_index` is the event's 1-based position in the exact article ordering used by `LLMRepository.fetch_hotspot_articles()` (URL-bearing events, `ORDER BY event_date DESC, event_id DESC`), so the numbering matches the SITREP's `[N]` citation markers by construction; both queries share the `event_id DESC` tiebreaker. URL-less events append after cited rows with `citation_index = NULL`. The detail panel shall render a "Sources (N)" list — citation number, title linking to `url` (`target="_blank" rel="noopener noreferrer"`), domain, trust-tier badge, date — and clicking a `[N]` marker in the SITREP scrolls to and highlights row N.  
+The system shall expose `GET /hotspots/{id}/events` (Bearer-gated, rate-limited, 404 on unknown id) returning the hotspot's linked events with `{event_id, title, url, domain, source_system, event_type_label, event_date, trust_tier, trust_score, citation_index}`. `citation_index` is the event's 1-based position in the exact article ordering used by `LLMRepository.fetch_hotspot_articles()` (URL-bearing events, `ORDER BY event_date DESC, event_id DESC`), so the numbering matches the SITREP's `[N]` citation markers by construction; both queries share the `event_id DESC` tiebreaker. Noise-flagged links (`event_hotspot.is_noise = true`, FR-5) are excluded from both the LLM prompt articles and this endpoint — the two queries filter and order in lockstep, so `[N]` numbering alignment is preserved by construction. URL-less events append after cited rows with `citation_index = NULL`. The detail panel shall render a "Sources (N)" list — citation number, title linking to `url` (`target="_blank" rel="noopener noreferrer"`), domain, trust-tier badge, date — and clicking a `[N]` marker in the SITREP scrolls to and highlights row N.  
 **Acceptance Criteria:**  
 ☑ For a hotspot with a SITREP, every `[N]` marker resolves to the Nth row of the sources list.  
 ☑ Trust-tier badge colors follow `lib/colors.ts` conventions.
@@ -520,6 +522,7 @@ erDiagram
         text url
         text title
         text grid_cell_id "FK → grid_cells.cell_id"
+        int geo_precision "GDELT ActionGeo_Type; NULL=unknown (fail-open)"
     }
     
     SOURCES {
@@ -784,6 +787,7 @@ SENTINEL_DBSCAN_MIN_SAMPLES=3
 SENTINEL_MAX_TIME_DIFF_H=1
 SENTINEL_LLM_THRESHOLD=40
 SENTINEL_GRID_SIZE_DEG=1.0
+SENTINEL_MIN_GEO_PRECISION=2
 SENTINEL_ACLED_POLL_HOURS=24
 SENTINEL_LLM_MAX_TOKENS=500
 SENTINEL_LLM_TEMPERATURE=0.0
@@ -809,6 +813,7 @@ All parameters are read from environment variables (prefixed `SENTINEL_`) with d
 | `SENTINEL_MAX_TIME_DIFF_H` | 1 | FR-5 | Temporal penalty threshold (hours) |
 | `SENTINEL_LLM_THRESHOLD` | 40 | FR-10 | Minimum conf_score for LLM gate |
 | `SENTINEL_GRID_SIZE_DEG` | 1.0 | FR-WM | Grid-cell size in degrees |
+| `SENTINEL_MIN_GEO_PRECISION` | 2 | FR-5 | Minimum geo_precision for DBSCAN input (1=country centroid excluded; NULL fails open) |
 | `SENTINEL_ACLED_POLL_HOURS` | 24 | FR-1b | ACLED fetch interval (hours) |
 | `SENTINEL_LLM_MAX_TOKENS` | 500 | FR-12 | Max tokens in NIM response |
 | `SENTINEL_LLM_TEMPERATURE` | 0.0 | FR-12 | LLM sampling temperature |
