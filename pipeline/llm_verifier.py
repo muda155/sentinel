@@ -195,6 +195,7 @@ class LLMRepository:
                 FROM event_hotspot eh
                 JOIN events e ON e.event_id = eh.event_id
                 WHERE eh.hotspot_id = %s
+                  AND NOT COALESCE(eh.is_noise, false)
                 ORDER BY e.event_date DESC, e.event_id DESC
                 """,
                 (hotspot_id,),

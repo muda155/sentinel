@@ -235,7 +235,8 @@ def assign_citation_indices(rows: list[dict]) -> list[dict]:
 
 def fetch_hotspot_events(conn, hotspot_id: int) -> list[dict] | None:
     """Linked events for a hotspot; None if the hotspot does not exist.
-    ORDER BY must stay in lockstep with LLMRepository.fetch_hotspot_articles."""
+    ORDER BY and the is_noise filter must stay in lockstep with
+    LLMRepository.fetch_hotspot_articles."""
     with conn.cursor() as cur:
         cur.execute("SELECT 1 FROM hotspots WHERE hotspot_id = %s", (hotspot_id,))
         if cur.fetchone() is None:
@@ -255,6 +256,7 @@ def fetch_hotspot_events(conn, hotspot_id: int) -> list[dict] | None:
             JOIN events e ON e.event_id = eh.event_id
             LEFT JOIN sources s ON e.source_id = s.source_id
             WHERE eh.hotspot_id = %s
+              AND NOT COALESCE(eh.is_noise, false)
             ORDER BY (e.url IS NULL OR e.url = ''),
                      e.event_date DESC, e.event_id DESC
             """,
