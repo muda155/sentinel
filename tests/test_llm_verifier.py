@@ -215,6 +215,26 @@ def test_validate_citations_empty() -> None:
         llm_verifier.validate_citations("")
 
 
+def test_validate_citations_abbreviation_is_not_sentence_boundary() -> None:
+    assert llm_verifier.validate_citations(
+        "The U.S. Senate blocked the resolution [1]. The U.K. and E.U. responded [2]."
+    ) is None
+
+
+def test_validate_citations_uncited_sentence_after_abbreviation_still_raises() -> None:
+    with pytest.raises(ValueError):
+        llm_verifier.validate_citations(
+            "The U.S. Senate blocked the resolution. Artillery deployed [2]."
+        )
+
+
+def test_validate_citations_title_abbreviations_are_not_boundaries() -> None:
+    assert llm_verifier.validate_citations(
+        "A man was found near Mount St. Helens [1]. "
+        "The Urban League of St. Louis and Gen. Smith responded [2]."
+    ) is None
+
+
 def test_llm_summary_model_accepts_valid_summary() -> None:
     model = llm_verifier.LLMSummary(
         conflict_detected=False,
