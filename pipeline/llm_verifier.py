@@ -70,7 +70,15 @@ def validate_citations(summary: str) -> None:
     ``r'.+\[\d+\][.!?]\s*$'``. Raises ``ValueError`` listing every
     uncited sentence. Returns ``None`` when all sentences are cited.
     """
-    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', (summary or "").strip()) if s.strip()]
+    # Abbreviations ("U.S.", "St.", "Gen.") must not split mid-sentence: legit
+    # boundaries always look like "[N]." per FR-11, never end in an abbreviation.
+    abbrevs = ["St", "Mt", "Dr", "Mr", "Mrs", "Ms", "Gen", "Lt", "Col", "Sgt", "Jr", "Sr"]
+    guards = r'(?<![A-Z]\.)' + "".join(rf'(?<!\b{a}\.)' for a in abbrevs)
+    sentences = [
+        s.strip()
+        for s in re.split(guards + r'(?<=[.!?])\s+', (summary or "").strip())
+        if s.strip()
+    ]
     if not sentences:
         raise ValueError("Summary is empty: no cited sentences found")
     pattern = re.compile(r'.+\[\d+\][.!?]\s*$')
