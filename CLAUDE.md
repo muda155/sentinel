@@ -63,11 +63,11 @@ Streamlit dashboard with Pydeck map. Hotspots color-coded: green (>70%), yellow 
 All config via env vars in `sentinel.env` (copy to override locally). Key vars:
 - `PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD` — DB connection (port 6432 = PgBouncer)
 - `NVIDIA_NIM_ENDPOINT`, `NVIDIA_NIM_API_KEY`, `NVIDIA_NIM_MODEL` — LLM step (step 6 skipped if absent)
-- `OLLAMA_ENDPOINT` — fallback LLM (default `http://localhost:11434`)
+- `OLLAMA_ENDPOINT` — fallback LLM (default `http://localhost:11434`), `SENTINEL_OLLAMA_MODEL` — fallback model (default `llama3:8b`; 8 GB hosts use `llama3.2:3b`)
 - `ACLED_EMAIL`/`ACLED_PASSWORD` — myACLED OAuth credentials (step 2 skipped if absent)
 - `SENTINEL_LOOKBACK_HOURS` (default 24), `SENTINEL_DBSCAN_WINDOW_HOURS` (default 2), `SENTINEL_LLM_THRESHOLD` (default 40)
 - `SENTINEL_CONF_W_DENSITY` (default 0.7), `SENTINEL_CONF_W_DIVERSITY` (default 0.3), `SENTINEL_CONF_DENSITY_DIVISOR` (default 3) — conf_score recalibration (FR-7/FR-8/FR-9)
-- `SENTINEL_NLI_MODEL` (default `cross-encoder/nli-deberta-v3-base`), `SENTINEL_NLI_MIN_PROB` (default 0.6), `SENTINEL_CONSISTENCY_DISPUTE_RATIO` (default 0.5), `SENTINEL_CONSISTENCY_MAX_CLAIMS` (default 8), `SENTINEL_CONSISTENCY_MAX_DOMAINS` (default 20) — M6 Consistency Engine (FR-22)
+- `SENTINEL_NLI_MODEL` (default `cross-encoder/nli-deberta-v3-base`), `SENTINEL_NLI_MIN_PROB` (default 0.6), `SENTINEL_CONSISTENCY_DISPUTE_RATIO` (default 0.5), `SENTINEL_CONSISTENCY_MAX_CLAIMS` (default 8), `SENTINEL_CONSISTENCY_MAX_DOMAINS` (default 20), `SENTINEL_CONSISTENCY_MIN_CLAIM_WORDS` (default 4) — M6 Consistency Engine (FR-22)
 
 ## Spec compliance
 

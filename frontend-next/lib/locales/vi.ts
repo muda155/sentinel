@@ -53,4 +53,6 @@ export const vi: Record<MessageKey, string> = {
   "claims.corroborated": "được xác nhận chéo",
   "claims.uncorroborated": "nguồn đơn",
   "claims.disputed": "mâu thuẫn",
+  "claims.supportedBy": "được xác nhận bởi",
+  "claims.contradictedBy": "bị phản bác bởi",
 };
