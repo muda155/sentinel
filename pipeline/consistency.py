@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ValidationError
@@ -163,3 +164,105 @@ def extract_claims(evidence: list[dict], *, llm=None) -> list[ExtractedClaim]:
         claim.source_indices = [i for i in claim.source_indices if i in valid]
         claims.append(claim)
     return claims
+
+
+@dataclass
+class EvidenceJudgment:
+    event_id: int
+    citation_index: int
+    domain: str
+    relation: str
+    probability: float
+
+
+@dataclass
+class ClaimVerdict:
+    text: str
+    status: str            # corroborated | uncorroborated | disputed
+    support: float
+    dispute: float
+    weight: float
+    evidence: list[EvidenceJudgment] = field(default_factory=list)
+
+
+def judge_claims(claims, evidence, judge) -> list[list[EvidenceJudgment]]:
+    """NLI-classify every (evidence premise, claim hypothesis) pair, batched."""
+    pairs = [
+        (item["evidence_text"], claim.text)
+        for claim in claims
+        for item in evidence
+    ]
+    if not pairs:
+        return [[] for _ in claims]
+    results = judge.classify_pairs(pairs)
+    judgments: list[list[EvidenceJudgment]] = []
+    cursor = 0
+    for _claim in claims:
+        row = []
+        for item in evidence:
+            relation, prob = results[cursor]
+            cursor += 1
+            row.append(EvidenceJudgment(
+                event_id=item["event_id"], citation_index=item["citation_index"],
+                domain=item["domain"], relation=relation, probability=prob,
+            ))
+        judgments.append(row)
+    return judgments
+
+
+def consensus(claims, evidence, judgments) -> list[ClaimVerdict]:
+    """Trust-weighted per-claim consensus over unique domains (FR-22).
+
+    Per domain, the strongest judgment wins. A claim's origin domains (the
+    sources that asserted it) never count toward corroboration, but may
+    contradict. Pairs below SENTINEL_NLI_MIN_PROB are ignored entirely."""
+    min_prob = _min_prob()
+    ratio = _dispute_ratio()
+    trust_by_domain = {item["domain"]: item["trust_score"] for item in evidence}
+    domain_by_index = {item["citation_index"]: item["domain"] for item in evidence}
+
+    verdicts: list[ClaimVerdict] = []
+    for claim, row in zip(claims, judgments):
+        origin_domains = {domain_by_index[i] for i in claim.source_indices
+                          if i in domain_by_index}
+        best: dict[str, EvidenceJudgment] = {}
+        for judgment in row:
+            if judgment.probability < min_prob or judgment.relation == "neutral":
+                continue
+            current = best.get(judgment.domain)
+            if current is None or judgment.probability > current.probability:
+                best[judgment.domain] = judgment
+
+        supporters = {d: j for d, j in best.items()
+                      if j.relation == "supports" and d not in origin_domains}
+        contradictors = {d: j for d, j in best.items() if j.relation == "contradicts"}
+
+        support = sum(trust_by_domain.get(d, 0.4) * j.probability
+                      for d, j in supporters.items())
+        dispute = sum(trust_by_domain.get(d, 0.4) * j.probability
+                      for d, j in contradictors.items())
+
+        if contradictors and dispute >= ratio * support:
+            status = "disputed"
+        elif len(supporters) >= 2:
+            status = "corroborated"
+        else:
+            status = "uncorroborated"
+
+        verdicts.append(ClaimVerdict(
+            text=claim.text, status=status, support=support, dispute=dispute,
+            weight=max(support + dispute, 0.1), evidence=row,
+        ))
+    return verdicts
+
+
+_STATUS_VALUE = {"corroborated": 1.0, "uncorroborated": 0.5, "disputed": 0.0}
+
+
+def hotspot_consistency_score(verdicts: list[ClaimVerdict]) -> float | None:
+    """consistency_score = 100 * sum(w*v) / sum(w); None when no claims."""
+    if not verdicts:
+        return None
+    total_weight = sum(v.weight for v in verdicts)
+    weighted = sum(v.weight * _STATUS_VALUE[v.status] for v in verdicts)
+    return 100.0 * weighted / total_weight
