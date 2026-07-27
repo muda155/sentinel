@@ -47,7 +47,7 @@ The scheduler (`APScheduler`) runs the full cycle every `SENTINEL_POLL_INTERVAL_
 ### Database
 - PostgreSQL 15 + PostGIS via Docker; PgBouncer sits in front on port 6432
 - Connection pool: `SentinelConnectionPool` singleton (`pipeline/pool.py`) — always use `get_pooled_connection()` and return with `pool.return_connection(conn)` in a `finally` block
-- Schema migrations: `db/init/001_*.sql` through `db/init/017_*.sql` — applied in order on first container init
+- Schema migrations: `db/init/001_*.sql` through `db/init/019_*.sql` — applied in order on first container init
 - Key tables: `events` (partitioned by `event_date`), `hotspots`, `grid_cells`, `sources` (with `trust_tier`), `event_hotspot`
 
 ### Scoring details

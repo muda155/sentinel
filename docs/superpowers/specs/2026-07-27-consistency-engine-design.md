@@ -42,7 +42,7 @@ Trigger unchanged: hotspots with `conf_score > SENTINEL_LLM_THRESHOLD` and no ex
 
 ### Component 1 — Ingestion enrichment (FR-21)
 
-Migration `db/init/018_event_enrichment.sql`, all columns nullable:
+Migration `db/init/020_consistency_engine.sql` (018/019 already exist: end_window index, geo_precision), all columns nullable:
 
 | Column | Source | Notes |
 |---|---|---|
@@ -89,7 +89,7 @@ Env weights mirror the conf_score pattern (`SENTINEL_CONSISTENCY_*`). Single-sou
 
 ### Component 3 — Data model
 
-Migration `018` (same file) also creates:
+Migration `020` (same file) also creates:
 
 ```sql
 ALTER TABLE hotspots ADD COLUMN consistency_score DOUBLE PRECISION;  -- NULL = not evaluated
