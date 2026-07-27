@@ -10,6 +10,10 @@ import logging
 import os
 from urllib.parse import urlparse
 
+from pydantic import BaseModel, ValidationError
+
+from pipeline.llm_verifier import _extract_json, call_llm_raw
+
 logger = logging.getLogger("sentinel.consistency")
 
 
@@ -104,3 +108,58 @@ def fetch_hotspot_evidence(conn, hotspot_id: int) -> list[dict]:
             "evidence_text": render_evidence_text(row),
         })
     return evidence
+
+
+class ExtractedClaim(BaseModel):
+    text: str
+    source_indices: list[int] = []
+
+
+class _ClaimExtraction(BaseModel):
+    claims: list[ExtractedClaim] = []
+
+
+def build_claims_prompt(evidence: list[dict]) -> str:
+    lines = [
+        "Act as an intelligence analyst. Below are numbered evidence items about one "
+        "geographic hotspot, each from a different report.",
+        (
+            f"Extract at most {_max_claims()} atomic factual claims stated by the evidence. "
+            "A claim is one self-contained factual statement in English (one actor, one "
+            "action). For each claim list the evidence numbers that assert it."
+        ),
+        'Output JSON only, no prose outside it: '
+        '{"claims": [{"text": str, "source_indices": [int]}]}',
+        "",
+        "Evidence:",
+    ]
+    for item in evidence:
+        lines.append(f"[{item['citation_index']}] {item['evidence_text']}")
+    return "\n".join(lines)
+
+
+def _default_llm(prompt: str) -> tuple[str, str]:
+    return call_llm_raw(
+        prompt,
+        endpoint=os.getenv("NVIDIA_NIM_ENDPOINT", ""),
+        api_key=os.getenv("NVIDIA_NIM_API_KEY", ""),
+        model=os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct"),
+        ollama_endpoint=os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434"),
+    )
+
+
+def extract_claims(evidence: list[dict], *, llm=None) -> list[ExtractedClaim]:
+    """One LLM call -> validated atomic claims. Empty list on any parse failure."""
+    llm = llm or _default_llm
+    content, _model = llm(build_claims_prompt(evidence))
+    try:
+        parsed = _ClaimExtraction(**_extract_json(content))
+    except (ValueError, ValidationError) as exc:
+        logger.warning("Claim extraction unparseable, skipping engine: %s", exc)
+        return []
+    valid = {item["citation_index"] for item in evidence}
+    claims = []
+    for claim in parsed.claims[: _max_claims()]:
+        claim.source_indices = [i for i in claim.source_indices if i in valid]
+        claims.append(claim)
+    return claims
