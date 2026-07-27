@@ -35,6 +35,7 @@ def fetch_hotspots(conn, *, limit=50, min_conf=0.0, min_convergence=0.0,
         SELECT h.hotspot_id, ST_Y(h.centroid_geom) lat, ST_X(h.centroid_geom) lon,
                h.name, h.end_window, h.created_at,
                COALESCE(h.conf_score,0) conf_score, h.event_count,
+               h.consistency_score,
                COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
                COALESCE(h.alert_level,'Medium') alert_level
         FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
@@ -77,6 +78,7 @@ def fetch_hotspot_by_id(conn, hotspot_id: int) -> dict | None:
         SELECT h.hotspot_id, ST_Y(h.centroid_geom) lat, ST_X(h.centroid_geom) lon,
                h.name, h.end_window, h.created_at,
                COALESCE(h.conf_score,0) conf_score, h.event_count,
+               h.consistency_score,
                COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
                COALESCE(h.alert_level,'Medium') alert_level
         FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id

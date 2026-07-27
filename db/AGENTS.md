@@ -11,7 +11,7 @@ All files in `db/`.
 ## Local Contracts
 
 - Migrations in `db/init/` are applied once in numeric order — never modify an already-applied migration; always add a new numbered file
-- Current highest migration: `020_consistency_engine.sql` — next must be `021_*.sql`
+- Current highest migration: `021_event_hotspot_is_noise.sql` — next must be `022_*.sql`
 - Key tables: `events` (partitioned by `event_date`), `hotspots`, `grid_cells`, `sources` (with `trust_tier`), `event_hotspot`, `claims`, `claim_evidence`
 - `claim_evidence.event_id` has no FK — events is partitioned; rows cascade via `claims → hotspots`
 - `sources.trust_tier` feeds the scoring formula — changes to trust tiers require a scoring review

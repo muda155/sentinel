@@ -33,3 +33,10 @@ def test_migration_020_is_idempotent(live_conn):
     with live_conn.cursor() as cur:
         cur.execute("DELETE FROM schema_migrations WHERE version = 20")
     apply_migrations(live_conn, Path("db/init"))  # must not raise
+
+
+def test_migration_021_event_hotspot_is_noise(live_conn):
+    # is_noise was referenced by clustering/llm_verifier/api but created by no
+    # migration until 021 — fresh DBs (CI) broke on every is_noise query.
+    apply_migrations(live_conn, Path("db/init"))
+    assert "is_noise" in _columns(live_conn, "event_hotspot")

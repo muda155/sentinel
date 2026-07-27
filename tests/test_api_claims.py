@@ -75,3 +75,25 @@ def test_fetch_hotspot_claims_shape(live_conn):
 def test_fetch_hotspot_claims_none_for_unknown(live_conn):
     from api.queries import fetch_hotspot_claims
     assert fetch_hotspot_claims(live_conn, 999999999) is None
+
+
+def test_hotspot_payloads_include_consistency_score(live_conn):
+    # FR-24: the list and single-hotspot queries must carry consistency_score
+    # (not only the search query) or the panel score renders search-only.
+    from api.queries import fetch_hotspot_by_id, fetch_hotspots
+
+    with live_conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO hotspots (centroid_geom, radius_km, start_window,
+                   end_window, event_count, unique_sources, conf_score,
+                   consistency_score)
+               VALUES (ST_SetSRID(ST_MakePoint(34.45, 31.5), 4326), 5.0,
+                       now(), now(), 1, 1, 99.9, 62.5)
+               RETURNING hotspot_id"""
+        )
+        hid = cur.fetchone()[0]
+
+    single = fetch_hotspot_by_id(live_conn, hid)
+    assert single["consistency_score"] == 62.5
+    listed = [h for h in fetch_hotspots(live_conn, limit=200) if h["hotspot_id"] == hid]
+    assert listed and listed[0]["consistency_score"] == 62.5
