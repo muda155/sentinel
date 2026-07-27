@@ -2,6 +2,7 @@ export type Hotspot = {
   hotspot_id: number; lat: number; lon: number;
   conf_score: number; convergence_score: number;
   alert_level: "Critical" | "High" | "Medium"; event_count: number;
+  consistency_score: number | null;
   name: string | null;
   end_window: string; created_at: string;
 };
@@ -34,6 +35,18 @@ export type SearchSource = {
 export type SearchResults = {
   hotspots: Hotspot[]; events: SearchEvent[]; sources: SearchSource[];
 };
+
+export type ClaimEvidence = {
+  event_id: number; citation_index: number | null;
+  relation: "supports" | "contradicts" | "neutral";
+  probability: number | null; domain: string;
+};
+export type Claim = {
+  claim_id: number; claim_text: string;
+  status: "corroborated" | "uncorroborated" | "disputed";
+  evidence: ClaimEvidence[];
+};
+export type HotspotClaims = { claims: Claim[]; insufficient_sources: boolean };
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 
@@ -76,4 +89,6 @@ export const api = {
     getJson<HotspotEvent[]>(`/hotspots/${id}/events`, token),
   search: (q: string, token?: string | null) =>
     getJson<SearchResults>(`/search?q=${encodeURIComponent(q)}`, token),
+  hotspotClaims: (id: number, token?: string | null) =>
+    getJson<HotspotClaims>(`/hotspots/${id}/claims`, token),
 };

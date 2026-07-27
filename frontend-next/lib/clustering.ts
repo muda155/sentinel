@@ -58,6 +58,7 @@ function fromProps(p: HotspotProps, lon: number, lat: number): Hotspot {
     name: p.name,
     end_window: p.end_window,
     created_at: p.created_at,
+    consistency_score: null,
   };
 }
 
