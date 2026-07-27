@@ -41,6 +41,83 @@ def build_prompt(hotspot_data: dict) -> str:
     return "\n".join(lines)
 
 
+def build_claims_sitrep_prompt(hotspot_id: int, result) -> str:
+    """FR-23: SITREP prompt over the verified claim set (EngineResult)."""
+    lines = [
+        "Act as an intelligence analyst writing a SITREP from VERIFIED claims only.",
+        (
+            "Summarise in 3-4 sentences. Rules: every sentence MUST end with exactly one "
+            "citation [N] before the terminal period, where N is a source index below. "
+            "Claims marked SINGLE-SOURCE must be attributed as single-source reports. "
+            "For each claim marked DISPUTED, write one sentence of the form "
+            "'Sources disagree on <topic> [i][j].' using the two indices given for it. "
+            "Do not include any claim not listed below. Do not hallucinate."
+        ),
+        "Output JSON only, no prose outside it: "
+        "{conflict_detected: bool, conflict_detail: str, summary: str, sources_cited: [str]}",
+        "Set conflict_detected=true if any claim below is DISPUTED.",
+        "",
+        f"Hotspot ID: {hotspot_id}",
+        "Verified claims:",
+    ]
+    status_names = {"corroborated": "CORROBORATED", "uncorroborated": "SINGLE-SOURCE",
+                    "disputed": "DISPUTED"}
+    for verdict in result.verdicts:
+        supporters = [j.citation_index for j in verdict.evidence
+                      if j.relation == "supports"]
+        contradictors = [j.citation_index for j in verdict.evidence
+                         if j.relation == "contradicts"]
+        line = f"- [{status_names[verdict.status]}] {verdict.text} sources={supporters}"
+        if verdict.status == "disputed" and supporters and contradictors:
+            line += f" dispute_pair=[{supporters[0]}][{contradictors[0]}]"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def generate_sitrep(
+    conn,
+    hotspot_id: int,
+    *,
+    endpoint: str,
+    api_key: str,
+    model: str,
+    ollama_endpoint: str = "http://localhost:11434",
+    engine=None,
+    llm_call=None,
+) -> tuple[int | None, str | None]:
+    """Single shared 6a+6b entry point (monolith Step 6 and LLM worker).
+
+    6a: consistency engine (never blocks; falls back to headline prompt).
+    6b: SITREP generation + save. Returns (summary_id, model_used)."""
+    from pipeline.consistency import run_consistency_engine
+
+    engine = engine or run_consistency_engine
+    llm_call = llm_call or call_nim_api
+    repo = LLMRepository(conn)
+
+    engine_result = engine(conn, hotspot_id)
+    if engine_result is not None and engine_result.verdicts:
+        prompt = build_claims_sitrep_prompt(hotspot_id, engine_result)
+    else:
+        articles = repo.fetch_hotspot_articles(hotspot_id)
+        if not articles:
+            return None, None
+        prompt = build_prompt({"hotspot_id": hotspot_id, "articles": articles})
+
+    result, model_used = llm_call(
+        prompt, endpoint=endpoint, api_key=api_key, model=model,
+        ollama_endpoint=ollama_endpoint,
+    )
+    if not result or not result.get("summary"):
+        return None, model_used
+    repo.save_summary(hotspot_id, result, model=model_used)
+    with conn.cursor() as cur:
+        cur.execute("SELECT summary_id FROM llm_summaries WHERE hotspot_id = %s",
+                    (hotspot_id,))
+        row = cur.fetchone()
+    return (int(row[0]) if row else None), model_used
+
+
 def _extract_json(text: str) -> dict:
     """Parse a JSON object from an LLM response, tolerating markdown fences/prose.
 
@@ -67,8 +144,8 @@ def validate_citations(summary: str) -> None:
     r"""Validate that every sentence ends with a numeric citation (FR-11).
 
     Splits the summary into sentences and requires each to match
-    ``r'.+\[\d+\][.!?]\s*$'``. Raises ``ValueError`` listing every
-    uncited sentence. Returns ``None`` when all sentences are cited.
+    the citation pattern. FR-23 dispute sentences may end with exactly
+    two indices ``[i][j]``; three or more stay invalid.
     """
     # Abbreviations ("U.S.", "St.", "Gen.") must not split mid-sentence: legit
     # boundaries always look like "[N]." per FR-11, never end in an abbreviation.
@@ -81,7 +158,9 @@ def validate_citations(summary: str) -> None:
     ]
     if not sentences:
         raise ValueError("Summary is empty: no cited sentences found")
-    pattern = re.compile(r'.+\[\d+\][.!?]\s*$')
+    # FR-11 single index, or FR-23 dispute sentences ending with exactly two
+    # indices [i][j] (supporter, contradictor). Three or more stay invalid.
+    pattern = re.compile(r'.+?(?<!\])\[\d+\](\[\d+\])?[.!?]\s*$')
     uncited = [s for s in sentences if not pattern.search(s)]
     if uncited:
         raise ValueError("Uncited sentences: " + " | ".join(uncited))
@@ -297,52 +376,29 @@ def verify_hotspots_with_llm(
     threshold: float = 40,
     ollama_endpoint: str = "http://localhost:11434",
 ) -> dict[str, int]:
-    repo = LLMRepository(conn)
-    hotspot_ids = repo.candidate_hotspots(threshold)
+    hotspot_ids = LLMRepository(conn).candidate_hotspots(threshold)
     processed = 0
     for hotspot_id in hotspot_ids:
-        prompt = build_prompt(
-            {"hotspot_id": hotspot_id, "articles": repo.fetch_hotspot_articles(hotspot_id)}
-        )
-        result, model_used = call_nim_api(
-            prompt, endpoint=endpoint, api_key=api_key, model=model,
+        summary_id, _model_used = generate_sitrep(
+            conn, hotspot_id, endpoint=endpoint, api_key=api_key, model=model,
             ollama_endpoint=ollama_endpoint,
         )
-        repo.save_summary(hotspot_id, result, model=model_used)
-        processed += 1
+        if summary_id is not None:
+            processed += 1
     return {"candidates": len(hotspot_ids), "processed": processed}
 
 
 def verify_hotspot(conn, hotspot_id: int) -> int | None:
-    """Verify a single hotspot: NIM (Ollama fallback) -> save -> return summary_id.
-
-    Thin wrapper so the LLM worker and the monolith share one code path.
-    Returns the created llm_summaries.summary_id or None if NIM+Ollama fail."""
+    """Verify a single hotspot via the shared generate_sitrep path."""
     endpoint = os.getenv("NVIDIA_NIM_ENDPOINT", "")
     api_key = os.getenv("NVIDIA_NIM_API_KEY", "")
     model = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct")
     ollama_endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
-
-    repo = LLMRepository(conn)
-    articles = repo.fetch_hotspot_articles(hotspot_id)
-    if not articles:
-        return None
-    prompt = build_prompt({"hotspot_id": hotspot_id, "articles": articles})
-    result, model_used = call_nim_api(
-        prompt, endpoint=endpoint, api_key=api_key, model=model,
+    summary_id, _model_used = generate_sitrep(
+        conn, hotspot_id, endpoint=endpoint, api_key=api_key, model=model,
         ollama_endpoint=ollama_endpoint,
     )
-    if not result or not result.get("summary"):
-        return None
-    repo.save_summary(hotspot_id, result, model=model_used)
-    # Fetch the generated summary_id
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT summary_id FROM llm_summaries WHERE hotspot_id = %s",
-            (hotspot_id,),
-        )
-        row = cur.fetchone()
-    return int(row[0]) if row else None
+    return summary_id
 
 
 def _domain(url: str | None) -> str:
