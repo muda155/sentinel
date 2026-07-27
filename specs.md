@@ -13,8 +13,8 @@
 
 # Sentinel – Technical Specification Document
 
-**Document Version:** 1.9.0
-**Date:** 2026‑06‑22  
+**Document Version:** 1.10.0
+**Date:** 2026‑07‑27  
 **Author:** FYP Candidate (role: Senior Software Architect & Technical Project Manager)  
 **Status:** Approved for Development  
 
@@ -346,7 +346,7 @@ For each qualifying hotspot, construct a prompt containing:
 - Instruction: *"Act as an intelligence analyst. Detect any factual conflicts. Summarise in 3‑4 sentences. CRITICAL: You must follow the 'Attributed AI Briefs' methodology. Every single claim in your summary MUST end with a citation bracket containing the source index number (e.g., 'Forces advanced 5km [1]'). Do not hallucinate."*  
 - Output JSON: `{conflict_detected: bool, conflict_detail: str, summary: str, sources_cited: [str]}`  
 
-**Citation Validation:** A claim is a sentence ending in `.`, `!`, or `?`. Each claim must match the regex `r'.+\[\d+\][.!?]\s*$'` (i.e., ends with `[N]` immediately before the terminal punctuation). The validator `validate_citations(summary: str)` shall split the summary into sentences, apply the regex to each, and raise `ValueError` listing uncited sentences if any fail.  
+**Citation Validation:** A claim is a sentence ending in `.`, `!`, or `?`. Each claim must match the regex `r'.+\[\d+\][.!?]\s*$'` (i.e., ends with `[N]` immediately before the terminal punctuation). The validator `validate_citations(summary: str)` shall split the summary into sentences, apply the regex to each, and raise `ValueError` listing uncited sentences if any fail. *(M6 forward reference: when the Consistency Engine has produced verified claims for the hotspot, the prompt is built from the claim set per FR-23 instead of the headline list, and `validate_citations` additionally accepts dispute sentences ending in exactly two indices `[i][j]` — see §4.8.)*  
 **Acceptance Criteria:**  
 ☑ Prompt fits within the Llama-3-70B via NVIDIA NIM context window (128K tokens); for hotspot batches exceeding this, paginate by cluster and aggregate summaries.  
 ☑ `validate_citations("Forces advanced 5km [1]. Artillery deployed [2].")` → passes.  
@@ -419,6 +419,39 @@ The dashboard shall visually distinguish hotspots new since the analyst's last v
 **Acceptance Criteria:**  
 ☑ A hotspot with `created_at` after the stored timestamp renders highlighted and increments the "N new" chip; reloading after viewing clears it.  
 ☑ A vitest suite covers `isNew` (null last-seen → all new) and `countNew`.
+
+---
+
+### 4.8 LLM Consistency & Consensus Verification (M6 extension)
+
+*Design reference: `docs/superpowers/specs/2026-07-27-consistency-engine-design.md`. Motivation: the LLM step must be an owned, measurable verification algorithm — not a bare hosted-API call. The hosted LLM is demoted to a commodity claim extractor; the trust-weighted cross-source agreement algorithm, the `consistency_score`, and the dispute-aware SITREP are Sentinel's second original contribution (alongside `conf_score`, FR-7/8/9, which remains untouched). Pipeline step 6 splits into 6a (Consistency Engine, `pipeline/consistency.py`) and 6b (SITREP generation, FR-11/FR-12 machinery rewired per FR-23). Trigger unchanged (FR-10 gate + no existing summary).*
+
+**FR‑21‑EVENT_ENRICHMENT**  
+Ingestion shall persist the analytic fields it already downloads. Migration `db/init/020_consistency_engine.sql` adds nullable `events` columns: `actor1_name`, `actor2_name`, `goldstein_scale` (REAL), `avg_tone` (REAL), `num_sources` (INTEGER) from GDELT; `notes` (TEXT), `fatalities` (INTEGER) from ACLED. Both ingestors populate them; existing rows stay NULL (no backfill). Each event yields an **evidence text** (rendered at engine runtime, not stored): ACLED → `notes` (fallback title); GDELT → title + structured sentence from the new fields (NULL fields omitted).  
+**Acceptance Criteria:**  
+☑ A GDELT ingest run stores actor names, Goldstein scale, tone, and source count for new rows; an ACLED run stores `notes` and `fatalities`.  
+☑ Pre-migration rows remain readable with NULL enrichment fields; pipeline behavior for them is unchanged.
+
+**FR‑22‑CONSISTENCY_ENGINE**  
+For each hotspot passing the FR-10 gate, `pipeline/consistency.py` shall: (a) extract ≤ `SENTINEL_CONSISTENCY_MAX_CLAIMS` (default 8) atomic claims via one NIM call (existing FR-12 retry/fallback machinery, Pydantic-validated JSON); (b) classify every (claim, evidence-text) pair over unique domains (cap `SENTINEL_CONSISTENCY_MAX_DOMAINS`, default 20) as supports/contradicts/neutral with probability, using a **local CPU NLI cross-encoder** (`SENTINEL_NLI_MODEL`, default `cross-encoder/nli-deberta-v3-base`); a claim's originating source is excluded from corroboration; (c) compute per-claim trust-weighted consensus over `sources.trust_score`: `support = Σ trust×P_entail`, `dispute = Σ trust×P_contra`; status `disputed` if `dispute ≥ SENTINEL_CONSISTENCY_DISPUTE_RATIO × support` (default 0.5) with ≥1 contradicting domain, else `corroborated` if ≥2 distinct non-origin domains support at `P ≥ SENTINEL_NLI_MIN_PROB` (default 0.6), else `uncorroborated`; (d) persist `claims` + `claim_evidence` rows (migration 020; cascade from `hotspots`; lifecycle follows FR-5 hotspot identity) and `hotspots.consistency_score = 100 × Σ w_c·v_c / Σ w_c` with `v` = 1.0/0.5/0.0 (corroborated/uncorroborated/disputed) and `w_c` = trust mass (floor 0.1). Engine failure (NLI model absent, extraction failure) shall never block the pipeline: `consistency_score` stays NULL and FR-23 falls back to the FR-11 headline prompt.  
+**Acceptance Criteria:**  
+☑ A hotspot with two supporting domains and no contradictions yields a `corroborated` claim; injecting a fabricated contradicting evidence text flips it to `disputed` and lowers `consistency_score`.  
+☑ A single-source hotspot yields all-`uncorroborated` claims and `insufficient_sources: true` via FR-24; no fake confidence.  
+☑ With the NLI model unavailable, the pipeline completes and `consistency_score` is NULL.
+
+**FR‑23‑DISPUTE_SITREP**  
+When FR-22 produced claims, the SITREP prompt shall be built from the verified claim set (text, status, source indices) instead of raw headlines. The LLM shall summarize only corroborated and uncorroborated claims (the latter marked as single-source reports) and shall report each disputed claim explicitly (e.g., `"Sources disagree on X [2][5]."`). Dispute sentences end with exactly two citations `[i][j]` (supporter, contradictor); `validate_citations` accepts the additional pattern `\[\d+\]\[\d+\][.!?]\s*$`; all other FR-11 rules unchanged.  
+**Acceptance Criteria:**  
+☑ A hotspot with a disputed claim produces a SITREP sentence naming the disagreement with two citations; `validate_citations` passes it.  
+☑ A hotspot with no claims (engine skipped) produces a SITREP via the unchanged FR-11 headline path.
+
+**FR‑24‑CLAIMS_API**  
+The system shall expose `GET /hotspots/{id}/claims` (Bearer-gated, rate-limited, 404 on unknown id) returning `{claims: [{claim_id, claim_text, status, evidence: [{event_id, citation_index, relation, probability, domain}]}], insufficient_sources: bool}`, with `citation_index` following the FR-16 ordering contract. `GET /hotspots` and `GET /hotspots/{id}` shall additionally return `consistency_score` (nullable). The dashboard detail panel shall render an "Evidence & Consistency" section — score, claim rows with status badges (corroborated / single-source / disputed), per-claim source chips linked to the FR-16 sources list; hidden when `consistency_score` is NULL; strings localized per FR-17.  
+**Acceptance Criteria:**  
+☑ For a verified hotspot, every claim's evidence rows resolve to FR-16 source-list rows by `citation_index`.  
+☑ A hotspot with NULL `consistency_score` renders no Evidence & Consistency section and the API returns `claims: []`.
+
+**Evaluation (thesis):** a hand-labeled gold set (~50 hotspots; claim-extraction precision, contradiction-detection precision/recall) plus an automated synthetic contradiction-injection harness under `eval/consistency/`, with a model-gated regression fixture in `tests/`.
 
 ---
 
@@ -510,6 +543,8 @@ erDiagram
     HOTSPOTS ||--|{ EVENT_HOTSPOT : "contains"
     EVENTS }o--|| SOURCES : "published by"
     HOTSPOTS ||--o| LLM_SUMMARIES : "has one"
+    HOTSPOTS ||--o{ CLAIMS : "verified into"
+    CLAIMS ||--o{ CLAIM_EVIDENCE : "judged against"
 
     EVENTS {
         int event_id PK "SERIAL"
@@ -524,6 +559,13 @@ erDiagram
         text title
         text grid_cell_id "FK → grid_cells.cell_id"
         int geo_precision "GDELT ActionGeo_Type; NULL=unknown (fail-open)"
+        text actor1_name "GDELT (FR-21, nullable)"
+        text actor2_name "GDELT (FR-21, nullable)"
+        float goldstein_scale "GDELT (FR-21, nullable)"
+        float avg_tone "GDELT (FR-21, nullable)"
+        int num_sources "GDELT (FR-21, nullable)"
+        text notes "ACLED (FR-21, nullable)"
+        int fatalities "ACLED (FR-21, nullable)"
     }
     
     SOURCES {
@@ -559,6 +601,7 @@ erDiagram
         float source_density
         float geopolitical_diversity
         float conf_score "Sentinel original: 0-100"
+        float consistency_score "Sentinel original #2 (FR-22): 0-100, NULL=not evaluated"
         boolean llm_verified DEFAULT false
     }
 
@@ -578,6 +621,23 @@ erDiagram
         jsonb sources_cited "DEFAULT '[]'::jsonb"
         text llm_model_version
         timestamptz created_at DEFAULT now()
+    }
+
+    CLAIMS {
+        bigint claim_id PK "BIGSERIAL"
+        bigint hotspot_id FK "ON DELETE CASCADE"
+        text claim_text
+        text status "corroborated | uncorroborated | disputed"
+        float consensus_weight
+        timestamptz created_at DEFAULT now()
+    }
+
+    CLAIM_EVIDENCE {
+        bigint claim_id FK "ON DELETE CASCADE"
+        bigint event_id "no FK — events is partitioned"
+        text relation "supports | contradicts | neutral"
+        float probability
+        primary_key(claim_id, event_id)
     }
 ```
 
@@ -618,6 +678,10 @@ ALTER TABLE sources ADD COLUMN trust_score FLOAT GENERATED ALWAYS AS (
 
 -- is_noise flag on event_hotspot (FR-5: noise points associated to hotspot)
 ALTER TABLE event_hotspot ADD COLUMN is_noise BOOLEAN DEFAULT false;
+
+-- M6 Consistency Engine (FR-21/FR-22, migration 020)
+ALTER TABLE hotspots ADD COLUMN consistency_score DOUBLE PRECISION;  -- NULL = not evaluated
+CREATE INDEX idx_claims_hotspot ON claims (hotspot_id);
 ```
 
 #### 6.2.1 Retention & Partitioning Model (M1)
@@ -796,6 +860,13 @@ SENTINEL_LLM_TIMEOUT_S=180
 SENTINEL_POLL_INTERVAL_S=900
 SENTINEL_RETENTION_DAYS=90
 
+# M6 Consistency Engine (FR-22)
+SENTINEL_NLI_MODEL=cross-encoder/nli-deberta-v3-base
+SENTINEL_NLI_MIN_PROB=0.6
+SENTINEL_CONSISTENCY_DISPUTE_RATIO=0.5
+SENTINEL_CONSISTENCY_MAX_CLAIMS=8
+SENTINEL_CONSISTENCY_MAX_DOMAINS=20
+
 # Infrastructure
 REDIS_URL=redis://localhost:6379
 LOG_LEVEL=INFO
@@ -821,6 +892,11 @@ All parameters are read from environment variables (prefixed `SENTINEL_`) with d
 | `SENTINEL_LLM_TIMEOUT_S` | 60 | FR-12 | NIM/Ollama request timeout (seconds); env sets 180 for 70B NIM |
 | `SENTINEL_POLL_INTERVAL_S` | 900 | FR-0 | Pipeline schedule interval (seconds) |
 | `SENTINEL_RETENTION_DAYS` | 90 | §6.2.1 (M1) | Rolling-window retention for `events`; partitions older than this are dropped |
+| `SENTINEL_NLI_MODEL` | `cross-encoder/nli-deberta-v3-base` | FR-22 | Local CPU NLI cross-encoder for claim/evidence entailment |
+| `SENTINEL_NLI_MIN_PROB` | 0.6 | FR-22 | Minimum entailment probability for a domain to count as supporting |
+| `SENTINEL_CONSISTENCY_DISPUTE_RATIO` | 0.5 | FR-22 | `disputed` when trust-weighted dispute ≥ ratio × support |
+| `SENTINEL_CONSISTENCY_MAX_CLAIMS` | 8 | FR-22 | Max atomic claims extracted per hotspot |
+| `SENTINEL_CONSISTENCY_MAX_DOMAINS` | 20 | FR-22 | Max unique domains judged per claim |
 
 ### C. Repository Structure (Monorepo)
 
@@ -869,6 +945,7 @@ ln -s ../specs.md docs/spec.md
 
 | Version | Date | Change | Reason |
 |---|---|---|---|
+| 1.10.0 | 2026-07-27 | **LLM Consistency & Consensus Verification (Section 4.8, M6).** Added FR-21 event enrichment (persist GDELT actors/Goldstein/tone/num_sources and ACLED notes/fatalities — downloaded today but discarded at insert; migration 020), FR-22 Consistency Engine (`pipeline/consistency.py`: NIM-extracted atomic claims → local CPU NLI agreement matrix → trust-weighted consensus → `claims`/`claim_evidence` tables + `hotspots.consistency_score`), FR-23 dispute-aware SITREP (prompt built from verified claims; dispute sentences end `[i][j]`; FR-11 validator relaxed for that pattern only; headline fallback when the engine is skipped), FR-24 claims API + "Evidence & Consistency" panel. New env vars `SENTINEL_NLI_MODEL`, `SENTINEL_NLI_MIN_PROB`, `SENTINEL_CONSISTENCY_DISPUTE_RATIO`, `SENTINEL_CONSISTENCY_MAX_CLAIMS`, `SENTINEL_CONSISTENCY_MAX_DOMAINS`. `conf_score` (FR-7/8/9) untouched. Design doc: `docs/superpowers/specs/2026-07-27-consistency-engine-design.md`. | Progression-review feedback: an LLM step that is only a hosted-API call is oversimplified and over-sold as "LLM analysis". The verification algorithm must be an owned, measurable contribution; the hosted LLM is demoted to a commodity claim extractor inside Sentinel's trust-weighted cross-source agreement algorithm. |
 | 1.9.0 | 2026-07-15 | Stable hotspot identity across re-clustering (FR-6 note); LLM skip-if-summarised + ack-on-failure; FR-12 timeout text corrected to SENTINEL_LLM_TIMEOUT_S; FR-5 geo-precision gate (SENTINEL_MIN_GEO_PRECISION, events.geo_precision, migration 019); FR-16 is_noise exclusion; FR-18 window list corrected to shipped values; detail panel docked (no map overlay); SSE refetch debounce. | Diagnosed production defects: every tick deleted + recreated hotspots so CASCADE wiped finished SITREPs while a dead Ollama fallback poisoned the LLM queue; GDELT country-centroid (ActionGeo_Type=1) piles minted fake country hotspots with unrelated sources; the detail-panel overlay swallowed marker clicks across the right quarter of the map. |
 | 1.8.0 | 2026-07-01 | **Analyst triage & map clarity (Section 4.7, M5).** Added FR-18 map filters (confidence slider + alert-level checkboxes + time-window selector + "Showing X of Y" counter + FR-13 legend; client-side over the ≤200 payload), FR-19 map de-clutter (default noise floor `minConf=40`; optional `supercluster` marker clustering), and FR-20 "what's new" highlighting (`created_at` vs `localStorage` last-seen). `GET /hotspots` and `GET /hotspots/{id}` now also return `end_window` and `created_at` (existing columns, no migration). `MapView` refactored to presentational; data fetch/SSE lifted into `lib/useHotspots.ts`; pure logic in `lib/filters.ts` + `lib/whatsnew.ts`. Clarity techniques adapted from World Monitor with attribution. | The convergence gate cuts noise upstream, but analysts had no downstream triage: no filtering, no recency, no legend, no "what changed" — every marker looked equally worth investigating. |
 | 1.7.0 | 2026-06-22 | **GDELT-only convergence restored (FR-WM-CONVERGENCE / FR-5).** Relaxed the Convergence Zone activation guard from `unique_event_types ≥ 2` back to `convergence_score ≥ 1`: single-event-type cells are again active zones eligible for DBSCAN (alert_level still requires 2+ types). Documented that GDELT classification reads the **2-digit CAMEO root** of the full 3–4 digit `EventCode` (the prior `int(EventCode) in [14,19]` check mislabeled every live event as `unknown`). Floored the DBSCAN look-back lower bound to start-of-UTC-day so day-granular GDELT events (midnight UTC) stay in window all day. Reverses the 1.1.2 guard tightening. | Production runs without ACLED (subscription-gated) carry a single `military_conflict` type; the 2-type guard + the multi-digit CAMEO mislabel + the day-granular DBSCAN window together produced zero hotspots from real GDELT-only feeds. |

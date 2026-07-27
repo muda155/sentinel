@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from api.metrics import METRICS
 from pipeline.db import get_pooled_connection
-from pipeline.llm_verifier import LLMRepository, build_prompt, call_nim_api
+from pipeline.llm_verifier import generate_sitrep
 from pipeline.workers.base import Worker
 
 logger = logging.getLogger("sentinel.llm_worker")
@@ -25,13 +25,12 @@ class LLMWorker(Worker):
         hotspot_id = int(data["hotspot_id"])
         conn, pool = get_pooled_connection()
         try:
+            from pipeline.llm_verifier import LLMRepository
+
             repo = LLMRepository(conn)
             if repo.summary_exists(hotspot_id):
                 return []
-            articles = repo.fetch_hotspot_articles(hotspot_id)
-            if not articles:
-                return []
-            prompt = build_prompt({"hotspot_id": hotspot_id, "articles": articles})
+
             endpoint = os.getenv("NVIDIA_NIM_ENDPOINT", "")
             api_key = os.getenv("NVIDIA_NIM_API_KEY", "")
             model = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct")
@@ -39,33 +38,20 @@ class LLMWorker(Worker):
 
             t0 = time.monotonic()
             try:
-                result, model_used = call_nim_api(
-                    prompt, endpoint=endpoint, api_key=api_key, model=model,
-                    ollama_endpoint=ollama_endpoint,
+                summary_id, model_used = generate_sitrep(
+                    conn, hotspot_id, endpoint=endpoint, api_key=api_key,
+                    model=model, ollama_endpoint=ollama_endpoint,
                 )
             except Exception as exc:
-                # Ack instead of leaving pending: the stale-claim sweep would
-                # otherwise retry a permanently failing call every ~60s and
-                # starve the queue. The next tick re-emits llm_needed for any
-                # hotspot still lacking a summary, so nothing is lost.
                 METRICS.inc("llm_failed_total")
                 logger.warning("LLM generation failed for hotspot %s: %s", hotspot_id, exc)
                 return []
             elapsed = time.monotonic() - t0
             METRICS.observe("llm_latency_seconds", elapsed)
-
-            if not result or not result.get("summary"):
+            if summary_id is None:
                 return []
-            if "ollama" in model_used.lower():
+            if model_used and "ollama" in model_used.lower():
                 METRICS.inc("llm_fallback_total")
-            repo.save_summary(hotspot_id, result, model=model_used)
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT summary_id FROM llm_summaries WHERE hotspot_id=%s ORDER BY created_at DESC LIMIT 1",
-                    (hotspot_id,),
-                )
-                row = cur.fetchone()
-            summary_id = int(row[0]) if row else None
         finally:
             pool.return_connection(conn)
         if summary_id is None:

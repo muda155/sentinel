@@ -19,6 +19,7 @@ python -m pipeline.ingestion --insert-db          # Ingest GDELT events into DB
 python -m pipeline.clustering --lookback-hours 6 --run-scoring  # Grid convergence + DBSCAN + scoring
 python -m pipeline.scoring                         # Confidence scoring only
 python -m pipeline.llm_verifier --threshold 40    # LLM verification (requires NIM credentials)
+python -m pipeline.consistency --hotspot-id N     # Consistency engine (FR-22)
 python -m pipeline.pipeline                        # Full orchestrated pipeline (runs once + starts scheduler)
 
 # Dashboard
@@ -40,14 +41,14 @@ Sentinel is a geopolitical OSINT pipeline: ingest → cluster → score → veri
 3. **Grid-cell convergence** (`pipeline/clustering.py:bin_to_grid`) — bins events into 1°×1° cells; a cell becomes an active zone when `convergence_score ≥ 1` (≥1 classified event in 24h). 2+ distinct event types raise the alert level but aren't required to activate, so GDELT-only feeds still produce hotspots (FR-WM-CONVERGENCE)
 4. **DBSCAN clustering** (`pipeline/clustering.py:run_clustering_pipeline`) — per-cell micro-clustering using haversine distance; produces precise hotspots stored in `hotspots` table
 5. **Consensus Confidence Scoring** (`pipeline/scoring.py`) — computes `conf_score` (0–100) per hotspot: `0.7 × source_density + 0.3 × geopolitical_diversity`, where `source_density = tanh(Σ trust over unique domains / 3)` (env-configurable via `SENTINEL_CONF_W_DENSITY`, `SENTINEL_CONF_W_DIVERSITY`, `SENTINEL_CONF_DENSITY_DIVISOR`). Geopolitical diversity reads `sources.country_code` over unique domains.
-6. **LLM Verification** (`pipeline/llm_verifier.py`) — NVIDIA NIM (`NVIDIA_NIM_MODEL`, default `meta/llama-3.3-70b-instruct`) generates SITREP with mandatory single-index `[N]` citations per sentence; falls back to local Ollama on NIM failure
+6. **LLM Verification + Consistency** (`pipeline/llm_verifier.py`, `pipeline/consistency.py`) — two-phase shared entry point `generate_sitrep`: 6a Consistency Engine (claim extraction via NIM, local NLI agreement, trust-weighted consensus, `consistency_score`), 6b SITREP from verified claims (headline fallback if 6a produced nothing)
 
 The scheduler (`APScheduler`) runs the full cycle every `SENTINEL_POLL_INTERVAL_S` seconds (default 900).
 
 ### Database
 - PostgreSQL 15 + PostGIS via Docker; PgBouncer sits in front on port 6432
 - Connection pool: `SentinelConnectionPool` singleton (`pipeline/pool.py`) — always use `get_pooled_connection()` and return with `pool.return_connection(conn)` in a `finally` block
-- Schema migrations: `db/init/001_*.sql` through `db/init/017_*.sql` — applied in order on first container init
+- Schema migrations: `db/init/001_*.sql` through `db/init/020_*.sql` — applied in order on first container init
 - Key tables: `events` (partitioned by `event_date`), `hotspots`, `grid_cells`, `sources` (with `trust_tier`), `event_hotspot`
 
 ### Scoring details
@@ -66,6 +67,7 @@ All config via env vars in `sentinel.env` (copy to override locally). Key vars:
 - `ACLED_EMAIL`/`ACLED_PASSWORD` — myACLED OAuth credentials (step 2 skipped if absent)
 - `SENTINEL_LOOKBACK_HOURS` (default 24), `SENTINEL_DBSCAN_WINDOW_HOURS` (default 2), `SENTINEL_LLM_THRESHOLD` (default 40)
 - `SENTINEL_CONF_W_DENSITY` (default 0.7), `SENTINEL_CONF_W_DIVERSITY` (default 0.3), `SENTINEL_CONF_DENSITY_DIVISOR` (default 3) — conf_score recalibration (FR-7/FR-8/FR-9)
+- `SENTINEL_NLI_MODEL` (default `cross-encoder/nli-deberta-v3-base`), `SENTINEL_NLI_MIN_PROB` (default 0.6), `SENTINEL_CONSISTENCY_DISPUTE_RATIO` (default 0.5), `SENTINEL_CONSISTENCY_MAX_CLAIMS` (default 8), `SENTINEL_CONSISTENCY_MAX_DOMAINS` (default 20) — M6 Consistency Engine (FR-22)
 
 ## Spec compliance
 

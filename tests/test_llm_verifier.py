@@ -150,11 +150,15 @@ def test_verify_hotspots_accepts_ollama_endpoint(monkeypatch: pytest.MonkeyPatch
     )
     monkeypatch.setattr(
         "pipeline.llm_verifier.LLMRepository.fetch_hotspot_articles",
-        lambda self, hotspot_id: [],
+        lambda self, hotspot_id: [{"title": "Test", "url": "https://example.com/a", "domain": "a.com"}],
     )
     monkeypatch.setattr(
         "pipeline.llm_verifier.LLMRepository.save_summary",
         lambda self, hotspot_id, result, model: None,
+    )
+    monkeypatch.setattr(
+        "pipeline.consistency.run_consistency_engine",
+        lambda conn, hotspot_id, **kwargs: None,
     )
 
     # Track what call_nim_api receives
@@ -166,8 +170,13 @@ def test_verify_hotspots_accepts_ollama_endpoint(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr("pipeline.llm_verifier.call_nim_api", fake_call_nim_api)
 
+    mock_cursor = mock.MagicMock()
+    mock_cursor.__enter__.return_value.fetchone.return_value = [42]
+    mock_conn = mock.MagicMock()
+    mock_conn.cursor.return_value = mock_cursor
+
     llm_verifier.verify_hotspots_with_llm(
-        conn=object(),
+        conn=mock_conn,
         endpoint="https://nim.example.com",
         api_key="secret",
         model="meta/llama-3.1-70b-instruct",
@@ -391,3 +400,37 @@ def test_fetch_hotspot_articles_order_is_deterministic():
     from pipeline.llm_verifier import LLMRepository
     LLMRepository(_Conn()).fetch_hotspot_articles(1)
     assert "ORDER BY e.event_date DESC, e.event_id DESC" in _Cur.sql
+
+
+def test_validate_citations_accepts_dispute_double_index():
+    from pipeline.llm_verifier import validate_citations
+    validate_citations("Forces advanced 5km [1]. Sources disagree on casualties [2][5].")
+
+
+def test_validate_citations_rejects_triple_index():
+    from pipeline.llm_verifier import validate_citations
+    with pytest.raises(ValueError):
+        validate_citations("Sources disagree [1][2][3].")
+
+
+def test_build_claims_sitrep_prompt_contains_statuses():
+    from pipeline.consistency import ClaimVerdict, EngineResult, EvidenceJudgment
+    from pipeline.llm_verifier import build_claims_sitrep_prompt
+
+    result = EngineResult(
+        verdicts=[
+            ClaimVerdict(text="Army advanced north.", status="corroborated",
+                         support=1.5, dispute=0.0, weight=1.5,
+                         evidence=[EvidenceJudgment(1, 1, "a.com", "supports", 0.9),
+                                   EvidenceJudgment(2, 2, "b.com", "supports", 0.9)]),
+            ClaimVerdict(text="Ten casualties reported.", status="disputed",
+                         support=0.7, dispute=0.6, weight=1.3,
+                         evidence=[EvidenceJudgment(1, 1, "a.com", "supports", 0.8),
+                                   EvidenceJudgment(3, 3, "c.com", "contradicts", 0.9)]),
+        ],
+        score=57.7, insufficient_sources=False,
+    )
+    prompt = build_claims_sitrep_prompt(99, result)
+    assert "CORROBORATED" in prompt and "DISPUTED" in prompt
+    assert "Army advanced north." in prompt
+    assert "[1][3]" in prompt  # dispute citation pair supporter+contradictor

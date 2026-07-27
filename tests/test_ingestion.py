@@ -467,6 +467,6 @@ def test_augment_records_appends_geo_precision(synthetic_gdelt_df):
     ingestor = GDELT2Ingestor()
     records = list(ingestor._build_event_records(df))
     augmented = ingestor._augment_records(records, {})
-    # geo_precision is the last field, after grid_cell_id
-    assert augmented[0][-1] == 1
-    assert augmented[1][-1] == 4
+    # geo_precision is at index 12 (0-based), after grid_cell_id and before enrichment fields
+    assert augmented[0][12] == 1
+    assert augmented[1][12] == 4

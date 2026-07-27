@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { api, Hotspot, HotspotEvent, HotspotSummary } from "@/lib/api";
+import { api, Hotspot, HotspotClaims, HotspotEvent, HotspotSummary } from "@/lib/api";
+import { orderClaims, statusColor, statusLabelKey } from "@/lib/claims";
+import type { MessageKey } from "@/lib/i18n-core";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
 import { parseCitations } from "@/lib/citations";
@@ -13,12 +15,14 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   const { t } = useT();
   const [summary, setSummary] = useState<HotspotSummary | null>(null);
   const [events, setEvents] = useState<HotspotEvent[]>([]);
+  const [claims, setClaims] = useState<HotspotClaims | null>(null);
   const [flash, setFlash] = useState<number | null>(null);
   const listRef = useRef<HTMLOListElement>(null);
 
   useEffect(() => {
     api.summary(hotspot.hotspot_id, token).then(setSummary).catch(() => setSummary(null));
     api.hotspotEvents(hotspot.hotspot_id, token).then(setEvents).catch(() => setEvents([]));
+    api.hotspotClaims(hotspot.hotspot_id, token).then(setClaims).catch(() => setClaims(null));
   }, [hotspot.hotspot_id, token]);
 
   const jumpTo = (n: number) => {
@@ -67,6 +71,39 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
           )}
         </>
       ) : <p>{t("detail.loading")}</p>}
+      {(hotspot.consistency_score != null || (claims?.claims.length ?? 0) > 0) && (
+        <>
+          <h4>{t("detail.consistency")}</h4>
+          {hotspot.consistency_score != null && (
+            <p style={{ fontSize: 13 }}>
+              <b>{t("detail.consistencyScore")}: {hotspot.consistency_score.toFixed(1)}</b>
+              {claims?.insufficient_sources && (
+                <span style={{ color: "#9ca3af" }}> — {t("detail.insufficientSources")}</span>
+              )}
+            </p>
+          )}
+          <ul style={{ paddingLeft: 0, listStyle: "none", fontSize: 13 }}>
+            {orderClaims(claims?.claims ?? []).map((c) => (
+              <li key={c.claim_id} style={{ marginBottom: 6 }}>
+                <span style={{ color: statusColor(c.status), fontWeight: 600 }}>
+                  {t(statusLabelKey(c.status) as MessageKey)}
+                </span>{" "}
+                {c.claim_text}{" "}
+                {c.evidence
+                  .filter((e) => e.citation_index != null)
+                  .map((e) => (
+                    <sup key={e.event_id} role="button"
+                         onClick={() => jumpTo(e.citation_index as number)}
+                         style={{ color: e.relation === "contradicts" ? "#f87171" : "#60a5fa",
+                                  cursor: "pointer", fontWeight: 600 }}>
+                      [{e.citation_index}]
+                    </sup>
+                  ))}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       <h4>{t("detail.sources")} ({cited.length})</h4>
       <ol ref={listRef} style={{ paddingLeft: 20, fontSize: 13 }}>
         {cited.map((e) => (

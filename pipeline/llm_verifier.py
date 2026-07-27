@@ -41,6 +41,83 @@ def build_prompt(hotspot_data: dict) -> str:
     return "\n".join(lines)
 
 
+def build_claims_sitrep_prompt(hotspot_id: int, result) -> str:
+    """FR-23: SITREP prompt over the verified claim set (EngineResult)."""
+    lines = [
+        "Act as an intelligence analyst writing a SITREP from VERIFIED claims only.",
+        (
+            "Summarise in 3-4 sentences. Rules: every sentence MUST end with exactly one "
+            "citation [N] before the terminal period, where N is a source index below. "
+            "Claims marked SINGLE-SOURCE must be attributed as single-source reports. "
+            "For each claim marked DISPUTED, write one sentence of the form "
+            "'Sources disagree on <topic> [i][j].' using the two indices given for it. "
+            "Do not include any claim not listed below. Do not hallucinate."
+        ),
+        "Output JSON only, no prose outside it: "
+        "{conflict_detected: bool, conflict_detail: str, summary: str, sources_cited: [str]}",
+        "Set conflict_detected=true if any claim below is DISPUTED.",
+        "",
+        f"Hotspot ID: {hotspot_id}",
+        "Verified claims:",
+    ]
+    status_names = {"corroborated": "CORROBORATED", "uncorroborated": "SINGLE-SOURCE",
+                    "disputed": "DISPUTED"}
+    for verdict in result.verdicts:
+        supporters = [j.citation_index for j in verdict.evidence
+                      if j.relation == "supports"]
+        contradictors = [j.citation_index for j in verdict.evidence
+                         if j.relation == "contradicts"]
+        line = f"- [{status_names[verdict.status]}] {verdict.text} sources={supporters}"
+        if verdict.status == "disputed" and supporters and contradictors:
+            line += f" dispute_pair=[{supporters[0]}][{contradictors[0]}]"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def generate_sitrep(
+    conn,
+    hotspot_id: int,
+    *,
+    endpoint: str,
+    api_key: str,
+    model: str,
+    ollama_endpoint: str = "http://localhost:11434",
+    engine=None,
+    llm_call=None,
+) -> tuple[int | None, str | None]:
+    """Single shared 6a+6b entry point (monolith Step 6 and LLM worker).
+
+    6a: consistency engine (never blocks; falls back to headline prompt).
+    6b: SITREP generation + save. Returns (summary_id, model_used)."""
+    from pipeline.consistency import run_consistency_engine
+
+    engine = engine or run_consistency_engine
+    llm_call = llm_call or call_nim_api
+    repo = LLMRepository(conn)
+
+    engine_result = engine(conn, hotspot_id)
+    if engine_result is not None and engine_result.verdicts:
+        prompt = build_claims_sitrep_prompt(hotspot_id, engine_result)
+    else:
+        articles = repo.fetch_hotspot_articles(hotspot_id)
+        if not articles:
+            return None, None
+        prompt = build_prompt({"hotspot_id": hotspot_id, "articles": articles})
+
+    result, model_used = llm_call(
+        prompt, endpoint=endpoint, api_key=api_key, model=model,
+        ollama_endpoint=ollama_endpoint,
+    )
+    if not result or not result.get("summary"):
+        return None, model_used
+    repo.save_summary(hotspot_id, result, model=model_used)
+    with conn.cursor() as cur:
+        cur.execute("SELECT summary_id FROM llm_summaries WHERE hotspot_id = %s",
+                    (hotspot_id,))
+        row = cur.fetchone()
+    return (int(row[0]) if row else None), model_used
+
+
 def _extract_json(text: str) -> dict:
     """Parse a JSON object from an LLM response, tolerating markdown fences/prose.
 
@@ -67,8 +144,8 @@ def validate_citations(summary: str) -> None:
     r"""Validate that every sentence ends with a numeric citation (FR-11).
 
     Splits the summary into sentences and requires each to match
-    ``r'.+\[\d+\][.!?]\s*$'``. Raises ``ValueError`` listing every
-    uncited sentence. Returns ``None`` when all sentences are cited.
+    the citation pattern. FR-23 dispute sentences may end with exactly
+    two indices ``[i][j]``; three or more stay invalid.
     """
     # Abbreviations ("U.S.", "St.", "Gen.") must not split mid-sentence: legit
     # boundaries always look like "[N]." per FR-11, never end in an abbreviation.
@@ -81,7 +158,9 @@ def validate_citations(summary: str) -> None:
     ]
     if not sentences:
         raise ValueError("Summary is empty: no cited sentences found")
-    pattern = re.compile(r'.+\[\d+\][.!?]\s*$')
+    # FR-11 single index, or FR-23 dispute sentences ending with exactly two
+    # indices [i][j] (supporter, contradictor). Three or more stay invalid.
+    pattern = re.compile(r'.+?(?<!\])\[\d+\](\[\d+\])?[.!?]\s*$')
     uncited = [s for s in sentences if not pattern.search(s)]
     if uncited:
         raise ValueError("Uncited sentences: " + " | ".join(uncited))
@@ -110,12 +189,12 @@ class LLMSummary(BaseModel):
         return value
 
 
-def call_ollama_fallback(
+def call_ollama_raw(
     prompt: str,
     endpoint: str = "http://localhost:11434",
     timeout: int | None = None,
-) -> tuple[dict, str]:
-    """Call local Ollama as fallback when NIM is unavailable (FR-12)."""
+) -> tuple[str, str]:
+    """Raw Ollama call: returns (response text, model tag). FR-12 fallback."""
     payload = {
         "model": "llama3:8b",
         "prompt": prompt,
@@ -127,27 +206,25 @@ def call_ollama_fallback(
     }
     try:
         response = requests.post(
-            f"{endpoint}/api/generate",
-            json=payload,
-            timeout=_llm_timeout(timeout),
+            f"{endpoint}/api/generate", json=payload, timeout=_llm_timeout(timeout),
         )
         response.raise_for_status()
-        parsed = _extract_json(response.json().get("response", ""))
-        summary = LLMSummary(**parsed)  # validates citations + types, fills defaults
-        return summary.model_dump(), "llama-3-8b-ollama"
+        return response.json().get("response", ""), "llama-3-8b-ollama"
     except requests.RequestException as e:
         raise RuntimeError(f"Ollama fallback failed: {e}") from e
 
 
-def call_nim_api(
+def call_llm_raw(
     prompt: str,
+    *,
     endpoint: str,
     api_key: str,
     model: str,
     retries: int = 3,
     timeout: int | None = None,
     ollama_endpoint: str = "http://localhost:11434",
-) -> tuple[dict, str]:
+) -> tuple[str, str]:
+    """NIM chat call with 429 backoff and Ollama fallback; returns (content, model_used)."""
     timeout = _llm_timeout(timeout)
     payload = {
         "model": model,
@@ -161,13 +238,10 @@ def call_nim_api(
         try:
             response = requests.post(endpoint, headers=headers, json=payload, timeout=timeout)
             response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
-            parsed = _extract_json(content)
-            summary = LLMSummary(**parsed)  # validates citations + types, fills defaults
-            return summary.model_dump(), model
+            return response.json()["choices"][0]["message"]["content"], model
         except requests.Timeout:
             logger.warning("NIM API timed out after %ds, falling back to Ollama", timeout)
-            return call_ollama_fallback(prompt, ollama_endpoint)
+            return call_ollama_raw(prompt, ollama_endpoint, timeout)
         except requests.HTTPError as error:
             status = error.response.status_code if error.response is not None else None
             last_error = error
@@ -178,17 +252,44 @@ def call_nim_api(
                 logger.warning(
                     "NIM API exhausted (429) after %d retries, falling back to Ollama", retries
                 )
-                return call_ollama_fallback(prompt, ollama_endpoint)
+                return call_ollama_raw(prompt, ollama_endpoint, timeout)
             if status is not None and status >= 500:
                 logger.warning("NIM API server error (%d), falling back to Ollama", status)
-                return call_ollama_fallback(prompt, ollama_endpoint)
-            raise
-        except Exception as error:  # parse/validation errors
-            last_error = error
+                return call_ollama_raw(prompt, ollama_endpoint, timeout)
             raise
     if last_error is not None:
         raise last_error
     raise RuntimeError("NIM call failed without explicit error")
+
+
+def call_ollama_fallback(
+    prompt: str,
+    endpoint: str = "http://localhost:11434",
+    timeout: int | None = None,
+) -> tuple[dict, str]:
+    """Call local Ollama as fallback when NIM is unavailable (FR-12)."""
+    text, model_used = call_ollama_raw(prompt, endpoint, timeout)
+    parsed = _extract_json(text)
+    summary = LLMSummary(**parsed)
+    return summary.model_dump(), model_used
+
+
+def call_nim_api(
+    prompt: str,
+    endpoint: str,
+    api_key: str,
+    model: str,
+    retries: int = 3,
+    timeout: int | None = None,
+    ollama_endpoint: str = "http://localhost:11434",
+) -> tuple[dict, str]:
+    content, model_used = call_llm_raw(
+        prompt, endpoint=endpoint, api_key=api_key, model=model,
+        retries=retries, timeout=timeout, ollama_endpoint=ollama_endpoint,
+    )
+    parsed = _extract_json(content)
+    summary = LLMSummary(**parsed)
+    return summary.model_dump(), model_used
 
 
 class LLMRepository:
@@ -275,52 +376,29 @@ def verify_hotspots_with_llm(
     threshold: float = 40,
     ollama_endpoint: str = "http://localhost:11434",
 ) -> dict[str, int]:
-    repo = LLMRepository(conn)
-    hotspot_ids = repo.candidate_hotspots(threshold)
+    hotspot_ids = LLMRepository(conn).candidate_hotspots(threshold)
     processed = 0
     for hotspot_id in hotspot_ids:
-        prompt = build_prompt(
-            {"hotspot_id": hotspot_id, "articles": repo.fetch_hotspot_articles(hotspot_id)}
-        )
-        result, model_used = call_nim_api(
-            prompt, endpoint=endpoint, api_key=api_key, model=model,
+        summary_id, _model_used = generate_sitrep(
+            conn, hotspot_id, endpoint=endpoint, api_key=api_key, model=model,
             ollama_endpoint=ollama_endpoint,
         )
-        repo.save_summary(hotspot_id, result, model=model_used)
-        processed += 1
+        if summary_id is not None:
+            processed += 1
     return {"candidates": len(hotspot_ids), "processed": processed}
 
 
 def verify_hotspot(conn, hotspot_id: int) -> int | None:
-    """Verify a single hotspot: NIM (Ollama fallback) -> save -> return summary_id.
-
-    Thin wrapper so the LLM worker and the monolith share one code path.
-    Returns the created llm_summaries.summary_id or None if NIM+Ollama fail."""
+    """Verify a single hotspot via the shared generate_sitrep path."""
     endpoint = os.getenv("NVIDIA_NIM_ENDPOINT", "")
     api_key = os.getenv("NVIDIA_NIM_API_KEY", "")
     model = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct")
     ollama_endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
-
-    repo = LLMRepository(conn)
-    articles = repo.fetch_hotspot_articles(hotspot_id)
-    if not articles:
-        return None
-    prompt = build_prompt({"hotspot_id": hotspot_id, "articles": articles})
-    result, model_used = call_nim_api(
-        prompt, endpoint=endpoint, api_key=api_key, model=model,
+    summary_id, _model_used = generate_sitrep(
+        conn, hotspot_id, endpoint=endpoint, api_key=api_key, model=model,
         ollama_endpoint=ollama_endpoint,
     )
-    if not result or not result.get("summary"):
-        return None
-    repo.save_summary(hotspot_id, result, model=model_used)
-    # Fetch the generated summary_id
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT summary_id FROM llm_summaries WHERE hotspot_id = %s",
-            (hotspot_id,),
-        )
-        row = cur.fetchone()
-    return int(row[0]) if row else None
+    return summary_id
 
 
 def _domain(url: str | None) -> str:

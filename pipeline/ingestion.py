@@ -264,7 +264,12 @@ class GDELT2Ingestor:
                     point_geom,
                     source_id,
                     grid_cell_id,
-                    geo_precision
+                    geo_precision,
+                    actor1_name,
+                    actor2_name,
+                    goldstein_scale,
+                    avg_tone,
+                    num_sources
                 )
                 VALUES %s
                 ON CONFLICT (source_system, external_event_id, event_date) DO NOTHING
@@ -272,7 +277,8 @@ class GDELT2Ingestor:
                 augmented_records,
                 template=(
                     "(%s, %s, %s, %s, %s, %s, %s, %s, "
-                    "ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s, %s, %s)"
+                    "ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s, %s, %s, "
+                    "%s, %s, %s, %s, %s)"
                 ),
             )
         conn.commit()
@@ -309,7 +315,8 @@ class GDELT2Ingestor:
 
         Record layout from _build_event_records:
           [0]=global_event_id, [1]=event_date, [2]=cameo_code, [3]=country_code,
-          [4]=url, [5]=title, [6]=lon, [7]=lat, [8]=geo_precision
+          [4]=url, [5]=title (Actor1Name), [6]=lon, [7]=lat, [8]=geo_precision,
+          [9]=actor2_name, [10]=goldstein_scale, [11]=avg_tone, [12]=num_sources
 
         Returns a list of 13-field tuples ready for execute_values INSERT.
         """
@@ -343,6 +350,11 @@ class GDELT2Ingestor:
                 source_id,
                 grid_cell_id,
                 record[8],               # geo_precision (GDELT ActionGeo_Type)
+                record[5],               # actor1_name (Actor1Name doubles as title)
+                record[9],               # actor2_name
+                record[10],              # goldstein_scale
+                record[11],              # avg_tone
+                record[12],              # num_sources
             ))
         return augmented_records
 
@@ -367,7 +379,9 @@ class GDELT2Ingestor:
                 INSERT INTO events (
                     source_system, gdelt_global_event_id, external_event_id,
                     event_date, cameo_code, country_code, url, title,
-                    point_geom, source_id, grid_cell_id, geo_precision
+                    point_geom, source_id, grid_cell_id, geo_precision,
+                    actor1_name, actor2_name, goldstein_scale, avg_tone,
+                    num_sources
                 )
                 VALUES %s
                 ON CONFLICT (source_system, external_event_id, event_date) DO NOTHING
@@ -376,7 +390,8 @@ class GDELT2Ingestor:
                 augmented_records,
                 template=(
                     "(%s, %s, %s, %s, %s, %s, %s, %s, "
-                    "ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s, %s, %s)"
+                    "ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s, %s, %s, "
+                    "%s, %s, %s, %s, %s)"
                 ),
                 fetch=True,
             )
@@ -446,6 +461,11 @@ class GDELT2Ingestor:
             if "ActionGeo_Type" in row and pd.notna(row["ActionGeo_Type"]):
                 geo_type = int(row["ActionGeo_Type"])
 
+            def _opt(col, cast):
+                if col in row and pd.notna(row[col]):
+                    return cast(row[col])
+                return None
+
             yield (
                 event_id,
                 pd.to_datetime(str(int(row["SQLDATE"])), format="%Y%m%d", utc=True),
@@ -458,6 +478,10 @@ class GDELT2Ingestor:
                 float(row["ActionGeo_Long"]),
                 float(row["ActionGeo_Lat"]),
                 geo_type,
+                _opt("Actor2Name", str),
+                _opt("GoldsteinScale", float),
+                _opt("AvgTone", float),
+                _opt("NumSources", int),
             )
 
     @staticmethod
@@ -473,6 +497,10 @@ class GDELT2Ingestor:
             "actiongeolong": "ActionGeo_Long",
             "actiongeocountrycode": "ActionGeo_CountryCode",
             "actiongeotype": "ActionGeo_Type",
+            "actor2name": "Actor2Name",
+            "goldsteinscale": "GoldsteinScale",
+            "avgtone": "AvgTone",
+            "numsources": "NumSources",
         }
         rename_map = {}
         for column in df.columns:
@@ -803,6 +831,13 @@ class ACLEDIngestor:
                     "event_type_label", "civilian_violence"
                 )
                 location = row.get("location", "")
+                notes = row.get("notes")
+                notes = str(notes) if notes is not None and str(notes).strip() else None
+                fatalities = row.get("fatalities")
+                try:
+                    fatalities = int(fatalities) if fatalities is not None else None
+                except (TypeError, ValueError):
+                    fatalities = None
                 records.append((
                     "ACLED",                                 # source_system
                     event_id,                                # external_event_id
@@ -816,6 +851,8 @@ class ACLEDIngestor:
                     source_id,                               # source_id
                     grid_cell_id,                            # grid_cell_id
                     4,                                       # geo_precision — ACLED geocodes to named locations
+                    notes,                                   # notes (FR-21)
+                    fatalities,                              # fatalities (FR-21)
                 ))
             except Exception as exc:
                 logging.warning(
@@ -836,7 +873,8 @@ class ACLEDIngestor:
                 INSERT INTO events (
                     source_system, external_event_id, event_date,
                     cameo_code, country_code, url, title,
-                    point_geom, source_id, grid_cell_id, geo_precision
+                    point_geom, source_id, grid_cell_id, geo_precision,
+                    notes, fatalities
                 )
                 VALUES %s
                 ON CONFLICT (source_system, external_event_id, event_date) DO NOTHING
@@ -844,7 +882,7 @@ class ACLEDIngestor:
                 records,
                 template=(
                     "(%s, %s, %s, %s, %s, %s, %s, "
-                    "ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s, %s, %s)"
+                    "ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s, %s, %s, %s, %s)"
                 ),
             )
         conn.commit()

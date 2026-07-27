@@ -14,6 +14,7 @@ class Hotspot(BaseModel):
     convergence_score: float
     alert_level: str
     event_count: int
+    consistency_score: float | None = None
     name: str | None = None
     end_window: datetime | None = None
     created_at: datetime | None = None
@@ -83,3 +84,23 @@ class StreamEvent(BaseModel):
     conf_score: float
     convergence_score: float
     alert_level: str
+
+
+class ClaimEvidence(BaseModel):
+    event_id: int
+    citation_index: int | None = None
+    relation: str
+    probability: float | None = None
+    domain: str
+
+
+class Claim(BaseModel):
+    claim_id: int
+    claim_text: str
+    status: str
+    evidence: list[ClaimEvidence]
+
+
+class HotspotClaims(BaseModel):
+    claims: list[Claim]
+    insufficient_sources: bool

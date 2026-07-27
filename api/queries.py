@@ -35,6 +35,7 @@ def fetch_hotspots(conn, *, limit=50, min_conf=0.0, min_convergence=0.0,
         SELECT h.hotspot_id, ST_Y(h.centroid_geom) lat, ST_X(h.centroid_geom) lon,
                h.name, h.end_window, h.created_at,
                COALESCE(h.conf_score,0) conf_score, h.event_count,
+               h.consistency_score,
                COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
                COALESCE(h.alert_level,'Medium') alert_level
         FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
@@ -77,6 +78,7 @@ def fetch_hotspot_by_id(conn, hotspot_id: int) -> dict | None:
         SELECT h.hotspot_id, ST_Y(h.centroid_geom) lat, ST_X(h.centroid_geom) lon,
                h.name, h.end_window, h.created_at,
                COALESCE(h.conf_score,0) conf_score, h.event_count,
+               h.consistency_score,
                COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
                COALESCE(h.alert_level,'Medium') alert_level
         FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
@@ -125,6 +127,7 @@ _HOTSPOT_SELECT = """
     SELECT h.hotspot_id, h.name, ST_Y(h.centroid_geom) lat, ST_X(h.centroid_geom) lon,
            h.end_window, h.created_at,
            COALESCE(h.conf_score,0) conf_score, h.event_count,
+           h.consistency_score,
            COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
            COALESCE(h.alert_level,'Medium') alert_level
     FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
@@ -265,3 +268,49 @@ def fetch_hotspot_events(conn, hotspot_id: int) -> list[dict] | None:
         cols = [c[0] for c in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
     return assign_citation_indices(rows)
+
+
+def fetch_hotspot_claims(conn, hotspot_id: int) -> dict | None:
+    """FR-24 claims payload; None if the hotspot does not exist.
+
+    citation_index is recomputed from fetch_hotspot_events so numbering stays
+    in lockstep with the SITREP [N] contract by construction."""
+    events = fetch_hotspot_events(conn, hotspot_id)
+    if events is None:
+        return None
+    index_by_event = {e["event_id"]: e["citation_index"] for e in events}
+    domain_by_event = {e["event_id"]: e["domain"] for e in events}
+    cited_domains = {e["domain"] for e in events if e["citation_index"] is not None}
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT c.claim_id, c.claim_text, c.status,
+                   ce.event_id, ce.relation, ce.probability
+            FROM claims c
+            LEFT JOIN claim_evidence ce ON ce.claim_id = c.claim_id
+            WHERE c.hotspot_id = %s
+            ORDER BY c.claim_id, ce.event_id
+            """,
+            (hotspot_id,),
+        )
+        rows = cur.fetchall()
+
+    claims: dict[int, dict] = {}
+    for claim_id, text, status, event_id, relation, probability in rows:
+        claim = claims.setdefault(claim_id, {
+            "claim_id": claim_id, "claim_text": text, "status": status,
+            "evidence": [],
+        })
+        if event_id is not None:
+            claim["evidence"].append({
+                "event_id": event_id,
+                "citation_index": index_by_event.get(event_id),
+                "relation": relation,
+                "probability": probability,
+                "domain": domain_by_event.get(event_id, ""),
+            })
+    return {
+        "claims": list(claims.values()),
+        "insufficient_sources": len(cited_domains) < 2,
+    }

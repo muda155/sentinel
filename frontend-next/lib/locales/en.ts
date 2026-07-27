@@ -45,5 +45,11 @@ export const en = {
   "legend.mediumAlert": "Medium (no ring)",
   "whatsnew.new": "{n} new",
   "whatsnew.markSeen": "Mark seen",
+  "detail.consistency": "Evidence & Consistency",
+  "detail.consistencyScore": "Consistency",
+  "detail.insufficientSources": "Insufficient sources — unverifiable",
+  "claims.corroborated": "corroborated",
+  "claims.uncorroborated": "single-source",
+  "claims.disputed": "disputed",
 } as const;
 export type MessageKey = keyof typeof en;

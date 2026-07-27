@@ -47,4 +47,10 @@ export const vi: Record<MessageKey, string> = {
   "legend.mediumAlert": "Trung bình (không viền)",
   "whatsnew.new": "{n} mới",
   "whatsnew.markSeen": "Đã xem",
+  "detail.consistency": "Bằng chứng & Nhất quán",
+  "detail.consistencyScore": "Độ nhất quán",
+  "detail.insufficientSources": "Không đủ nguồn — chưa thể kiểm chứng",
+  "claims.corroborated": "được xác nhận chéo",
+  "claims.uncorroborated": "nguồn đơn",
+  "claims.disputed": "mâu thuẫn",
 };
