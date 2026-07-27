@@ -110,12 +110,12 @@ class LLMSummary(BaseModel):
         return value
 
 
-def call_ollama_fallback(
+def call_ollama_raw(
     prompt: str,
     endpoint: str = "http://localhost:11434",
     timeout: int | None = None,
-) -> tuple[dict, str]:
-    """Call local Ollama as fallback when NIM is unavailable (FR-12)."""
+) -> tuple[str, str]:
+    """Raw Ollama call: returns (response text, model tag). FR-12 fallback."""
     payload = {
         "model": "llama3:8b",
         "prompt": prompt,
@@ -127,27 +127,25 @@ def call_ollama_fallback(
     }
     try:
         response = requests.post(
-            f"{endpoint}/api/generate",
-            json=payload,
-            timeout=_llm_timeout(timeout),
+            f"{endpoint}/api/generate", json=payload, timeout=_llm_timeout(timeout),
         )
         response.raise_for_status()
-        parsed = _extract_json(response.json().get("response", ""))
-        summary = LLMSummary(**parsed)  # validates citations + types, fills defaults
-        return summary.model_dump(), "llama-3-8b-ollama"
+        return response.json().get("response", ""), "llama-3-8b-ollama"
     except requests.RequestException as e:
         raise RuntimeError(f"Ollama fallback failed: {e}") from e
 
 
-def call_nim_api(
+def call_llm_raw(
     prompt: str,
+    *,
     endpoint: str,
     api_key: str,
     model: str,
     retries: int = 3,
     timeout: int | None = None,
     ollama_endpoint: str = "http://localhost:11434",
-) -> tuple[dict, str]:
+) -> tuple[str, str]:
+    """NIM chat call with 429 backoff and Ollama fallback; returns (content, model_used)."""
     timeout = _llm_timeout(timeout)
     payload = {
         "model": model,
@@ -161,13 +159,10 @@ def call_nim_api(
         try:
             response = requests.post(endpoint, headers=headers, json=payload, timeout=timeout)
             response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
-            parsed = _extract_json(content)
-            summary = LLMSummary(**parsed)  # validates citations + types, fills defaults
-            return summary.model_dump(), model
+            return response.json()["choices"][0]["message"]["content"], model
         except requests.Timeout:
             logger.warning("NIM API timed out after %ds, falling back to Ollama", timeout)
-            return call_ollama_fallback(prompt, ollama_endpoint)
+            return call_ollama_raw(prompt, ollama_endpoint, timeout)
         except requests.HTTPError as error:
             status = error.response.status_code if error.response is not None else None
             last_error = error
@@ -178,17 +173,44 @@ def call_nim_api(
                 logger.warning(
                     "NIM API exhausted (429) after %d retries, falling back to Ollama", retries
                 )
-                return call_ollama_fallback(prompt, ollama_endpoint)
+                return call_ollama_raw(prompt, ollama_endpoint, timeout)
             if status is not None and status >= 500:
                 logger.warning("NIM API server error (%d), falling back to Ollama", status)
-                return call_ollama_fallback(prompt, ollama_endpoint)
-            raise
-        except Exception as error:  # parse/validation errors
-            last_error = error
+                return call_ollama_raw(prompt, ollama_endpoint, timeout)
             raise
     if last_error is not None:
         raise last_error
     raise RuntimeError("NIM call failed without explicit error")
+
+
+def call_ollama_fallback(
+    prompt: str,
+    endpoint: str = "http://localhost:11434",
+    timeout: int | None = None,
+) -> tuple[dict, str]:
+    """Call local Ollama as fallback when NIM is unavailable (FR-12)."""
+    text, model_used = call_ollama_raw(prompt, endpoint, timeout)
+    parsed = _extract_json(text)
+    summary = LLMSummary(**parsed)
+    return summary.model_dump(), model_used
+
+
+def call_nim_api(
+    prompt: str,
+    endpoint: str,
+    api_key: str,
+    model: str,
+    retries: int = 3,
+    timeout: int | None = None,
+    ollama_endpoint: str = "http://localhost:11434",
+) -> tuple[dict, str]:
+    content, model_used = call_llm_raw(
+        prompt, endpoint=endpoint, api_key=api_key, model=model,
+        retries=retries, timeout=timeout, ollama_endpoint=ollama_endpoint,
+    )
+    parsed = _extract_json(content)
+    summary = LLMSummary(**parsed)
+    return summary.model_dump(), model_used
 
 
 class LLMRepository:
