@@ -266,3 +266,102 @@ def hotspot_consistency_score(verdicts: list[ClaimVerdict]) -> float | None:
     total_weight = sum(v.weight for v in verdicts)
     weighted = sum(v.weight * _STATUS_VALUE[v.status] for v in verdicts)
     return 100.0 * weighted / total_weight
+
+
+@dataclass
+class EngineResult:
+    verdicts: list[ClaimVerdict]
+    score: float | None
+    insufficient_sources: bool
+
+
+class ConsistencyRepository:
+    def __init__(self, conn) -> None:
+        self._conn = conn
+
+    def save(self, hotspot_id: int, verdicts: list[ClaimVerdict],
+             score: float | None) -> None:
+        with self._conn.cursor() as cursor:
+            cursor.execute("DELETE FROM claims WHERE hotspot_id = %s", (hotspot_id,))
+            for verdict in verdicts:
+                cursor.execute(
+                    """INSERT INTO claims (hotspot_id, claim_text, status, consensus_weight)
+                       VALUES (%s, %s, %s, %s) RETURNING claim_id""",
+                    (hotspot_id, verdict.text, verdict.status, verdict.weight),
+                )
+                claim_id = cursor.fetchone()[0]
+                for judgment in verdict.evidence:
+                    cursor.execute(
+                        """INSERT INTO claim_evidence (claim_id, event_id, relation, probability)
+                           VALUES (%s, %s, %s, %s)
+                           ON CONFLICT (claim_id, event_id) DO NOTHING""",
+                        (claim_id, judgment.event_id, judgment.relation,
+                         judgment.probability),
+                    )
+            cursor.execute(
+                "UPDATE hotspots SET consistency_score = %s WHERE hotspot_id = %s",
+                (score, hotspot_id),
+            )
+        self._conn.commit()
+
+
+def run_consistency_engine(conn, hotspot_id: int, *, judge=None,
+                           llm=None) -> EngineResult | None:
+    """6a: evidence -> claims -> NLI matrix -> consensus -> persist.
+
+    Uses a savepoint so any partial-DB rollback does not affect the caller's
+    transaction. Returns None on any failure or empty input; NEVER raises (the
+    pipeline and SITREP fallback depend on that)."""
+    with conn.cursor() as cur:
+        cur.execute("SAVEPOINT sp_consistency")
+    try:
+        evidence = fetch_hotspot_evidence(conn, hotspot_id)
+        if not evidence:
+            return None
+        claims = extract_claims(evidence, llm=llm)
+        if not claims:
+            return None
+        if judge is None:
+            from pipeline.nli import get_judge
+            judge = get_judge()
+        judgments = judge_claims(claims, evidence, judge)
+        verdicts = consensus(claims, evidence, judgments)
+        score = hotspot_consistency_score(verdicts)
+        insufficient = len({e["domain"] for e in evidence}) < 2
+        ConsistencyRepository(conn).save(hotspot_id, verdicts, score)
+        return EngineResult(verdicts=verdicts, score=score,
+                            insufficient_sources=insufficient)
+    except Exception as exc:
+        logger.warning("Consistency engine skipped for hotspot %s: %s",
+                       hotspot_id, exc)
+        try:
+            with conn.cursor() as cur:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_consistency")
+        except Exception:
+            pass
+        return None
+
+
+def main() -> int:
+    import argparse
+
+    from pipeline.db import get_pooled_connection
+
+    parser = argparse.ArgumentParser(description="Run the consistency engine on one hotspot")
+    parser.add_argument("--hotspot-id", type=int, required=True)
+    args = parser.parse_args()
+    conn, pool = get_pooled_connection()
+    try:
+        result = run_consistency_engine(conn, args.hotspot_id)
+    finally:
+        pool.return_connection(conn)
+    if result is None:
+        print("engine skipped (no evidence/claims or NLI unavailable)")
+        return 1
+    print(f"score={result.score:.1f} claims={len(result.verdicts)} "
+          f"insufficient_sources={result.insufficient_sources}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
