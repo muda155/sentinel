@@ -1,4 +1,4 @@
-import type { Claim } from "@/lib/api";
+import type { Claim, ClaimEvidence } from "@/lib/api";
 
 export type ClaimStatus = Claim["status"];
 
@@ -19,4 +19,17 @@ export function statusColor(status: ClaimStatus): string {
 
 export function statusLabelKey(status: ClaimStatus): string {
   return `claims.${status === "uncorroborated" ? "uncorroborated" : status}`;
+}
+
+/** Split a claim's evidence into cited supporting vs contradicting sources,
+ *  so a disputed claim can state WHICH sources disagree (FR-24). */
+export function splitEvidence(claim: Claim): {
+  supporting: ClaimEvidence[];
+  contradicting: ClaimEvidence[];
+} {
+  const cited = claim.evidence.filter((e) => e.citation_index != null);
+  return {
+    supporting: cited.filter((e) => e.relation === "supports"),
+    contradicting: cited.filter((e) => e.relation === "contradicts"),
+  };
 }

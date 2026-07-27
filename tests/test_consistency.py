@@ -56,19 +56,20 @@ def test_build_claims_prompt_numbers_evidence():
 
 def test_extract_claims_parses_and_validates():
     def fake_llm(prompt):
-        return ('{"claims": [{"text": "Army advanced north.", "source_indices": [1, 2]}]}',
+        return ('{"claims": [{"text": "The army advanced north.", "source_indices": [1, 2]}]}',
                 "fake-model")
     claims = extract_claims(_EVIDENCE, llm=fake_llm)
-    assert claims == [ExtractedClaim(text="Army advanced north.", source_indices=[1, 2])]
+    assert claims == [ExtractedClaim(text="The army advanced north.", source_indices=[1, 2])]
 
 
 def test_extract_claims_caps_and_filters_bad_indices(monkeypatch):
     monkeypatch.setenv("SENTINEL_CONSISTENCY_MAX_CLAIMS", "2")
     def fake_llm(prompt):
         return ('{"claims": ['
-                '{"text": "c1", "source_indices": [1]},'
-                '{"text": "c2", "source_indices": [99]},'
-                '{"text": "c3", "source_indices": [2]}]}', "fake-model")
+                '{"text": "The first clash was reported.", "source_indices": [1]},'
+                '{"text": "The second clash was reported.", "source_indices": [99]},'
+                '{"text": "The third clash was reported.", "source_indices": [2]}]}',
+                "fake-model")
     claims = extract_claims(_EVIDENCE, llm=fake_llm)
     assert len(claims) == 2                      # capped at MAX_CLAIMS
     assert claims[1].source_indices == []        # index 99 out of range -> dropped
@@ -154,3 +155,32 @@ def test_score_all_uncorroborated_is_50():
     verdicts = [ClaimVerdict(text="a", status="uncorroborated", support=0.0,
                              dispute=0.0, weight=0.1, evidence=[])]
     assert hotspot_consistency_score(verdicts) == 50.0
+
+
+def test_extract_claims_drops_bare_entity_fragments():
+    def fake_llm(prompt):
+        return ('{"claims": ['
+                '{"text": "WASHINGTON", "source_indices": [1]},'
+                '{"text": "A US vs IRAN", "source_indices": [1]},'
+                '{"text": "RUSSIAN vs IRANIAN", "source_indices": [2]},'
+                '{"text": "Army advanced north of the city.", "source_indices": [1, 2]}]}',
+                "fake-model")
+    claims = extract_claims(_EVIDENCE, llm=fake_llm)
+    assert [c.text for c in claims] == ["Army advanced north of the city."]
+
+
+def test_extract_claims_all_fragments_returns_empty():
+    # Degenerate extraction must yield NO claims -> engine skips -> score NULL,
+    # instead of judging noise into an all-disputed score of 0.
+    def fake_llm(prompt):
+        return ('{"claims": [{"text": "FIGHTER", "source_indices": [1]},'
+                '{"text": "THE INTERNATIONAL COMMUNITY", "source_indices": [2]}]}',
+                "fake-model")
+    assert extract_claims(_EVIDENCE, llm=fake_llm) == []
+
+
+def test_build_claims_prompt_demands_full_sentences():
+    prompt = build_claims_prompt(_EVIDENCE)
+    assert "complete English sentence" in prompt
+    assert "Ignore numeric metadata" in prompt
+    assert '{"claims": []}' in prompt

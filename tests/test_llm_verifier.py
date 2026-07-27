@@ -434,3 +434,63 @@ def test_build_claims_sitrep_prompt_contains_statuses():
     assert "CORROBORATED" in prompt and "DISPUTED" in prompt
     assert "Army advanced north." in prompt
     assert "[1][3]" in prompt  # dispute citation pair supporter+contradictor
+
+
+def test_call_llm_raw_retries_on_500_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A transient NIM 500 must be retried with backoff, not instantly dumped
+    # onto the (possibly absent) Ollama fallback.
+    err = mock.Mock()
+    err.status_code = 500
+    err.raise_for_status.side_effect = requests.HTTPError(response=err)
+    ok = mock.Mock()
+    ok.raise_for_status.return_value = None
+    ok.json.return_value = {"choices": [{"message": {"content": "hello"}}]}
+    post_mock = mock.Mock(side_effect=[err, ok])
+    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
+    monkeypatch.setattr("pipeline.llm_verifier.time.sleep", mock.Mock())
+
+    content, model_used = llm_verifier.call_llm_raw(
+        "p", endpoint="https://nim.example.com/v1/chat", api_key="k", model="m",
+    )
+    assert content == "hello" and model_used == "m"
+    assert post_mock.call_count == 2
+
+
+def test_call_llm_raw_500_exhaustion_falls_back_to_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
+    err = mock.Mock()
+    err.status_code = 502
+    err.raise_for_status.side_effect = requests.HTTPError(response=err)
+    ollama_ok = mock.Mock()
+    ollama_ok.raise_for_status.return_value = None
+    ollama_ok.json.return_value = {"response": "fallback text"}
+
+    def post_side_effect(url, **kwargs):
+        if "11434" in url:
+            return ollama_ok
+        raise requests.HTTPError(response=err)
+
+    post_mock = mock.Mock(side_effect=post_side_effect)
+    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
+    monkeypatch.setattr("pipeline.llm_verifier.time.sleep", mock.Mock())
+
+    content, model_used = llm_verifier.call_llm_raw(
+        "p", endpoint="https://nim.example.com/v1/chat", api_key="k", model="m",
+        retries=3, ollama_endpoint="http://localhost:11434",
+    )
+    assert content == "fallback text"
+    assert model_used == "llama-3-8b-ollama"
+    assert post_mock.call_count == 4  # 3 NIM attempts + 1 Ollama
+
+
+def test_ollama_model_env_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SENTINEL_OLLAMA_MODEL", "llama3.2:3b")
+    ok = mock.Mock()
+    ok.raise_for_status.return_value = None
+    ok.json.return_value = {"response": "hi"}
+    post_mock = mock.Mock(return_value=ok)
+    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
+
+    content, model_used = llm_verifier.call_ollama_raw("p")
+    assert content == "hi"
+    assert post_mock.call_args.kwargs["json"]["model"] == "llama3.2:3b"
+    assert model_used == "llama3.2:3b-ollama"

@@ -195,8 +195,12 @@ def call_ollama_raw(
     timeout: int | None = None,
 ) -> tuple[str, str]:
     """Raw Ollama call: returns (response text, model tag). FR-12 fallback."""
+    model = os.getenv("SENTINEL_OLLAMA_MODEL", "llama3:8b")
+    # Historical audit tag for the default model (spec FR-12 acceptance);
+    # non-default models tag as "<model>-ollama".
+    model_tag = "llama-3-8b-ollama" if model == "llama3:8b" else f"{model}-ollama"
     payload = {
-        "model": "llama3:8b",
+        "model": model,
         "prompt": prompt,
         "stream": False,
         "options": {
@@ -209,7 +213,7 @@ def call_ollama_raw(
             f"{endpoint}/api/generate", json=payload, timeout=_llm_timeout(timeout),
         )
         response.raise_for_status()
-        return response.json().get("response", ""), "llama-3-8b-ollama"
+        return response.json().get("response", ""), model_tag
     except requests.RequestException as e:
         raise RuntimeError(f"Ollama fallback failed: {e}") from e
 
@@ -245,16 +249,16 @@ def call_llm_raw(
         except requests.HTTPError as error:
             status = error.response.status_code if error.response is not None else None
             last_error = error
-            if status == 429:
+            # 5xx is retried like 429: NIM 500s are routinely transient, and
+            # the Ollama fallback may not exist on the host.
+            if status == 429 or (status is not None and status >= 500):
                 if attempt < retries:
                     time.sleep(2**attempt)
                     continue
                 logger.warning(
-                    "NIM API exhausted (429) after %d retries, falling back to Ollama", retries
+                    "NIM API exhausted (%s) after %d retries, falling back to Ollama",
+                    status, retries,
                 )
-                return call_ollama_raw(prompt, ollama_endpoint, timeout)
-            if status is not None and status >= 500:
-                logger.warning("NIM API server error (%d), falling back to Ollama", status)
                 return call_ollama_raw(prompt, ollama_endpoint, timeout)
             raise
     if last_error is not None:

@@ -25,6 +25,7 @@ export type HotspotClusterIndex = Supercluster<HotspotProps>;
 interface HotspotProps {
   hotspot_id: number;
   conf_score: number;
+  consistency_score: number | null;
   convergence_score: number;
   alert_level: string;
   event_count: number;
@@ -37,6 +38,7 @@ function toProps(h: Hotspot): HotspotProps {
   return {
     hotspot_id: h.hotspot_id,
     conf_score: h.conf_score,
+    consistency_score: h.consistency_score ?? null,
     convergence_score: h.convergence_score,
     alert_level: h.alert_level,
     event_count: h.event_count,
@@ -58,7 +60,7 @@ function fromProps(p: HotspotProps, lon: number, lat: number): Hotspot {
     name: p.name,
     end_window: p.end_window,
     created_at: p.created_at,
-    consistency_score: null,
+    consistency_score: p.consistency_score ?? null,
   };
 }
 

@@ -103,3 +103,45 @@ def test_engine_no_evidence_returns_none(live_conn):
         empty_id = cur.fetchone()[0]
     assert run_consistency_engine(live_conn, empty_id, judge=FakeJudge(),
                                   llm=_fake_llm) is None
+
+
+def test_fetch_evidence_one_row_per_domain_keeps_indices(live_conn):
+    from pipeline.consistency import fetch_hotspot_evidence
+
+    with live_conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO hotspots (centroid_geom, radius_km, start_window,
+                   end_window, event_count, unique_sources)
+               VALUES (ST_SetSRID(ST_MakePoint(34.45, 31.5), 4326), 5.0,
+                       now(), now(), 3, 2)
+               RETURNING hotspot_id"""
+        )
+        hid = cur.fetchone()[0]
+        # Insert order -> event_id ASC; evidence orders event_id DESC, so
+        # citation order is e3, e2, e1. Domains: dup, dup, uniq.
+        for i, domain in enumerate(("m6dup.example", "m6dup.example", "m6uniq.example"), start=1):
+            url = f"https://{domain}/dedupe{i}"
+            cur.execute("SELECT register_source(%s, %s)", (url, None))
+            source_id = cur.fetchone()[0]
+            cur.execute(
+                """INSERT INTO events (source_system, external_event_id, event_date,
+                       cameo_code, url, title, source_id, point_geom, notes)
+                   VALUES ('ACLED', %s, date_trunc('hour', now()), 'armed_conflict',
+                           %s, 'seed', %s,
+                           ST_SetSRID(ST_MakePoint(34.45, 31.5), 4326), 'Clash reported.')
+                   RETURNING event_id""",
+                (f"M6-DEDUPE-{i}", url, source_id),
+            )
+            event_id = cur.fetchone()[0]
+            cur.execute(
+                "INSERT INTO event_hotspot (event_id, hotspot_id) VALUES (%s, %s)",
+                (event_id, hid),
+            )
+
+    evidence = fetch_hotspot_evidence(live_conn, hid)
+    # One row per domain; the duplicate domain keeps its FIRST (most recent)
+    # row and its ORIGINAL citation index so [N] still maps to the FR-16 list.
+    assert [(e["domain"], e["citation_index"]) for e in evidence] == [
+        ("m6uniq.example", 1),
+        ("m6dup.example", 2),
+    ]

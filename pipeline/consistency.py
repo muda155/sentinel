@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
@@ -69,11 +70,14 @@ def _domain_of(url: str | None) -> str:
 
 
 def fetch_hotspot_evidence(conn, hotspot_id: int) -> list[dict]:
-    """URL-bearing, non-noise linked events in FR-16 citation order.
+    """One representative (most recent) row per unique domain, FR-16 order.
 
     LOCKSTEP CONTRACT: filter + ORDER BY must match
-    LLMRepository.fetch_hotspot_articles and api.queries.fetch_hotspot_events,
-    so citation_index here equals the SITREP [N] numbering."""
+    LLMRepository.fetch_hotspot_articles and api.queries.fetch_hotspot_events;
+    citation_index is the row's position in the FULL article list, so [N]
+    markers keep resolving even though duplicate-domain rows are dropped.
+    Deduping per domain matches spec 4.8 FR-22(b) ("over unique domains") and
+    keeps the extraction prompt small enough for NIM's latency budget."""
     with conn.cursor() as cursor:
         cursor.execute(
             """
@@ -98,8 +102,10 @@ def fetch_hotspot_evidence(conn, hotspot_id: int) -> list[dict]:
     seen_domains: set[str] = set()
     for idx, row in enumerate(rows, start=1):
         domain = row.get("domain") or _domain_of(row.get("url"))
-        if domain not in seen_domains and len(seen_domains) >= _max_domains():
+        if domain in seen_domains:
             continue
+        if len(seen_domains) >= _max_domains():
+            break
         seen_domains.add(domain)
         evidence.append({
             "event_id": row["event_id"],
@@ -126,8 +132,13 @@ def build_claims_prompt(evidence: list[dict]) -> str:
         "geographic hotspot, each from a different report.",
         (
             f"Extract at most {_max_claims()} atomic factual claims stated by the evidence. "
-            "A claim is one self-contained factual statement in English (one actor, one "
-            "action). For each claim list the evidence numbers that assert it."
+            "Rules: each claim MUST be a complete English sentence with a subject and a "
+            "verb describing a concrete event or situation (e.g., 'Military forces "
+            "advanced north of the city.'). Never output bare names, actor pairings, or "
+            "sentence fragments. Ignore numeric metadata such as tone scores, Goldstein "
+            "scale values, and report counts - they are signals, not claims. If the "
+            'evidence contains no verifiable factual statements, return {"claims": []}. '
+            "For each claim list the evidence numbers that assert it."
         ),
         'Output JSON only, no prose outside it: '
         '{"claims": [{"text": str, "source_indices": [int]}]}',
@@ -149,8 +160,27 @@ def _default_llm(prompt: str) -> tuple[str, str]:
     )
 
 
+def _min_claim_words() -> int:
+    return int(os.getenv("SENTINEL_CONSISTENCY_MIN_CLAIM_WORDS", "4"))
+
+
+_LOWERCASE_WORD = re.compile(r"[a-z]{3,}")
+
+
+def is_valid_claim(text: str) -> bool:
+    """Reject degenerate extractions (bare actor names, ALL-CAPS fragments).
+
+    A claim must have at least SENTINEL_CONSISTENCY_MIN_CLAIM_WORDS words and
+    one real lowercase word - GDELT-derived fragments like 'A US vs IRAN' or
+    'GROUND TROOP' fail both a sentence reading and NLI judging, and would
+    otherwise be scored as all-disputed noise."""
+    words = text.split()
+    return len(words) >= _min_claim_words() and bool(_LOWERCASE_WORD.search(text))
+
+
 def extract_claims(evidence: list[dict], *, llm=None) -> list[ExtractedClaim]:
-    """One LLM call -> validated atomic claims. Empty list on any parse failure."""
+    """One LLM call -> validated atomic claims. Empty list on any parse failure
+    or when every extracted claim is degenerate (engine then skips, score NULL)."""
     llm = llm or _default_llm
     content, _model = llm(build_claims_prompt(evidence))
     try:
@@ -160,9 +190,14 @@ def extract_claims(evidence: list[dict], *, llm=None) -> list[ExtractedClaim]:
         return []
     valid = {item["citation_index"] for item in evidence}
     claims = []
-    for claim in parsed.claims[: _max_claims()]:
+    for claim in parsed.claims:
+        if not is_valid_claim(claim.text):
+            logger.info("Dropping degenerate claim: %r", claim.text)
+            continue
         claim.source_indices = [i for i in claim.source_indices if i in valid]
         claims.append(claim)
+        if len(claims) >= _max_claims():
+            break
     return claims
 
 

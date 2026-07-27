@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { api, Hotspot, HotspotClaims, HotspotEvent, HotspotSummary } from "@/lib/api";
-import { orderClaims, statusColor, statusLabelKey } from "@/lib/claims";
+import { api, Claim, ClaimEvidence, Hotspot, HotspotClaims, HotspotEvent, HotspotSummary } from "@/lib/api";
+import { orderClaims, splitEvidence, statusColor, statusLabelKey } from "@/lib/claims";
 import type { MessageKey } from "@/lib/i18n-core";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
@@ -88,17 +88,34 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
                 <span style={{ color: statusColor(c.status), fontWeight: 600 }}>
                   {t(statusLabelKey(c.status) as MessageKey)}
                 </span>{" "}
-                {c.claim_text}{" "}
-                {c.evidence
-                  .filter((e) => e.citation_index != null)
-                  .map((e) => (
+                {c.claim_text}
+                {(() => {
+                  const { supporting, contradicting } = splitEvidence(c);
+                  const cite = (e: ClaimEvidence, color: string) => (
                     <sup key={e.event_id} role="button"
                          onClick={() => jumpTo(e.citation_index as number)}
-                         style={{ color: e.relation === "contradicts" ? "#f87171" : "#60a5fa",
-                                  cursor: "pointer", fontWeight: 600 }}>
+                         style={{ color, cursor: "pointer", fontWeight: 600 }}>
                       [{e.citation_index}]
                     </sup>
-                  ))}
+                  );
+                  return (
+                    <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>
+                      {supporting.length > 0 && (
+                        <span>
+                          {t("claims.supportedBy")}{" "}
+                          {supporting.map((e) => cite(e, "#60a5fa"))}
+                        </span>
+                      )}
+                      {supporting.length > 0 && contradicting.length > 0 && " · "}
+                      {contradicting.length > 0 && (
+                        <span>
+                          {t("claims.contradictedBy")}{" "}
+                          {contradicting.map((e) => cite(e, "#f87171"))}
+                        </span>
+                      )}
+                    </div>
+                  );
+                })()}
               </li>
             ))}
           </ul>

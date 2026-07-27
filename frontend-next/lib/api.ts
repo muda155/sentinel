@@ -2,7 +2,7 @@ export type Hotspot = {
   hotspot_id: number; lat: number; lon: number;
   conf_score: number; convergence_score: number;
   alert_level: "Critical" | "High" | "Medium"; event_count: number;
-  consistency_score: number | null;
+  consistency_score?: number | null;
   name: string | null;
   end_window: string; created_at: string;
 };

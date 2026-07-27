@@ -51,5 +51,7 @@ export const en = {
   "claims.corroborated": "corroborated",
   "claims.uncorroborated": "single-source",
   "claims.disputed": "disputed",
+  "claims.supportedBy": "supported by",
+  "claims.contradictedBy": "contradicted by",
 } as const;
 export type MessageKey = keyof typeof en;

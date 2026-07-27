@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { orderClaims, statusColor, statusLabelKey } from "@/lib/claims";
+import { orderClaims, splitEvidence, statusColor, statusLabelKey } from "@/lib/claims";
 import type { Claim } from "@/lib/api";
 
 const mk = (id: number, status: Claim["status"]): Claim => ({
@@ -21,5 +21,22 @@ describe("claims helpers", () => {
     expect(statusLabelKey("disputed")).toBe("claims.disputed");
     expect(statusLabelKey("corroborated")).toBe("claims.corroborated");
     expect(statusLabelKey("uncorroborated")).toBe("claims.uncorroborated");
+  });
+});
+
+describe("splitEvidence", () => {
+  it("separates supporting from contradicting sources", () => {
+    const claim: Claim = {
+      claim_id: 1, claim_text: "Ten casualties were reported.", status: "disputed",
+      evidence: [
+        { event_id: 1, citation_index: 1, relation: "supports", probability: 0.9, domain: "a.com" },
+        { event_id: 2, citation_index: 3, relation: "contradicts", probability: 0.88, domain: "b.com" },
+        { event_id: 3, citation_index: 4, relation: "neutral", probability: 0.4, domain: "c.com" },
+        { event_id: 4, citation_index: null, relation: "supports", probability: 0.7, domain: "d.com" },
+      ],
+    };
+    const { supporting, contradicting } = splitEvidence(claim);
+    expect(supporting.map((e) => e.citation_index)).toEqual([1]);
+    expect(contradicting.map((e) => e.citation_index)).toEqual([3]);
   });
 });
