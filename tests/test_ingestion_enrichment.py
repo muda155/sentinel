@@ -42,3 +42,26 @@ def test_gdelt_insert_persists_enrichment(live_conn):
         )
         row = cur.fetchone()
     assert row == ("MILITARY", "REBELS", -8.0, -5.2, 12)
+
+
+def test_acled_insert_persists_notes_and_fatalities(live_conn):
+    from pipeline.ingestion import ACLEDIngestor
+
+    df = pd.DataFrame([{
+        "event_id_cnty": "TEST-M6-1", "event_date": "2026-07-26",
+        "latitude": 31.5, "longitude": 34.45, "country_code": "ISR",
+        "event_type_label": "armed_conflict", "location": "Test City",
+        "source_domain": "example.org",
+        "notes": "Armed clash between group A and group B near Test City.",
+        "fatalities": 3,
+    }])
+    ingestor = ACLEDIngestor.__new__(ACLEDIngestor)
+    inserted = ingestor.insert_to_db(df, live_conn)
+    assert inserted == 1
+    with live_conn.cursor() as cur:
+        cur.execute(
+            """SELECT notes, fatalities FROM events
+               WHERE source_system='ACLED' AND external_event_id='TEST-M6-1'"""
+        )
+        row = cur.fetchone()
+    assert row[0].startswith("Armed clash") and row[1] == 3

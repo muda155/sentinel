@@ -831,6 +831,13 @@ class ACLEDIngestor:
                     "event_type_label", "civilian_violence"
                 )
                 location = row.get("location", "")
+                notes = row.get("notes")
+                notes = str(notes) if notes is not None and str(notes).strip() else None
+                fatalities = row.get("fatalities")
+                try:
+                    fatalities = int(fatalities) if fatalities is not None else None
+                except (TypeError, ValueError):
+                    fatalities = None
                 records.append((
                     "ACLED",                                 # source_system
                     event_id,                                # external_event_id
@@ -844,6 +851,8 @@ class ACLEDIngestor:
                     source_id,                               # source_id
                     grid_cell_id,                            # grid_cell_id
                     4,                                       # geo_precision — ACLED geocodes to named locations
+                    notes,                                   # notes (FR-21)
+                    fatalities,                              # fatalities (FR-21)
                 ))
             except Exception as exc:
                 logging.warning(
@@ -864,7 +873,8 @@ class ACLEDIngestor:
                 INSERT INTO events (
                     source_system, external_event_id, event_date,
                     cameo_code, country_code, url, title,
-                    point_geom, source_id, grid_cell_id, geo_precision
+                    point_geom, source_id, grid_cell_id, geo_precision,
+                    notes, fatalities
                 )
                 VALUES %s
                 ON CONFLICT (source_system, external_event_id, event_date) DO NOTHING
@@ -872,7 +882,7 @@ class ACLEDIngestor:
                 records,
                 template=(
                     "(%s, %s, %s, %s, %s, %s, %s, "
-                    "ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s, %s, %s)"
+                    "ST_SetSRID(ST_MakePoint(%s, %s), 4326), %s, %s, %s, %s, %s)"
                 ),
             )
         conn.commit()
