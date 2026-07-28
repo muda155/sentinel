@@ -99,3 +99,18 @@ def test_backfill_respects_max_files(seeded_rows, monkeypatch):
     )
     stats = gkg.backfill(seeded_rows, days=7, max_files=2)
     assert stats["files_fetched"] == 2
+
+
+def test_apply_titles_never_updates_unmatched_urls(seeded_rows):
+    """The un-enriched guard must stay parenthesised.
+
+    AND binds tighter than OR, so an unparenthesised `title IS NULL OR
+    title !~ '[a-z]'` lets the OR branch escape every preceding filter --
+    including the e.url = v.url join -- and the UPDATE rewrites every
+    ALL-CAPS row in the table regardless of URL.
+    """
+    updated = gkg._apply_titles(
+        seeded_rows, [("https://no-such-url.example/zzz", "INJECTED")], 7
+    )
+    assert updated == 0
+    assert _titles(seeded_rows)["M7-STALE"] == "SOUTH KOREAN"

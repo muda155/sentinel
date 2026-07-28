@@ -181,7 +181,11 @@ def iter_gkg_urls(days: int, *, now: datetime | None = None) -> Iterator[str]:
 
 # GDELT actor names are ALL-CAPS; a real headline contains a lowercase letter.
 # This marker needs no schema change and makes the backfill idempotent.
-_UNENRICHED = "(title IS NULL OR title !~ '[a-z]')"
+# Qualified as e.title because UPDATE ... FROM (VALUES) makes a bare `title`
+# ambiguous, and parenthesised because AND binds tighter than OR — without the
+# parentheses the OR branch escapes every preceding filter, including the
+# e.url = v.url join, and the UPDATE rewrites every ALL-CAPS row in the table.
+_UNENRICHED = "(e.title IS NULL OR e.title !~ '[a-z]')"
 
 
 def pending_urls(conn, days: int) -> set[str]:
@@ -189,10 +193,10 @@ def pending_urls(conn, days: int) -> set[str]:
     with conn.cursor() as cursor:
         cursor.execute(
             f"""
-            SELECT DISTINCT url FROM events
-            WHERE source_system = 'GDELT'
-              AND url IS NOT NULL
-              AND event_date >= now() - make_interval(days => %s)
+            SELECT DISTINCT url FROM events e
+            WHERE e.source_system = 'GDELT'
+              AND e.url IS NOT NULL
+              AND e.event_date >= now() - make_interval(days => %s)
               AND {_UNENRICHED}
             """,
             (days,),
@@ -223,7 +227,7 @@ def _apply_titles(conn, batch: list[tuple[str, str]], days: int) -> int:
                 FROM (VALUES %s) AS v(url, title)
                 WHERE e.url = v.url
                   AND e.source_system = 'GDELT'
-                  AND e.event_date >= now() - make_interval(days => {days})
+                  AND e.event_date >= now() - make_interval(days => {int(days)})
                   AND {_UNENRICHED}
                 """,
                 batch[i : i + _PAGE_SIZE],
