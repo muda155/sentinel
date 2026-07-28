@@ -7,6 +7,7 @@ the export file stores in ``SOURCEURL``. That gives real headlines for
 """
 from __future__ import annotations
 
+import argparse
 import csv
 import html
 import io
@@ -18,6 +19,9 @@ from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 
 import requests
+from psycopg2.extras import execute_values
+
+from pipeline.db import get_pooled_connection
 
 logger = logging.getLogger(__name__)
 
@@ -160,3 +164,137 @@ def iter_gkg_urls(days: int, *, now: datetime | None = None) -> Iterator[str]:
     while current > oldest:
         yield f"{GKG_BASE}/{current.strftime('%Y%m%d%H%M%S')}.gkg.csv.zip"
         current -= _TICK
+
+
+# ---------------------------------------------------------------------------
+# Backfill CLI (FR-25)
+#
+# Module-local SQL follows the pipeline/source_country.py --backfill precedent:
+# a one-shot maintenance command owns its own statements rather than widening
+# pipeline/db.py with queries nothing else calls.
+# ---------------------------------------------------------------------------
+
+# GDELT actor names are ALL-CAPS; a real headline contains a lowercase letter.
+# This marker needs no schema change and makes the backfill idempotent.
+_UNENRICHED = "(title IS NULL OR title !~ '[a-z]')"
+
+
+def pending_urls(conn, days: int) -> set[str]:
+    """Return distinct GDELT article URLs still carrying an actor-name title."""
+    with conn.cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT DISTINCT url FROM events
+            WHERE source_system = 'GDELT'
+              AND url IS NOT NULL
+              AND event_date >= now() - make_interval(days => %s)
+              AND {_UNENRICHED}
+            """,
+            (days,),
+        )
+        return {row[0] for row in cursor.fetchall()}
+
+
+def _apply_titles(conn, batch: list[tuple[str, str]]) -> int:
+    """UPDATE titles for matched URLs. The un-enriched guard is repeated here so
+    a concurrent ingest cannot be overwritten between SELECT and UPDATE."""
+    with conn.cursor() as cursor:
+        execute_values(
+            cursor,
+            """
+            UPDATE events e SET title = v.title
+            FROM (VALUES %s) AS v(url, title)
+            WHERE e.url = v.url
+              AND e.source_system = 'GDELT'
+              AND (e.title IS NULL OR e.title !~ '[a-z]')
+            """,
+            batch,
+        )
+        updated = cursor.rowcount
+    conn.commit()
+    return updated
+
+
+def backfill(
+    conn,
+    days: int | None = None,
+    *,
+    dry_run: bool = False,
+    max_files: int | None = None,
+) -> dict[str, int]:
+    """Rewrite actor-name titles in the recent window with real GKG headlines.
+
+    Walks GKG files newest-first and stops as soon as every pending URL has been
+    matched — a full 7-day walk is ~670 files at ~5 MB each.
+    """
+    if days is None:
+        days = int(os.getenv("SENTINEL_GKG_BACKFILL_DAYS", "7"))
+    stats = {"files_fetched": 0, "urls_matched": 0, "rows_updated": 0}
+    pending = pending_urls(conn, days)
+    if not pending:
+        logger.info("GKG backfill: nothing to enrich in the last %d days", days)
+        return stats
+
+    logger.info("GKG backfill: %d un-enriched URLs in the last %d days",
+                len(pending), days)
+    for gkg_url in iter_gkg_urls(days):
+        if max_files is not None and stats["files_fetched"] >= max_files:
+            break
+        headlines = fetch_headlines_from_gkg_url(gkg_url)
+        stats["files_fetched"] += 1
+        batch = [(url, title) for url, title in headlines.items() if url in pending]
+        if not batch:
+            continue
+        stats["urls_matched"] += len(batch)
+        pending.difference_update(url for url, _ in batch)
+        if not dry_run:
+            stats["rows_updated"] += _apply_titles(conn, batch)
+        if not pending:
+            break
+    return stats
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="GDELT GKG headline enrichment (FR-25)"
+    )
+    parser.add_argument(
+        "--backfill", action="store_true",
+        help="Rewrite actor-name titles in the recent window with GKG headlines",
+    )
+    parser.add_argument(
+        "--days", type=int, default=None,
+        help="Backfill window in days (default: SENTINEL_GKG_BACKFILL_DAYS, or 7)",
+    )
+    parser.add_argument(
+        "--max-files", type=int, default=None,
+        help="Stop after downloading this many GKG files (~5 MB each)",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Report what would be updated without writing",
+    )
+    return parser
+
+
+def main() -> int:
+    parser = _build_parser()
+    args = parser.parse_args()
+    if not args.backfill:
+        parser.error("nothing to do: pass --backfill")
+    conn, pool = get_pooled_connection()
+    try:
+        stats = backfill(
+            conn, args.days, dry_run=args.dry_run, max_files=args.max_files
+        )
+    finally:
+        pool.return_connection(conn)
+    print(
+        f"GKG backfill: files={stats['files_fetched']} "
+        f"matched={stats['urls_matched']} updated={stats['rows_updated']}"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
