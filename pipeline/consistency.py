@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ValidationError
 
 from pipeline.llm_verifier import _extract_json, call_llm_raw
-from pipeline.relevance import min_sim
+from pipeline.relevance import max_homogeneity, min_peak, min_sim
 
 logger = logging.getLogger("sentinel.consistency")
 
@@ -223,6 +223,35 @@ def dedupe_claims(claims: list[ExtractedClaim]) -> list[ExtractedClaim]:
         ExtractedClaim(text=claim.text, source_indices=sorted(indices[key]))
         for key, claim in by_key.items()
     ]
+
+
+def filter_vacuous_claims(claims, sim, homogeneity: float):
+    """Drop claims that discriminate nothing (FR-26).
+
+    A vacuous claim ("Russia is mentioned") is entailed by every premise, so it
+    is corroborated trivially. It shows up as a similarity row that is flat: no
+    peak above its own median.
+
+    The homogeneity guard is essential, not a refinement. When every evidence
+    row covers the same event, a good specific claim is ALSO uniformly similar
+    to all of them — dropping it would discard exactly the multi-source
+    corroboration the engine exists to reward. So the filter only runs when the
+    evidence set actually contains distinct topics to discriminate between.
+
+    Returns (kept claims, sim rows for those claims, number dropped)."""
+    import numpy as np
+
+    if not claims or homogeneity >= max_homogeneity():
+        return list(claims), sim, 0
+
+    peak = min_peak()
+    keep = [
+        i for i in range(len(claims))
+        if float(np.max(sim[i]) - np.median(sim[i])) >= peak
+    ]
+    dropped = len(claims) - len(keep)
+    kept_sim = sim[keep] if keep else sim[:0]
+    return [claims[i] for i in keep], kept_sim, dropped
 
 
 @dataclass

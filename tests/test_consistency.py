@@ -1,5 +1,6 @@
 """Consistency engine unit tests: evidence rendering, extraction, consensus (FR-22)."""
 import numpy as np
+import pytest
 
 from pipeline.consistency import (
     ClaimVerdict,
@@ -296,3 +297,53 @@ def test_count_gated_pairs():
     sim = np.array([[0.9, 0.1, 0.8], [0.2, 0.2, 0.95]])
     assert count_gated_pairs(sim, 0.35) == 3
     assert count_gated_pairs(None, 0.35) == 0
+
+
+def _c(text):
+    return ExtractedClaim(text=text, source_indices=[1])
+
+
+def test_vacuity_drops_claim_that_matches_everything_in_a_diverse_hotspot():
+    from pipeline.consistency import filter_vacuous_claims
+
+    claims = [_c("Russia is mentioned"), _c("The army advanced north.")]
+    sim = np.array([
+        [0.60, 0.61, 0.59, 0.60],   # matches everything, peaks on nothing
+        [0.90, 0.85, 0.20, 0.15],   # peaks on the first two rows
+    ])
+    kept, kept_sim, dropped = filter_vacuous_claims(claims, sim, homogeneity=0.3)
+    assert [c.text for c in kept] == ["The army advanced north."]
+    assert dropped == 1
+    assert kept_sim.shape == (1, 4)
+    assert kept_sim[0][0] == pytest.approx(0.90)
+
+
+def test_vacuity_guard_keeps_flat_claim_in_a_homogeneous_hotspot():
+    # All evidence is one event, so a good claim is uniformly similar too.
+    # Dropping it would discard the textbook corroboration case.
+    from pipeline.consistency import filter_vacuous_claims
+
+    claims = [_c("The army advanced north.")]
+    sim = np.array([[0.80, 0.81, 0.79, 0.80]])
+    kept, kept_sim, dropped = filter_vacuous_claims(claims, sim, homogeneity=0.9)
+    assert len(kept) == 1
+    assert dropped == 0
+    assert kept_sim.shape == (1, 4)
+
+
+def test_vacuity_can_drop_every_claim():
+    from pipeline.consistency import filter_vacuous_claims
+
+    claims = [_c("Russia is mentioned"), _c("Iran is mentioned")]
+    sim = np.array([[0.6, 0.6, 0.6], [0.5, 0.5, 0.5]])
+    kept, kept_sim, dropped = filter_vacuous_claims(claims, sim, homogeneity=0.2)
+    assert kept == []
+    assert dropped == 2
+    assert kept_sim.shape == (0, 3)
+
+
+def test_vacuity_no_claims_is_a_noop():
+    from pipeline.consistency import filter_vacuous_claims
+
+    kept, kept_sim, dropped = filter_vacuous_claims([], np.zeros((0, 3)), homogeneity=0.2)
+    assert kept == [] and dropped == 0 and kept_sim.shape == (0, 3)
