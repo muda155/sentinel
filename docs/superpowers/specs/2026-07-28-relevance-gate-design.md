@@ -199,7 +199,23 @@ The pipeline itself is still never blocked: a skipped engine leaves `consistency
 Two parts:
 
 1. **Automated regression** — the injection harness above. Reproducible, no labelling, proves the gate does not suppress true contradictions.
-2. **Hand-labelled gold set** — ~30 hotspots from the live database, each claim labelled corroborated / uncorroborated / disputed by hand, scored with the existing `eval/consistency/score_gold.py`. Reported as before/after verdict accuracy against the measured M8-entry baseline of **5 corroborated / 31 uncorroborated / 67 disputed**.
+2. **Hand-labelled gold set** — ~30 hotspots from the live database, each claim labelled corroborated / uncorroborated / disputed by hand, scored with the existing `eval/consistency/score_gold.py`. Reported as before/after verdict accuracy against the M8-entry baseline below.
+
+### The baseline figure (corrected 2026-07-28)
+
+An earlier draft of this document quoted **5 corroborated / 31 uncorroborated / 67 disputed**. That measurement was taken over a database whose `events.title` column had been corrupted by a buggy pre-fix run of the M7 backfill: one headline had been written across 7,825 rows spanning 2,727 distinct URLs, so many claims were extracted from evidence text that did not belong to its article. **Do not use that figure.**
+
+The database was rebuilt from scratch and re-ingested from GDELT with the fixed code. The clean baseline is:
+
+| Status | Count |
+|---|---|
+| disputed | 32 |
+| uncorroborated | 31 |
+| **corroborated** | **0** |
+
+over 63 claims / 24 scored hotspots / 319 GDELT events (318 enriched, 98 distinct titles — a healthy ~1 title per article). Of 24 scored hotspots, 7 score exactly 0 (every claim disputed) and 13 score exactly 50 (every claim uncorroborated, the formula's neutral point).
+
+The corrected numbers **strengthen** the case rather than weakening it: on clean data there is not a single corroborated claim anywhere in the database, and the 5 that previously appeared were the duplicate `"Russia is mentioned"` artifact. The diagnosis is unchanged and was re-confirmed end to end on clean data — hotspot 8 ("India", 13 events) mixes an Indian government/Meta story, a Rajya Sabha adjournment, a Chief Justice of Pakistan protest warning, and a lathicharge ruling, and marks all five well-formed claims disputed, rendering "Phát hiện mâu thuẫn giữa các nguồn" ("contradiction detected between sources") in the dashboard.
 
 The harness (`export_gold.py`, `score_gold.py`, `inject.py`) exists from M6 but **no gold set was ever created** — building it is real work in this milestone, not a formality, and the plan must budget for it.
 
