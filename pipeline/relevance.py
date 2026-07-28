@@ -106,3 +106,33 @@ def get_embedder() -> Embedder:
     if _embedder is None:
         _embedder = Embedder()
     return _embedder
+
+
+def similarity_matrix(claim_texts: list[str], evidence_texts: list[str], embedder):
+    """Cosine similarity of every claim against every evidence row.
+
+    Vectors are already L2-normalised, so the dot product is the cosine."""
+    import numpy as np
+
+    if not claim_texts:
+        return np.zeros((0, len(evidence_texts)), dtype="float32")
+    if not evidence_texts:
+        return np.zeros((len(claim_texts), 0), dtype="float32")
+    claims = embedder.embed(claim_texts)
+    evidence = embedder.embed(evidence_texts)
+    return claims @ evidence.T
+
+
+def evidence_homogeneity(evidence_texts: list[str], embedder) -> float:
+    """Median pairwise similarity among evidence rows, diagonal excluded.
+
+    1.0 for fewer than two rows: a single row is trivially one topic, and the
+    vacuity filter must never fire in that case."""
+    import numpy as np
+
+    if len(evidence_texts) < 2:
+        return 1.0
+    vectors = embedder.embed(evidence_texts)
+    sim = vectors @ vectors.T
+    upper = sim[np.triu_indices(len(evidence_texts), k=1)]
+    return float(np.median(upper))
