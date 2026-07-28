@@ -15,7 +15,15 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ValidationError
 
 from pipeline.llm_verifier import _extract_json, call_llm_raw
-from pipeline.relevance import max_homogeneity, min_peak, min_sim
+from pipeline.relevance import (
+    evidence_homogeneity,
+    get_embedder,
+    max_homogeneity,
+    min_peak,
+    min_sim,
+    relevance_enabled,
+    similarity_matrix,
+)
 
 logger = logging.getLogger("sentinel.consistency")
 
@@ -392,7 +400,8 @@ class ConsistencyRepository:
         self._conn = conn
 
     def save(self, hotspot_id: int, verdicts: list[ClaimVerdict],
-             score: float | None) -> None:
+             score: float | None, *, gated_pairs: int | None = None,
+             vacuous_claims_dropped: int | None = None) -> None:
         with self._conn.cursor() as cursor:
             cursor.execute("DELETE FROM claims WHERE hotspot_id = %s", (hotspot_id,))
             for verdict in verdicts:
@@ -411,8 +420,11 @@ class ConsistencyRepository:
                          judgment.probability),
                     )
             cursor.execute(
-                "UPDATE hotspots SET consistency_score = %s WHERE hotspot_id = %s",
-                (score, hotspot_id),
+                """UPDATE hotspots
+                   SET consistency_score = %s, gated_pairs = %s,
+                       vacuous_claims_dropped = %s
+                   WHERE hotspot_id = %s""",
+                (score, gated_pairs, vacuous_claims_dropped, hotspot_id),
             )
         self._conn.commit()
 
@@ -433,14 +445,35 @@ def run_consistency_engine(conn, hotspot_id: int, *, judge=None,
         claims = extract_claims(evidence, llm=llm)
         if not claims:
             return None
+        claims = dedupe_claims(claims)
+
+        sim = None
+        gated = 0
+        dropped = 0
+        if relevance_enabled():
+            # RelevanceUnavailable propagates to the handler below: the engine
+            # skips rather than judging ungated, which is measured to be wrong
+            # on ~65% of claims (FR-26, fail-closed).
+            embedder = get_embedder()
+            evidence_texts = [e["evidence_text"] for e in evidence]
+            sim = similarity_matrix([c.text for c in claims], evidence_texts, embedder)
+            homogeneity = evidence_homogeneity(evidence_texts, embedder)
+            claims, sim, dropped = filter_vacuous_claims(claims, sim, homogeneity)
+            if not claims:
+                return None
+            gated = count_gated_pairs(sim)
+
         if judge is None:
             from pipeline.nli import get_judge
             judge = get_judge()
-        judgments = judge_claims(claims, evidence, judge)
+        judgments = judge_claims(claims, evidence, judge, sim=sim)
         verdicts = consensus(claims, evidence, judgments)
         score = hotspot_consistency_score(verdicts)
         insufficient = len({e["domain"] for e in evidence}) < 2
-        ConsistencyRepository(conn).save(hotspot_id, verdicts, score)
+        ConsistencyRepository(conn).save(
+            hotspot_id, verdicts, score,
+            gated_pairs=gated, vacuous_claims_dropped=dropped,
+        )
         return EngineResult(verdicts=verdicts, score=score,
                             insufficient_sources=insufficient)
     except Exception as exc:
