@@ -11,7 +11,11 @@ import csv
 import html
 import io
 import logging
+import os
 import re
+import zipfile
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -82,3 +86,49 @@ def parse_headlines(csv_text: str) -> dict[str, str]:
         if headline:
             headlines[url] = headline
     return headlines
+
+
+def gkg_enabled() -> bool:
+    """GKG enrichment is opt-out so an outage can be handled without a redeploy."""
+    return os.getenv("SENTINEL_GKG_ENABLED", "true").strip().lower() not in {
+        "false", "0", "no", "off",
+    }
+
+
+def _timeout_seconds(timeout: int | None) -> int:
+    if timeout is not None:
+        return timeout
+    return int(os.getenv("SENTINEL_GKG_TIMEOUT_S", "120"))
+
+
+def fetch_headlines_from_gkg_url(
+    gkg_url: str, *, timeout: int | None = None
+) -> dict[str, str]:
+    """Download and parse one GKG file. Returns {} on any failure, never raises.
+
+    Enrichment is strictly additive: a missing or broken GKG file must degrade to
+    Actor1Name titles, not fail the ingestion tick.
+    """
+    try:
+        response = requests.get(gkg_url, timeout=_timeout_seconds(timeout))
+        response.raise_for_status()
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            names = archive.namelist()
+            if not names:
+                logger.warning("GKG archive is empty: %s", gkg_url)
+                return {}
+            raw = archive.read(names[0])
+        return parse_headlines(raw.decode("utf-8", errors="replace"))
+    except Exception as exc:
+        logger.warning("GKG fetch failed for %s: %s", gkg_url, exc)
+        return {}
+
+
+def fetch_headlines(export_url: str, *, timeout: int | None = None) -> dict[str, str]:
+    """Return {article url: headline} for the GKG file paired with ``export_url``."""
+    try:
+        gkg_url = gkg_url_for(export_url)
+    except ValueError as exc:
+        logger.warning("No GKG file derivable: %s", exc)
+        return {}
+    return fetch_headlines_from_gkg_url(gkg_url, timeout=timeout)
