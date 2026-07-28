@@ -1,6 +1,7 @@
 """FR-25: GDELT GKG headline extraction (pure functions, no network)."""
 import io
 import zipfile
+from datetime import datetime, timezone
 
 import pytest
 import requests
@@ -11,6 +12,7 @@ from pipeline.gkg import (
     fetch_headlines_from_gkg_url,
     gkg_enabled,
     gkg_url_for,
+    iter_gkg_urls,
     parse_headlines,
 )
 
@@ -140,7 +142,7 @@ def test_fetch_headlines_parses_downloaded_zip(monkeypatch):
         seen["timeout"] = timeout
         return _FakeResponse(_zipped(csv_text))
 
-    monkeypatch.setattr("pipeline.gkg.requests.get", fake_get)
+    monkeypatch.setattr("pipeline.gkg._HTTP_SESSION.get", fake_get)
     result = fetch_headlines(
         "http://data.gdeltproject.org/gdeltv2/20260727051500.export.CSV.zip"
     )
@@ -157,7 +159,7 @@ def test_fetch_headlines_honours_timeout_env(monkeypatch):
         seen["timeout"] = timeout
         return _FakeResponse(_zipped(""))
 
-    monkeypatch.setattr("pipeline.gkg.requests.get", fake_get)
+    monkeypatch.setattr("pipeline.gkg._HTTP_SESSION.get", fake_get)
     fetch_headlines_from_gkg_url(
         "http://data.gdeltproject.org/gdeltv2/20260727051500.gkg.csv.zip"
     )
@@ -168,7 +170,7 @@ def test_fetch_headlines_returns_empty_on_http_error(monkeypatch):
     def fake_get(url, timeout=None):
         raise requests.HTTPError("404 Not Found")
 
-    monkeypatch.setattr("pipeline.gkg.requests.get", fake_get)
+    monkeypatch.setattr("pipeline.gkg._HTTP_SESSION.get", fake_get)
     assert fetch_headlines(
         "http://data.gdeltproject.org/gdeltv2/20260727051500.export.CSV.zip"
     ) == {}
@@ -177,7 +179,7 @@ def test_fetch_headlines_returns_empty_on_http_error(monkeypatch):
 def test_fetch_headlines_returns_empty_on_zero_byte_file(monkeypatch):
     # GDELT observably serves a 0-byte GKG file when the tick has not finished.
     monkeypatch.setattr(
-        "pipeline.gkg.requests.get", lambda url, timeout=None: _FakeResponse(b"")
+        "pipeline.gkg._HTTP_SESSION.get", lambda url, timeout=None: _FakeResponse(b"")
     )
     assert fetch_headlines(
         "http://data.gdeltproject.org/gdeltv2/20260727051500.export.CSV.zip"
@@ -188,7 +190,7 @@ def test_fetch_headlines_returns_empty_on_bad_export_url(monkeypatch):
     def boom(url, timeout=None):
         raise AssertionError("must not download for an invalid export URL")
 
-    monkeypatch.setattr("pipeline.gkg.requests.get", boom)
+    monkeypatch.setattr("pipeline.gkg._HTTP_SESSION.get", boom)
     assert fetch_headlines("http://example.com/not-a-gdelt-file.txt") == {}
 
 
@@ -199,3 +201,24 @@ def test_gkg_enabled_defaults_true_and_respects_off(monkeypatch):
     assert gkg_enabled() is False
     monkeypatch.setenv("SENTINEL_GKG_ENABLED", "0")
     assert gkg_enabled() is False
+
+
+def test_iter_gkg_urls_starts_at_the_enclosing_quarter_hour():
+    now = datetime(2026, 7, 27, 12, 7, 41, tzinfo=timezone.utc)
+    first = next(iter(iter_gkg_urls(1, now=now)))
+    assert first == (
+        "http://data.gdeltproject.org/gdeltv2/20260727120000.gkg.csv.zip"
+    )
+
+
+def test_iter_gkg_urls_yields_96_files_per_day_newest_first():
+    now = datetime(2026, 7, 27, 12, 0, 0, tzinfo=timezone.utc)
+    urls = list(iter_gkg_urls(1, now=now))
+    assert len(urls) == 96
+    assert urls[1].endswith("20260727114500.gkg.csv.zip")
+    assert urls[-1].endswith("20260726121500.gkg.csv.zip")
+
+
+def test_iter_gkg_urls_scales_with_days():
+    now = datetime(2026, 7, 27, 12, 0, 0, tzinfo=timezone.utc)
+    assert len(list(iter_gkg_urls(3, now=now))) == 288

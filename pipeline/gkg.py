@@ -14,10 +14,17 @@ import logging
 import os
 import re
 import zipfile
+from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
 
 import requests
 
 logger = logging.getLogger(__name__)
+
+# Module-level session so tests that mock ``_HTTP_SESSION.get`` do not conflict
+# with tests that mock ``pipeline.ingestion.requests.get`` (they share the same
+# global ``requests.get`` function).
+_HTTP_SESSION = requests.Session()
 
 GKG_BASE = "http://data.gdeltproject.org/gdeltv2"
 
@@ -108,9 +115,13 @@ def fetch_headlines_from_gkg_url(
 
     Enrichment is strictly additive: a missing or broken GKG file must degrade to
     Actor1Name titles, not fail the ingestion tick.
+
+    Uses Session().get rather than the module-level requests.get so that
+    tests which mock ``pipeline.ingestion.requests.get`` (the global
+    ``requests.get``) do not intercept GKG download calls.
     """
     try:
-        response = requests.get(gkg_url, timeout=_timeout_seconds(timeout))
+        response = _HTTP_SESSION.get(gkg_url, timeout=_timeout_seconds(timeout))
         response.raise_for_status()
         with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
             names = archive.namelist()
@@ -132,3 +143,20 @@ def fetch_headlines(export_url: str, *, timeout: int | None = None) -> dict[str,
         logger.warning("No GKG file derivable: %s", exc)
         return {}
     return fetch_headlines_from_gkg_url(gkg_url, timeout=timeout)
+
+
+_TICK = timedelta(minutes=15)
+
+
+def iter_gkg_urls(days: int, *, now: datetime | None = None) -> Iterator[str]:
+    """Yield GKG file URLs newest-first over the last ``days`` days.
+
+    GDELT publishes on a fixed 15-minute grid, so the URLs are derivable without
+    reading masterfilelist.txt (which is ~100 MB).
+    """
+    current = (now or datetime.now(timezone.utc)).replace(second=0, microsecond=0)
+    current = current.replace(minute=(current.minute // 15) * 15)
+    oldest = current - timedelta(days=days)
+    while current > oldest:
+        yield f"{GKG_BASE}/{current.strftime('%Y%m%d%H%M%S')}.gkg.csv.zip"
+        current -= _TICK
