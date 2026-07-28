@@ -203,20 +203,20 @@ def test_gkg_enabled_defaults_true_and_respects_off(monkeypatch):
     assert gkg_enabled() is False
 
 
-def test_iter_gkg_urls_starts_at_the_enclosing_quarter_hour():
+def test_iter_gkg_urls_starts_at_the_oldest_tick():
     now = datetime(2026, 7, 27, 12, 7, 41, tzinfo=timezone.utc)
     first = next(iter(iter_gkg_urls(1, now=now)))
     assert first == (
-        "http://data.gdeltproject.org/gdeltv2/20260727120000.gkg.csv.zip"
+        "http://data.gdeltproject.org/gdeltv2/20260726121500.gkg.csv.zip"
     )
 
 
-def test_iter_gkg_urls_yields_96_files_per_day_newest_first():
+def test_iter_gkg_urls_yields_96_files_per_day_oldest_first():
     now = datetime(2026, 7, 27, 12, 0, 0, tzinfo=timezone.utc)
     urls = list(iter_gkg_urls(1, now=now))
     assert len(urls) == 96
-    assert urls[1].endswith("20260727114500.gkg.csv.zip")
-    assert urls[-1].endswith("20260726121500.gkg.csv.zip")
+    assert urls[0].endswith("20260726121500.gkg.csv.zip")
+    assert urls[-1].endswith("20260727120000.gkg.csv.zip")
 
 
 def test_iter_gkg_urls_scales_with_days():

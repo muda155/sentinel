@@ -27,7 +27,9 @@ logger = logging.getLogger(__name__)
 
 # Module-level session so tests that mock ``_HTTP_SESSION.get`` do not conflict
 # with tests that mock ``pipeline.ingestion.requests.get`` (they share the same
-# global ``requests.get`` function).
+# global ``requests.get`` function). Not thread-safe — APScheduler uses a thread
+# pool so overlapping ticks would share it. Low risk (one ingestion job at a
+# time); convert to per-call ``requests.Session()`` if concurrent jobs appear.
 _HTTP_SESSION = requests.Session()
 
 GKG_BASE = "http://data.gdeltproject.org/gdeltv2"
@@ -153,17 +155,20 @@ _TICK = timedelta(minutes=15)
 
 
 def iter_gkg_urls(days: int, *, now: datetime | None = None) -> Iterator[str]:
-    """Yield GKG file URLs newest-first over the last ``days`` days.
+    """Yield GKG file URLs oldest-first over the last ``days`` days.
 
-    GDELT publishes on a fixed 15-minute grid, so the URLs are derivable without
-    reading masterfilelist.txt (which is ~100 MB).
+    Oldest-first means ``--max-files`` truncates the newest (already-enriched)
+    end rather than the oldest end where un-enriched rows live. GDELT publishes
+    on a fixed 15-minute grid, so the URLs are derivable without reading
+    masterfilelist.txt (which is ~100 MB).
     """
     current = (now or datetime.now(timezone.utc)).replace(second=0, microsecond=0)
     current = current.replace(minute=(current.minute // 15) * 15)
     oldest = current - timedelta(days=days)
-    while current > oldest:
-        yield f"{GKG_BASE}/{current.strftime('%Y%m%d%H%M%S')}.gkg.csv.zip"
-        current -= _TICK
+    tick = oldest + _TICK
+    while tick <= current:
+        yield f"{GKG_BASE}/{tick.strftime('%Y%m%d%H%M%S')}.gkg.csv.zip"
+        tick += _TICK
 
 
 # ---------------------------------------------------------------------------
@@ -195,22 +200,35 @@ def pending_urls(conn, days: int) -> set[str]:
         return {row[0] for row in cursor.fetchall()}
 
 
-def _apply_titles(conn, batch: list[tuple[str, str]]) -> int:
-    """UPDATE titles for matched URLs. The un-enriched guard is repeated here so
-    a concurrent ingest cannot be overwritten between SELECT and UPDATE."""
+_PAGE_SIZE = 100
+
+
+def _apply_titles(conn, batch: list[tuple[str, str]], days: int) -> int:
+    """UPDATE titles for matched URLs within the backfill window.
+
+    The un-enriched guard is repeated here so a concurrent ingest cannot
+    overwrite a row between SELECT and UPDATE. The ``event_date >= …``
+    predicate mirrors ``pending_urls`` so the UPDATE benefits from partition
+    pruning. ``cursor.rowcount`` is accumulated per-page because psycopg2's
+    ``execute_values`` paginates at 100 rows and ``rowcount`` reflects only
+    the last page.
+    """
+    updated = 0
     with conn.cursor() as cursor:
-        execute_values(
-            cursor,
-            """
-            UPDATE events e SET title = v.title
-            FROM (VALUES %s) AS v(url, title)
-            WHERE e.url = v.url
-              AND e.source_system = 'GDELT'
-              AND (e.title IS NULL OR e.title !~ '[a-z]')
-            """,
-            batch,
-        )
-        updated = cursor.rowcount
+        for i in range(0, len(batch), _PAGE_SIZE):
+            execute_values(
+                cursor,
+                f"""
+                UPDATE events e SET title = v.title
+                FROM (VALUES %s) AS v(url, title)
+                WHERE e.url = v.url
+                  AND e.source_system = 'GDELT'
+                  AND e.event_date >= now() - make_interval(days => {days})
+                  AND {_UNENRICHED}
+                """,
+                batch[i : i + _PAGE_SIZE],
+            )
+            updated += cursor.rowcount
     conn.commit()
     return updated
 
@@ -248,7 +266,7 @@ def backfill(
         stats["urls_matched"] += len(batch)
         pending.difference_update(url for url, _ in batch)
         if not dry_run:
-            stats["rows_updated"] += _apply_titles(conn, batch)
+            stats["rows_updated"] += _apply_titles(conn, batch, days)
         if not pending:
             break
     return stats

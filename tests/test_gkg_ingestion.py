@@ -1,5 +1,6 @@
 """FR-25: GDELT ingestion writes real headlines into events.title."""
 import pandas as pd
+import pytest
 
 from pipeline.ingestion import GDELT2Ingestor
 
@@ -55,6 +56,7 @@ def test_augment_records_without_any_map_preserves_pre_m7_behaviour():
     assert rows[0][_TITLE] == "SOUTH KOREAN"
 
 
+@pytest.mark.gkg
 def test_run_once_populates_headline_map(monkeypatch):
     ingestor = GDELT2Ingestor()
     monkeypatch.setattr(
