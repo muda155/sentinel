@@ -20,6 +20,7 @@ python -m pipeline.clustering --lookback-hours 6 --run-scoring  # Grid convergen
 python -m pipeline.scoring                         # Confidence scoring only
 python -m pipeline.llm_verifier --threshold 40    # LLM verification (requires NIM credentials)
 python -m pipeline.consistency --hotspot-id N     # Consistency engine (FR-22)
+python -m pipeline.gkg --backfill --days 7            # Backfill real headlines into events.title (FR-25)
 python -m pipeline.pipeline                        # Full orchestrated pipeline (runs once + starts scheduler)
 
 # Dashboard
@@ -36,7 +37,7 @@ pytest tests/test_dashboard_refresh.py -v # Verbose single file
 Sentinel is a geopolitical OSINT pipeline: ingest → cluster → score → verify → visualize.
 
 ### Pipeline Flow (6 steps, `pipeline/pipeline.py`)
-1. **GDELT Ingestion** (`pipeline/ingestion.py`) — fetches GDELT 2.0 CSV, filters CAMEO codes 14–19 (military events), inserts into `events` table
+1. **GDELT Ingestion** (`pipeline/ingestion.py`) — fetches GDELT 2.0 CSV, filters CAMEO codes 14–19 (military events), inserts into `events` table. Also fetches the paired GKG 2.1 file (`pipeline/gkg.py`) and stores the real article headline in `events.title` instead of `Actor1Name` (FR-25); any GKG failure falls back to the actor name.
 2. **ACLED Ingestion** (`pipeline/ingestion.py:ACLEDIngestor`) — fetches ACLED API events (academic tier, 1 req/s), normalizes to the `events` schema with `source_system='ACLED'`, caches responses in Redis (TTL = `SENTINEL_ACLED_POLL_HOURS × 3600`); falls back to GDELT-only data on API/Redis failure
 3. **Grid-cell convergence** (`pipeline/clustering.py:bin_to_grid`) — bins events into 1°×1° cells; a cell becomes an active zone when `convergence_score ≥ 1` (≥1 classified event in 24h). 2+ distinct event types raise the alert level but aren't required to activate, so GDELT-only feeds still produce hotspots (FR-WM-CONVERGENCE)
 4. **DBSCAN clustering** (`pipeline/clustering.py:run_clustering_pipeline`) — per-cell micro-clustering using haversine distance; produces precise hotspots stored in `hotspots` table
@@ -68,6 +69,7 @@ All config via env vars in `sentinel.env` (copy to override locally). Key vars:
 - `SENTINEL_LOOKBACK_HOURS` (default 24), `SENTINEL_DBSCAN_WINDOW_HOURS` (default 2), `SENTINEL_LLM_THRESHOLD` (default 40)
 - `SENTINEL_CONF_W_DENSITY` (default 0.7), `SENTINEL_CONF_W_DIVERSITY` (default 0.3), `SENTINEL_CONF_DENSITY_DIVISOR` (default 3) — conf_score recalibration (FR-7/FR-8/FR-9)
 - `SENTINEL_NLI_MODEL` (default `cross-encoder/nli-deberta-v3-base`), `SENTINEL_NLI_MIN_PROB` (default 0.6), `SENTINEL_CONSISTENCY_DISPUTE_RATIO` (default 0.5), `SENTINEL_CONSISTENCY_MAX_CLAIMS` (default 8), `SENTINEL_CONSISTENCY_MAX_DOMAINS` (default 20), `SENTINEL_CONSISTENCY_MIN_CLAIM_WORDS` (default 4) — M6 Consistency Engine (FR-22)
+- `SENTINEL_GKG_ENABLED` (default `true`), `SENTINEL_GKG_TIMEOUT_S` (default 120), `SENTINEL_GKG_BACKFILL_DAYS` (default 7) — M7 GKG headline enrichment (FR-25)
 
 ## Spec compliance
 

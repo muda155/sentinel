@@ -6,7 +6,7 @@ import logging
 import os
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Iterable
 
@@ -16,6 +16,7 @@ from psycopg2.extras import execute_values
 
 from pipeline.clustering import assign_grid_cell
 from pipeline.db import get_pooled_connection
+from pipeline.gkg import fetch_headlines, gkg_enabled
 from pipeline.source_country import resolve_country
 
 try:
@@ -195,6 +196,9 @@ class GDELT2Ingestor:
     backoff_base_seconds: float = 1.0
     latest_export_retries: int = 12
     latest_export_backoff_seconds: float = 10.0
+    # Populated by run_once() from the GKG file paired with the export file
+    # (FR-25). Must be a declared field: the dataclass uses slots=True.
+    latest_headlines: dict[str, str] = field(default_factory=dict, repr=False)
 
     def fetch_latest_url(self) -> str:
         # Try lastupdate.txt first - get the first export.CSV.zip URL
@@ -235,7 +239,7 @@ class GDELT2Ingestor:
         filtered["EventRootCode"] = parsed_codes.loc[filtered.index].astype(int)
         return filtered
 
-    def insert_to_db(self, df: pd.DataFrame, conn) -> int:
+    def insert_to_db(self, df: pd.DataFrame, conn, *, headlines=None) -> int:
         # Validate schema before processing (FR-1)
         GDELTColumnSchema.validate(df)
 
@@ -246,7 +250,9 @@ class GDELT2Ingestor:
         # Register sources and get source_id for each event
         url_to_source_id = self._register_sources(df, conn)
 
-        augmented_records = self._augment_records(records, url_to_source_id)
+        augmented_records = self._augment_records(
+            records, url_to_source_id, headlines=headlines
+        )
 
         with conn.cursor() as cursor:
             execute_values(
@@ -310,7 +316,7 @@ class GDELT2Ingestor:
 
         return url_to_source_id
 
-    def _augment_records(self, records, url_to_source_id):
+    def _augment_records(self, records, url_to_source_id, headlines=None):
         """Build augmented insert tuples from raw event records.
 
         Record layout from _build_event_records:
@@ -318,8 +324,13 @@ class GDELT2Ingestor:
           [4]=url, [5]=title (Actor1Name), [6]=lon, [7]=lat, [8]=geo_precision,
           [9]=actor2_name, [10]=goldstein_scale, [11]=avg_tone, [12]=num_sources
 
+        ``headlines`` maps article URL to the real GKG headline (FR-25); it wins
+        over Actor1Name for the title column only. ``None`` means "use whatever
+        run_once() fetched", so existing callers need no change.
+
         Returns a list of 13-field tuples ready for execute_values INSERT.
         """
+        headline_map = self.latest_headlines if headlines is None else headlines
         augmented_records = []
         for record in records:
             global_event_id = record[0]
@@ -336,6 +347,7 @@ class GDELT2Ingestor:
 
             source_id = url_to_source_id.get(url)
             grid_cell_id = assign_grid_cell(lat, lon)
+            title = headline_map.get(url) or record[5]
             augmented_records.append((
                 "GDELT",                 # source_system
                 int(global_event_id),    # gdelt_global_event_id
@@ -344,13 +356,13 @@ class GDELT2Ingestor:
                 record[2],               # cameo_code
                 record[3],               # country_code
                 record[4],               # url
-                record[5],               # title
+                title,                   # title (GKG headline, else Actor1Name)
                 record[6],               # lon (for ST_MakePoint)
                 record[7],               # lat (for ST_MakePoint)
                 source_id,
                 grid_cell_id,
                 record[8],               # geo_precision (GDELT ActionGeo_Type)
-                record[5],               # actor1_name (Actor1Name doubles as title)
+                record[5],               # actor1_name (raw GDELT Actor1Name)
                 record[9],               # actor2_name
                 record[10],              # goldstein_scale
                 record[11],              # avg_tone
@@ -358,7 +370,7 @@ class GDELT2Ingestor:
             ))
         return augmented_records
 
-    def insert_to_db_returning_ids(self, df, conn) -> list[int]:
+    def insert_to_db_returning_ids(self, df, conn, *, headlines=None) -> list[int]:
         """Like insert_to_db, but RETURNS the event_id of each inserted row.
 
         Rows skipped by ON CONFLICT DO NOTHING are not returned (idempotent
@@ -368,7 +380,9 @@ class GDELT2Ingestor:
         if not records:
             return []
         url_to_source_id = self._register_sources(df, conn)
-        augmented_records = self._augment_records(records, url_to_source_id)
+        augmented_records = self._augment_records(
+            records, url_to_source_id, headlines=headlines
+        )
         if not augmented_records:
             return []
         ids: list[int] = []
@@ -402,6 +416,9 @@ class GDELT2Ingestor:
     def run_once(self) -> pd.DataFrame:
         # Find the most recent file that actually exists (not just in the index)
         latest_url = self.fetch_latest_existing_url()
+        # Pair the export file with its GKG twin so titles are real headlines
+        # rather than Actor1Name (FR-25). Never fatal: {} means fall back.
+        self.latest_headlines = fetch_headlines(latest_url) if gkg_enabled() else {}
         raw_df = self.download_csv(latest_url)
         return self.filter_military(raw_df)
 

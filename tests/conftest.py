@@ -9,6 +9,14 @@ import psycopg2
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _disable_gkg_by_default(monkeypatch, request):
+    """GKG enrichment reaches the network; tests opt in via @pytest.mark.gkg."""
+    if request.node.get_closest_marker("gkg"):
+        return
+    monkeypatch.setenv("SENTINEL_GKG_ENABLED", "false")
+
+
 @pytest.fixture
 def synthetic_gdelt_df() -> pd.DataFrame:
     """A valid GDELT 2.0 frame with all required columns.
