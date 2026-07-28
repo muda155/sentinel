@@ -1,4 +1,6 @@
 """Consistency engine unit tests: evidence rendering, extraction, consensus (FR-22)."""
+import numpy as np
+
 from pipeline.consistency import (
     ClaimVerdict,
     ExtractedClaim,
@@ -230,3 +232,67 @@ def test_dedupe_claims_empty_list():
     from pipeline.consistency import dedupe_claims
 
     assert dedupe_claims([]) == []
+
+
+class RecordingJudge:
+    """Wraps FakeJudge and records exactly which pairs it was asked about."""
+    def __init__(self):
+        self.seen = []
+        self._inner = FakeJudge()
+
+    def classify_pairs(self, pairs):
+        self.seen.extend(pairs)
+        return self._inner.classify_pairs(pairs)
+
+
+def test_judge_claims_without_sim_judges_every_pair():
+    from pipeline.consistency import judge_claims
+
+    judge = RecordingJudge()
+    judgments = judge_claims(_claims(), _EV3, judge)
+    assert len(judge.seen) == 3            # 1 claim x 3 evidence
+    assert len(judgments[0]) == 3
+
+
+def test_judge_claims_gates_low_similarity_pairs_out():
+    from pipeline.consistency import judge_claims
+
+    judge = RecordingJudge()
+    sim = np.array([[0.9, 0.1, 0.8]])      # middle row is off-topic
+    judgments = judge_claims(_claims(), _EV3, judge, sim=sim, threshold=0.35)
+    assert len(judge.seen) == 2            # the 0.1 pair never reached the model
+    assert len(judgments[0]) == 3          # but the grid is still complete
+    assert judgments[0][1].relation == "neutral"
+    assert judgments[0][1].probability == 0.0
+    assert judgments[0][1].citation_index == 2
+    assert judgments[0][1].domain == "b.com"
+
+
+def test_judge_claims_gate_suppresses_a_would_be_contradiction():
+    # This is the M8 bug in miniature: c.com contradicts, but it is off-topic,
+    # so it must never be judged and must not become a dispute.
+    from pipeline.consistency import consensus, judge_claims
+
+    sim = np.array([[0.9, 0.8, 0.05]])
+    judgments = judge_claims(_claims(), _EV3, FakeJudge(), sim=sim, threshold=0.35)
+    verdicts = consensus(_claims(), _EV3, judgments)
+    assert verdicts[0].status != "disputed"
+    assert verdicts[0].dispute == 0
+
+
+def test_judge_claims_all_pairs_gated_yields_all_neutral():
+    from pipeline.consistency import judge_claims
+
+    judge = RecordingJudge()
+    sim = np.array([[0.0, 0.0, 0.0]])
+    judgments = judge_claims(_claims(), _EV3, judge, sim=sim, threshold=0.35)
+    assert judge.seen == []
+    assert all(j.relation == "neutral" for j in judgments[0])
+
+
+def test_count_gated_pairs():
+    from pipeline.consistency import count_gated_pairs
+
+    sim = np.array([[0.9, 0.1, 0.8], [0.2, 0.2, 0.95]])
+    assert count_gated_pairs(sim, 0.35) == 3
+    assert count_gated_pairs(None, 0.35) == 0

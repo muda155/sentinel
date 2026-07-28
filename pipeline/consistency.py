@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ValidationError
 
 from pipeline.llm_verifier import _extract_json, call_llm_raw
+from pipeline.relevance import min_sim
 
 logger = logging.getLogger("sentinel.consistency")
 
@@ -243,29 +244,53 @@ class ClaimVerdict:
     evidence: list[EvidenceJudgment] = field(default_factory=list)
 
 
-def judge_claims(claims, evidence, judge) -> list[list[EvidenceJudgment]]:
-    """NLI-classify every (evidence premise, claim hypothesis) pair, batched."""
-    pairs = [
-        (item["evidence_text"], claim.text)
-        for claim in claims
-        for item in evidence
-    ]
-    if not pairs:
-        return [[] for _ in claims]
-    results = judge.classify_pairs(pairs)
+def judge_claims(claims, evidence, judge, *, sim=None, threshold=None) -> list[list[EvidenceJudgment]]:
+    """NLI-classify every (evidence premise, claim hypothesis) pair, batched.
+
+    When ``sim`` is supplied, only pairs at or above ``threshold`` reach the
+    model (FR-26). An MNLI cross-encoder assumes premise and hypothesis describe
+    the same scene, so off-scene pairs come back "contradiction" by
+    construction; gating is what stops unrelated stories disputing each other.
+
+    A judgment is still emitted for every pair — gated ones as neutral/0.0 — so
+    claim_evidence persistence and the FR-16 citation contract are unchanged."""
+    limit = min_sim() if threshold is None else threshold
+    pairs: list[tuple[str, str]] = []
+    positions: list[tuple[int, int]] = []
+    for ci, claim in enumerate(claims):
+        for ei, item in enumerate(evidence):
+            if sim is not None and float(sim[ci][ei]) < limit:
+                continue
+            pairs.append((item["evidence_text"], claim.text))
+            positions.append((ci, ei))
+
+    results = judge.classify_pairs(pairs) if pairs else []
+    judged = dict(zip(positions, results))
+
     judgments: list[list[EvidenceJudgment]] = []
-    cursor = 0
-    for _claim in claims:
+    for ci, _claim in enumerate(claims):
         row = []
-        for item in evidence:
-            relation, prob = results[cursor]
-            cursor += 1
+        for ei, item in enumerate(evidence):
+            relation, prob = judged.get((ci, ei), ("neutral", 0.0))
             row.append(EvidenceJudgment(
                 event_id=item["event_id"], citation_index=item["citation_index"],
                 domain=item["domain"], relation=relation, probability=prob,
             ))
         judgments.append(row)
     return judgments
+
+
+def count_gated_pairs(sim, threshold=None) -> int:
+    """How many (claim, evidence) pairs the gate suppresses. Persisted for tuning."""
+    if sim is None:
+        return 0
+    limit = min_sim() if threshold is None else threshold
+    return int(sum(
+        1
+        for row in sim
+        for value in row
+        if float(value) < limit
+    ))
 
 
 def consensus(claims, evidence, judgments) -> list[ClaimVerdict]:
