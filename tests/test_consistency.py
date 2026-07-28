@@ -184,3 +184,49 @@ def test_build_claims_prompt_demands_full_sentences():
     assert "complete English sentence" in prompt
     assert "Ignore numeric metadata" in prompt
     assert '{"claims": []}' in prompt
+
+
+def test_dedupe_claims_collapses_identical_text_and_merges_indices():
+    from pipeline.consistency import dedupe_claims
+
+    claims = [
+        ExtractedClaim(text="Russia is mentioned", source_indices=[1]),
+        ExtractedClaim(text="Russia is mentioned", source_indices=[2]),
+        ExtractedClaim(text="Russia is mentioned", source_indices=[1, 3]),
+    ]
+    result = dedupe_claims(claims)
+    assert len(result) == 1
+    assert result[0].text == "Russia is mentioned"
+    assert result[0].source_indices == [1, 2, 3]
+
+
+def test_dedupe_claims_normalises_case_whitespace_and_trailing_period():
+    from pipeline.consistency import dedupe_claims
+
+    claims = [
+        ExtractedClaim(text="The army advanced north.", source_indices=[1]),
+        ExtractedClaim(text="the  army   advanced north", source_indices=[2]),
+    ]
+    result = dedupe_claims(claims)
+    assert len(result) == 1
+    assert result[0].text == "The army advanced north."   # first spelling wins
+    assert result[0].source_indices == [1, 2]
+
+
+def test_dedupe_claims_keeps_distinct_claims_and_order():
+    from pipeline.consistency import dedupe_claims
+
+    claims = [
+        ExtractedClaim(text="The army advanced north.", source_indices=[1]),
+        ExtractedClaim(text="The army retreated south.", source_indices=[2]),
+    ]
+    result = dedupe_claims(claims)
+    assert [c.text for c in result] == [
+        "The army advanced north.", "The army retreated south."
+    ]
+
+
+def test_dedupe_claims_empty_list():
+    from pipeline.consistency import dedupe_claims
+
+    assert dedupe_claims([]) == []

@@ -201,6 +201,29 @@ def extract_claims(evidence: list[dict], *, llm=None) -> list[ExtractedClaim]:
     return claims
 
 
+def _normalised_claim_key(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip().casefold().rstrip(".!?")
+
+
+def dedupe_claims(claims: list[ExtractedClaim]) -> list[ExtractedClaim]:
+    """Collapse claims with identical normalised text (FR-26).
+
+    Without this, a repeated claim is scored once per copy: hotspot 24795 held
+    three "Russia is mentioned" rows, each contributing its own weight."""
+    by_key: dict[str, ExtractedClaim] = {}
+    indices: dict[str, set[int]] = {}
+    for claim in claims:
+        key = _normalised_claim_key(claim.text)
+        if key not in by_key:
+            by_key[key] = claim
+            indices[key] = set()
+        indices[key].update(claim.source_indices)
+    return [
+        ExtractedClaim(text=claim.text, source_indices=sorted(indices[key]))
+        for key, claim in by_key.items()
+    ]
+
+
 @dataclass
 class EvidenceJudgment:
     event_id: int
