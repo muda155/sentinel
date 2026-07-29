@@ -73,6 +73,22 @@ def test_engine_persists_claims_and_score(live_conn, seeded_hotspot):
         assert cur.fetchone()[0] == pytest.approx(result.score)
 
 
+def test_engine_leaves_gate_stats_null_when_the_gate_is_off(live_conn, seeded_hotspot):
+    """NULL means "not measured". 0 would read as "measured, suppressed nothing".
+
+    The gate-effect analysis partitions hotspots on `gated_pairs IS NULL`, so
+    conflating the two would silently fold ungated rows into the gated cohort.
+    conftest disables relevance for unmarked tests, so this is the gate-off path.
+    """
+    run_consistency_engine(live_conn, seeded_hotspot, judge=FakeJudge(), llm=_fake_llm)
+    with live_conn.cursor() as cur:
+        cur.execute(
+            "SELECT gated_pairs, vacuous_claims_dropped FROM hotspots WHERE hotspot_id = %s",
+            (seeded_hotspot,),
+        )
+        assert cur.fetchone() == (None, None)
+
+
 def test_engine_rerun_replaces_claims(live_conn, seeded_hotspot):
     run_consistency_engine(live_conn, seeded_hotspot, judge=FakeJudge(), llm=_fake_llm)
     run_consistency_engine(live_conn, seeded_hotspot, judge=FakeJudge(), llm=_fake_llm)

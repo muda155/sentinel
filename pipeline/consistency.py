@@ -448,8 +448,11 @@ def run_consistency_engine(conn, hotspot_id: int, *, judge=None,
         claims = dedupe_claims(claims)
 
         sim = None
-        gated = 0
-        dropped = 0
+        # NULL, not 0: the columns record a measurement, and a gate that never
+        # ran made none. Writing 0 would be indistinguishable from a gate that
+        # ran and suppressed nothing, which is the comparison they exist for.
+        gated = None
+        dropped = None
         if relevance_enabled():
             # RelevanceUnavailable propagates to the handler below: the engine
             # skips rather than judging ungated, which is measured to be wrong
