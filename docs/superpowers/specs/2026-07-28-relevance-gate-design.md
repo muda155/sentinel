@@ -194,6 +194,12 @@ The pipeline itself is still never blocked: a skipped engine leaves `consistency
 - **Integration (live DB):** migration 022 columns populated after an engine run.
 - **Contradiction injection:** the existing `eval/consistency/inject.py` — a planted, genuinely contradicting evidence row must still be detected through the gate. This guards the gate's own dangerous failure mode and is the single most important test in M8.
 
+### The harness itself was broken (found 2026-07-29)
+
+The plan above treats `inject.py` as trustworthy inherited machinery. It was not. Its planted premise — `"CONTRARY: The opposite is reported - not the case that {claim}"` — quotes the claim verbatim behind a long prefix, and the NLI cross-encoder reads that lexical overlap as *entailment*: measured over 40 live claims, it was classified `contradicts` only **17.5%** of the time. Every dispute `detection_rate` counted therefore came from the other evidence rather than the planted row, so the "single most important test in M8" was measuring noise while printing a healthy number. The unit-test fakes shared the bug, keying on the `"CONTRARY:"` prefix — a marker the real model never sees — so the suite stayed green throughout.
+
+Fixed by rewording to a short, front-loaded negation (`"It is false that {claim}"`, read correctly **95.0%** of the time) and by adding `planted_premise_detected()` as a standing validity check on the harness. Any future change to the premise wording must re-measure both numbers. The lesson generalises beyond this file: a fake that encodes the same assumption as the code under test cannot falsify it.
+
 ## Evaluation (thesis)
 
 Two parts:
