@@ -42,7 +42,7 @@ Sentinel is a geopolitical OSINT pipeline: ingest → cluster → score → veri
 3. **Grid-cell convergence** (`pipeline/clustering.py:bin_to_grid`) — bins events into 1°×1° cells; a cell becomes an active zone when `convergence_score ≥ 1` (≥1 classified event in 24h). 2+ distinct event types raise the alert level but aren't required to activate, so GDELT-only feeds still produce hotspots (FR-WM-CONVERGENCE)
 4. **DBSCAN clustering** (`pipeline/clustering.py:run_clustering_pipeline`) — per-cell micro-clustering using haversine distance; produces precise hotspots stored in `hotspots` table
 5. **Consensus Confidence Scoring** (`pipeline/scoring.py`) — computes `conf_score` (0–100) per hotspot: `0.7 × source_density + 0.3 × geopolitical_diversity`, where `source_density = tanh(Σ trust over unique domains / 3)` (env-configurable via `SENTINEL_CONF_W_DENSITY`, `SENTINEL_CONF_W_DIVERSITY`, `SENTINEL_CONF_DENSITY_DIVISOR`). Geopolitical diversity reads `sources.country_code` over unique domains.
-6. **LLM Verification + Consistency** (`pipeline/llm_verifier.py`, `pipeline/consistency.py`) — two-phase shared entry point `generate_sitrep`: 6a Consistency Engine (claim extraction via NIM, local NLI agreement, trust-weighted consensus, `consistency_score`), 6b SITREP from verified claims (headline fallback if 6a produced nothing)
+6. **LLM Verification + Consistency** (`pipeline/llm_verifier.py`, `pipeline/consistency.py`) — two-phase shared entry point `generate_sitrep`: 6a Consistency Engine (claim extraction via NIM, local NLI agreement with FR-26 relevance gate, trust-weighted consensus, `consistency_score`), 6b SITREP from verified claims (headline fallback if 6a produced nothing)
 
 The scheduler (`APScheduler`) runs the full cycle every `SENTINEL_POLL_INTERVAL_S` seconds (default 900).
 
@@ -70,6 +70,7 @@ All config via env vars in `sentinel.env` (copy to override locally). Key vars:
 - `SENTINEL_CONF_W_DENSITY` (default 0.7), `SENTINEL_CONF_W_DIVERSITY` (default 0.3), `SENTINEL_CONF_DENSITY_DIVISOR` (default 3) — conf_score recalibration (FR-7/FR-8/FR-9)
 - `SENTINEL_NLI_MODEL` (default `cross-encoder/nli-deberta-v3-base`), `SENTINEL_NLI_MIN_PROB` (default 0.6), `SENTINEL_CONSISTENCY_DISPUTE_RATIO` (default 0.5), `SENTINEL_CONSISTENCY_MAX_CLAIMS` (default 8), `SENTINEL_CONSISTENCY_MAX_DOMAINS` (default 20), `SENTINEL_CONSISTENCY_MIN_CLAIM_WORDS` (default 4) — M6 Consistency Engine (FR-22)
 - `SENTINEL_GKG_ENABLED` (default `true`), `SENTINEL_GKG_TIMEOUT_S` (default 120), `SENTINEL_GKG_BACKFILL_DAYS` (default 7) — M7 GKG headline enrichment (FR-25)
+- `SENTINEL_RELEVANCE_ENABLED` (default `true`), `SENTINEL_RELEVANCE_MODEL`, `SENTINEL_RELEVANCE_MIN_SIM` (0.35), `SENTINEL_RELEVANCE_MIN_PEAK` (0.15), `SENTINEL_RELEVANCE_MAX_HOMOGENEITY` (0.75) — M8 relevance gate (FR-26)
 
 ## Spec compliance
 

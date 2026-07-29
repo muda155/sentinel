@@ -3,15 +3,25 @@ import os
 
 import pytest
 
-from eval.consistency.inject import detection_rate, inject_contradiction
+from eval.consistency.inject import (
+    contradiction_premise,
+    detection_rate,
+    inject_contradiction,
+)
 from pipeline.consistency import ExtractedClaim, consensus, judge_claims
 
 
 class FakeJudge:
+    """Reads exactly the planted premise as contradicting, everything else as support.
+
+    Matching on the whole premise rather than a prefix keeps the fake honest: if
+    the wording in ``contradiction_premise`` drifts again, these tests fail
+    instead of silently passing on a marker the real model never sees.
+    """
     def classify_pairs(self, pairs):
         out = []
         for premise, hypothesis in pairs:
-            if premise.startswith("CONTRARY:"):
+            if premise == contradiction_premise(hypothesis):
                 out.append(("contradicts", 0.95))
             else:
                 out.append(("supports", 0.9))
@@ -28,7 +38,7 @@ def test_inject_contradiction_appends_fresh_row():
     injected = inject_contradiction(_EVIDENCE, "Army advanced north.")
     assert len(injected) == len(_EVIDENCE) + 1
     fake = injected[-1]
-    assert fake["evidence_text"].startswith("CONTRARY:")
+    assert fake["evidence_text"] == contradiction_premise("Army advanced north.")
     assert fake["citation_index"] == 2
     assert fake["domain"] not in {"a.com"}
     assert fake["event_id"] < 0  # synthetic marker, never a real event

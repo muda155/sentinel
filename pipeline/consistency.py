@@ -15,6 +15,15 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ValidationError
 
 from pipeline.llm_verifier import _extract_json, call_llm_raw
+from pipeline.relevance import (
+    evidence_homogeneity,
+    get_embedder,
+    max_homogeneity,
+    min_peak,
+    min_sim,
+    relevance_enabled,
+    similarity_matrix,
+)
 
 logger = logging.getLogger("sentinel.consistency")
 
@@ -201,6 +210,58 @@ def extract_claims(evidence: list[dict], *, llm=None) -> list[ExtractedClaim]:
     return claims
 
 
+def _normalised_claim_key(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip().casefold().rstrip(".!?")
+
+
+def dedupe_claims(claims: list[ExtractedClaim]) -> list[ExtractedClaim]:
+    """Collapse claims with identical normalised text (FR-26).
+
+    Without this, a repeated claim is scored once per copy: hotspot 24795 held
+    three "Russia is mentioned" rows, each contributing its own weight."""
+    by_key: dict[str, ExtractedClaim] = {}
+    indices: dict[str, set[int]] = {}
+    for claim in claims:
+        key = _normalised_claim_key(claim.text)
+        if key not in by_key:
+            by_key[key] = claim
+            indices[key] = set()
+        indices[key].update(claim.source_indices)
+    return [
+        ExtractedClaim(text=claim.text, source_indices=sorted(indices[key]))
+        for key, claim in by_key.items()
+    ]
+
+
+def filter_vacuous_claims(claims, sim, homogeneity: float):
+    """Drop claims that discriminate nothing (FR-26).
+
+    A vacuous claim ("Russia is mentioned") is entailed by every premise, so it
+    is corroborated trivially. It shows up as a similarity row that is flat: no
+    peak above its own median.
+
+    The homogeneity guard is essential, not a refinement. When every evidence
+    row covers the same event, a good specific claim is ALSO uniformly similar
+    to all of them — dropping it would discard exactly the multi-source
+    corroboration the engine exists to reward. So the filter only runs when the
+    evidence set actually contains distinct topics to discriminate between.
+
+    Returns (kept claims, sim rows for those claims, number dropped)."""
+    import numpy as np
+
+    if not claims or homogeneity >= max_homogeneity():
+        return list(claims), sim, 0
+
+    peak = min_peak()
+    keep = [
+        i for i in range(len(claims))
+        if float(np.max(sim[i]) - np.median(sim[i])) >= peak
+    ]
+    dropped = len(claims) - len(keep)
+    kept_sim = sim[keep] if keep else sim[:0]
+    return [claims[i] for i in keep], kept_sim, dropped
+
+
 @dataclass
 class EvidenceJudgment:
     event_id: int
@@ -220,29 +281,53 @@ class ClaimVerdict:
     evidence: list[EvidenceJudgment] = field(default_factory=list)
 
 
-def judge_claims(claims, evidence, judge) -> list[list[EvidenceJudgment]]:
-    """NLI-classify every (evidence premise, claim hypothesis) pair, batched."""
-    pairs = [
-        (item["evidence_text"], claim.text)
-        for claim in claims
-        for item in evidence
-    ]
-    if not pairs:
-        return [[] for _ in claims]
-    results = judge.classify_pairs(pairs)
+def judge_claims(claims, evidence, judge, *, sim=None, threshold=None) -> list[list[EvidenceJudgment]]:
+    """NLI-classify every (evidence premise, claim hypothesis) pair, batched.
+
+    When ``sim`` is supplied, only pairs at or above ``threshold`` reach the
+    model (FR-26). An MNLI cross-encoder assumes premise and hypothesis describe
+    the same scene, so off-scene pairs come back "contradiction" by
+    construction; gating is what stops unrelated stories disputing each other.
+
+    A judgment is still emitted for every pair — gated ones as neutral/0.0 — so
+    claim_evidence persistence and the FR-16 citation contract are unchanged."""
+    limit = min_sim() if threshold is None else threshold
+    pairs: list[tuple[str, str]] = []
+    positions: list[tuple[int, int]] = []
+    for ci, claim in enumerate(claims):
+        for ei, item in enumerate(evidence):
+            if sim is not None and float(sim[ci][ei]) < limit:
+                continue
+            pairs.append((item["evidence_text"], claim.text))
+            positions.append((ci, ei))
+
+    results = judge.classify_pairs(pairs) if pairs else []
+    judged = dict(zip(positions, results))
+
     judgments: list[list[EvidenceJudgment]] = []
-    cursor = 0
-    for _claim in claims:
+    for ci, _claim in enumerate(claims):
         row = []
-        for item in evidence:
-            relation, prob = results[cursor]
-            cursor += 1
+        for ei, item in enumerate(evidence):
+            relation, prob = judged.get((ci, ei), ("neutral", 0.0))
             row.append(EvidenceJudgment(
                 event_id=item["event_id"], citation_index=item["citation_index"],
                 domain=item["domain"], relation=relation, probability=prob,
             ))
         judgments.append(row)
     return judgments
+
+
+def count_gated_pairs(sim, threshold=None) -> int:
+    """How many (claim, evidence) pairs the gate suppresses. Persisted for tuning."""
+    if sim is None:
+        return 0
+    limit = min_sim() if threshold is None else threshold
+    return int(sum(
+        1
+        for row in sim
+        for value in row
+        if float(value) < limit
+    ))
 
 
 def consensus(claims, evidence, judgments) -> list[ClaimVerdict]:
@@ -315,7 +400,8 @@ class ConsistencyRepository:
         self._conn = conn
 
     def save(self, hotspot_id: int, verdicts: list[ClaimVerdict],
-             score: float | None) -> None:
+             score: float | None, *, gated_pairs: int | None = None,
+             vacuous_claims_dropped: int | None = None) -> None:
         with self._conn.cursor() as cursor:
             cursor.execute("DELETE FROM claims WHERE hotspot_id = %s", (hotspot_id,))
             for verdict in verdicts:
@@ -334,8 +420,11 @@ class ConsistencyRepository:
                          judgment.probability),
                     )
             cursor.execute(
-                "UPDATE hotspots SET consistency_score = %s WHERE hotspot_id = %s",
-                (score, hotspot_id),
+                """UPDATE hotspots
+                   SET consistency_score = %s, gated_pairs = %s,
+                       vacuous_claims_dropped = %s
+                   WHERE hotspot_id = %s""",
+                (score, gated_pairs, vacuous_claims_dropped, hotspot_id),
             )
         self._conn.commit()
 
@@ -356,14 +445,38 @@ def run_consistency_engine(conn, hotspot_id: int, *, judge=None,
         claims = extract_claims(evidence, llm=llm)
         if not claims:
             return None
+        claims = dedupe_claims(claims)
+
+        sim = None
+        # NULL, not 0: the columns record a measurement, and a gate that never
+        # ran made none. Writing 0 would be indistinguishable from a gate that
+        # ran and suppressed nothing, which is the comparison they exist for.
+        gated = None
+        dropped = None
+        if relevance_enabled():
+            # RelevanceUnavailable propagates to the handler below: the engine
+            # skips rather than judging ungated, which is measured to be wrong
+            # on ~65% of claims (FR-26, fail-closed).
+            embedder = get_embedder()
+            evidence_texts = [e["evidence_text"] for e in evidence]
+            sim = similarity_matrix([c.text for c in claims], evidence_texts, embedder)
+            homogeneity = evidence_homogeneity(evidence_texts, embedder)
+            claims, sim, dropped = filter_vacuous_claims(claims, sim, homogeneity)
+            if not claims:
+                return None
+            gated = count_gated_pairs(sim)
+
         if judge is None:
             from pipeline.nli import get_judge
             judge = get_judge()
-        judgments = judge_claims(claims, evidence, judge)
+        judgments = judge_claims(claims, evidence, judge, sim=sim)
         verdicts = consensus(claims, evidence, judgments)
         score = hotspot_consistency_score(verdicts)
         insufficient = len({e["domain"] for e in evidence}) < 2
-        ConsistencyRepository(conn).save(hotspot_id, verdicts, score)
+        ConsistencyRepository(conn).save(
+            hotspot_id, verdicts, score,
+            gated_pairs=gated, vacuous_claims_dropped=dropped,
+        )
         return EngineResult(verdicts=verdicts, score=score,
                             insufficient_sources=insufficient)
     except Exception as exc:

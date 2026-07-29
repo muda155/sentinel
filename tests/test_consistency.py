@@ -1,4 +1,7 @@
 """Consistency engine unit tests: evidence rendering, extraction, consensus (FR-22)."""
+import numpy as np
+import pytest
+
 from pipeline.consistency import (
     ClaimVerdict,
     ExtractedClaim,
@@ -184,3 +187,163 @@ def test_build_claims_prompt_demands_full_sentences():
     assert "complete English sentence" in prompt
     assert "Ignore numeric metadata" in prompt
     assert '{"claims": []}' in prompt
+
+
+def test_dedupe_claims_collapses_identical_text_and_merges_indices():
+    from pipeline.consistency import dedupe_claims
+
+    claims = [
+        ExtractedClaim(text="Russia is mentioned", source_indices=[1]),
+        ExtractedClaim(text="Russia is mentioned", source_indices=[2]),
+        ExtractedClaim(text="Russia is mentioned", source_indices=[1, 3]),
+    ]
+    result = dedupe_claims(claims)
+    assert len(result) == 1
+    assert result[0].text == "Russia is mentioned"
+    assert result[0].source_indices == [1, 2, 3]
+
+
+def test_dedupe_claims_normalises_case_whitespace_and_trailing_period():
+    from pipeline.consistency import dedupe_claims
+
+    claims = [
+        ExtractedClaim(text="The army advanced north.", source_indices=[1]),
+        ExtractedClaim(text="the  army   advanced north", source_indices=[2]),
+    ]
+    result = dedupe_claims(claims)
+    assert len(result) == 1
+    assert result[0].text == "The army advanced north."   # first spelling wins
+    assert result[0].source_indices == [1, 2]
+
+
+def test_dedupe_claims_keeps_distinct_claims_and_order():
+    from pipeline.consistency import dedupe_claims
+
+    claims = [
+        ExtractedClaim(text="The army advanced north.", source_indices=[1]),
+        ExtractedClaim(text="The army retreated south.", source_indices=[2]),
+    ]
+    result = dedupe_claims(claims)
+    assert [c.text for c in result] == [
+        "The army advanced north.", "The army retreated south."
+    ]
+
+
+def test_dedupe_claims_empty_list():
+    from pipeline.consistency import dedupe_claims
+
+    assert dedupe_claims([]) == []
+
+
+class RecordingJudge:
+    """Wraps FakeJudge and records exactly which pairs it was asked about."""
+    def __init__(self):
+        self.seen = []
+        self._inner = FakeJudge()
+
+    def classify_pairs(self, pairs):
+        self.seen.extend(pairs)
+        return self._inner.classify_pairs(pairs)
+
+
+def test_judge_claims_without_sim_judges_every_pair():
+    from pipeline.consistency import judge_claims
+
+    judge = RecordingJudge()
+    judgments = judge_claims(_claims(), _EV3, judge)
+    assert len(judge.seen) == 3            # 1 claim x 3 evidence
+    assert len(judgments[0]) == 3
+
+
+def test_judge_claims_gates_low_similarity_pairs_out():
+    from pipeline.consistency import judge_claims
+
+    judge = RecordingJudge()
+    sim = np.array([[0.9, 0.1, 0.8]])      # middle row is off-topic
+    judgments = judge_claims(_claims(), _EV3, judge, sim=sim, threshold=0.35)
+    assert len(judge.seen) == 2            # the 0.1 pair never reached the model
+    assert len(judgments[0]) == 3          # but the grid is still complete
+    assert judgments[0][1].relation == "neutral"
+    assert judgments[0][1].probability == 0.0
+    assert judgments[0][1].citation_index == 2
+    assert judgments[0][1].domain == "b.com"
+
+
+def test_judge_claims_gate_suppresses_a_would_be_contradiction():
+    # This is the M8 bug in miniature: c.com contradicts, but it is off-topic,
+    # so it must never be judged and must not become a dispute.
+    from pipeline.consistency import consensus, judge_claims
+
+    sim = np.array([[0.9, 0.8, 0.05]])
+    judgments = judge_claims(_claims(), _EV3, FakeJudge(), sim=sim, threshold=0.35)
+    verdicts = consensus(_claims(), _EV3, judgments)
+    assert verdicts[0].status != "disputed"
+    assert verdicts[0].dispute == 0
+
+
+def test_judge_claims_all_pairs_gated_yields_all_neutral():
+    from pipeline.consistency import judge_claims
+
+    judge = RecordingJudge()
+    sim = np.array([[0.0, 0.0, 0.0]])
+    judgments = judge_claims(_claims(), _EV3, judge, sim=sim, threshold=0.35)
+    assert judge.seen == []
+    assert all(j.relation == "neutral" for j in judgments[0])
+
+
+def test_count_gated_pairs():
+    from pipeline.consistency import count_gated_pairs
+
+    sim = np.array([[0.9, 0.1, 0.8], [0.2, 0.2, 0.95]])
+    assert count_gated_pairs(sim, 0.35) == 3
+    assert count_gated_pairs(None, 0.35) == 0
+
+
+def _c(text):
+    return ExtractedClaim(text=text, source_indices=[1])
+
+
+def test_vacuity_drops_claim_that_matches_everything_in_a_diverse_hotspot():
+    from pipeline.consistency import filter_vacuous_claims
+
+    claims = [_c("Russia is mentioned"), _c("The army advanced north.")]
+    sim = np.array([
+        [0.60, 0.61, 0.59, 0.60],   # matches everything, peaks on nothing
+        [0.90, 0.85, 0.20, 0.15],   # peaks on the first two rows
+    ])
+    kept, kept_sim, dropped = filter_vacuous_claims(claims, sim, homogeneity=0.3)
+    assert [c.text for c in kept] == ["The army advanced north."]
+    assert dropped == 1
+    assert kept_sim.shape == (1, 4)
+    assert kept_sim[0][0] == pytest.approx(0.90)
+
+
+def test_vacuity_guard_keeps_flat_claim_in_a_homogeneous_hotspot():
+    # All evidence is one event, so a good claim is uniformly similar too.
+    # Dropping it would discard the textbook corroboration case.
+    from pipeline.consistency import filter_vacuous_claims
+
+    claims = [_c("The army advanced north.")]
+    sim = np.array([[0.80, 0.81, 0.79, 0.80]])
+    kept, kept_sim, dropped = filter_vacuous_claims(claims, sim, homogeneity=0.9)
+    assert len(kept) == 1
+    assert dropped == 0
+    assert kept_sim.shape == (1, 4)
+
+
+def test_vacuity_can_drop_every_claim():
+    from pipeline.consistency import filter_vacuous_claims
+
+    claims = [_c("Russia is mentioned"), _c("Iran is mentioned")]
+    sim = np.array([[0.6, 0.6, 0.6], [0.5, 0.5, 0.5]])
+    kept, kept_sim, dropped = filter_vacuous_claims(claims, sim, homogeneity=0.2)
+    assert kept == []
+    assert dropped == 2
+    assert kept_sim.shape == (0, 3)
+
+
+def test_vacuity_no_claims_is_a_noop():
+    from pipeline.consistency import filter_vacuous_claims
+
+    kept, kept_sim, dropped = filter_vacuous_claims([], np.zeros((0, 3)), homogeneity=0.2)
+    assert kept == [] and dropped == 0 and kept_sim.shape == (0, 3)

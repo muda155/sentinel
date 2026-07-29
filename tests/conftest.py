@@ -10,11 +10,12 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _disable_gkg_by_default(monkeypatch, request):
-    """GKG enrichment reaches the network; tests opt in via @pytest.mark.gkg."""
-    if request.node.get_closest_marker("gkg"):
-        return
-    monkeypatch.setenv("SENTINEL_GKG_ENABLED", "false")
+def _disable_network_backends(monkeypatch, request):
+    """Disable GKG and relevance by default; tests opt in via markers."""
+    if not request.node.get_closest_marker("gkg"):
+        monkeypatch.setenv("SENTINEL_GKG_ENABLED", "false")
+    if not request.node.get_closest_marker("relevance"):
+        monkeypatch.setenv("SENTINEL_RELEVANCE_ENABLED", "false")
 
 
 @pytest.fixture
