@@ -10,6 +10,27 @@ from pipeline.relevance import similarity_matrix
 _FAKE_DOMAIN = "injected.invalid"
 
 
+def contradiction_premise(claim_text: str) -> str:
+    """Phrase a premise the NLI model actually reads as contradicting the claim.
+
+    The wording is load-bearing and was chosen by measurement, not taste. The
+    previous template ("CONTRARY: The opposite is reported - not the case that
+    X") was rarely read as contradicting at all: the claim appears verbatim and
+    a negation cue buried behind a long prefix loses to the lexical overlap. A
+    short, front-loaded negation is read correctly instead, at a cosine
+    similarity far above SENTINEL_RELEVANCE_MIN_SIM, so the FR-26 gate never
+    suppresses it and the harness measures the consensus algorithm rather than
+    the phrasing.
+
+    Measured 2026-07-29 over the 40 most recent live claims (deberta NLI,
+    all-MiniLM-L6-v2 embedder): planted_premise_detected 95.0% with this
+    wording vs 17.5% with the old one; planted-premise cosine min 0.847, mean
+    0.915; detection_rate 97.5% with the gate both on and off. The absolute
+    numbers move with the claim set in the DB — re-measure with
+    ``python -m eval.consistency.inject`` rather than trusting these."""
+    return f"It is false that {claim_text}"
+
+
 def inject_contradiction(evidence: list[dict], claim_text: str) -> list[dict]:
     """Return evidence + one fabricated contradicting row (fresh domain/index)."""
     next_index = max((e["citation_index"] for e in evidence), default=0) + 1
@@ -18,7 +39,7 @@ def inject_contradiction(evidence: list[dict], claim_text: str) -> list[dict]:
         "citation_index": next_index,
         "domain": _FAKE_DOMAIN,
         "trust_score": 0.8,
-        "evidence_text": f"CONTRARY: The opposite is reported - not the case that {claim_text}",
+        "evidence_text": contradiction_premise(claim_text),
     }
     return [*evidence, fake]
 
@@ -45,6 +66,22 @@ def detection_rate(cases: list[tuple[list[dict], str]], judge, embedder=None) ->
         if verdicts[0].status == "disputed":
             detected += 1
     return detected / len(cases)
+
+
+def planted_premise_detected(cases: list[tuple[list[dict], str]], judge) -> float:
+    """Fraction of injected premises the NLI itself calls a contradiction.
+
+    Validity check on the harness, not on Sentinel. detection_rate only means
+    something while this stays high: if the model does not read the planted row
+    as contradicting, every dispute it reports came from the *other* evidence
+    and the harness is measuring noise. Before the premise wording was fixed it
+    sat far below the 0.8 floor main() warns at, while detection_rate still
+    printed a healthy-looking number."""
+    if not cases:
+        return 0.0
+    pairs = [(contradiction_premise(text), text) for _evidence, text in cases]
+    results = judge.classify_pairs(pairs)
+    return sum(1 for rel, _p in results if rel == "contradicts") / len(pairs)
 
 
 def main() -> int:  # pragma: no cover
@@ -75,9 +112,15 @@ def main() -> int:  # pragma: no cover
     if not cases:
         print("no claims in DB - run the pipeline first")
         return 1
-    rate = detection_rate(cases, get_judge(),
+    judge = get_judge()
+    rate = detection_rate(cases, judge,
                           embedder=get_embedder() if relevance_enabled() else None)
-    print(f"cases={len(cases)} detection_rate={rate:.2%}")
+    planted = planted_premise_detected(cases, judge)
+    print(f"cases={len(cases)} detection_rate={rate:.2%} "
+          f"planted_premise_detected={planted:.2%} gate={'on' if relevance_enabled() else 'off'}")
+    if planted < 0.8:
+        print("WARNING: the planted premise is not read as contradicting - "
+              "detection_rate above is not measuring the consensus algorithm.")
     return 0
 
 

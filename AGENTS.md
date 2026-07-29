@@ -84,7 +84,7 @@ Directories with no child AGENTS.md are owned directly by this root doc:
 - `load/` — load testing (`sse_locust.py` Locust suite against the SSE/API layer)
 - `docker/` — container build (`Dockerfile`)
 - `docs/` — ops runbooks (`ops/`), implementation plans (`superpowers/`), analyses, World Monitor reference archive (`world_monitor_archive/`)
-- `eval/` — thesis evaluation harnesses (`eval/consistency/`: gold-set export/scoring, contradiction injection)
+- `eval/` — thesis evaluation harnesses (`eval/consistency/`: gold-set export/scoring, contradiction injection). The injection harness reports `planted_premise_detected` alongside `detection_rate`; a `detection_rate` quoted without it is not evidence, because a premise the NLI does not read as contradicting makes every counted dispute come from unrelated evidence. Changing `contradiction_premise` requires re-measuring both.
 
 ## Child DOX Index
 
