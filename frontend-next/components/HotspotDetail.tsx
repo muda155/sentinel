@@ -1,6 +1,6 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
-import { api, Claim, ClaimEvidence, Hotspot, HotspotClaims, HotspotEvent, HotspotSummary } from "@/lib/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, ClaimEvidence, Hotspot, HotspotClaims, HotspotEvent, HotspotSummary } from "@/lib/api";
 import { orderClaims, splitEvidence, statusColor, statusLabelKey } from "@/lib/claims";
 import type { MessageKey } from "@/lib/i18n-core";
 import { useAuth } from "@/lib/auth";
@@ -18,12 +18,43 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   const [claims, setClaims] = useState<HotspotClaims | null>(null);
   const [flash, setFlash] = useState<number | null>(null);
   const listRef = useRef<HTMLOListElement>(null);
+  const [summaryError, setSummaryError] = useState(false);
+  const [eventsError, setEventsError] = useState(false);
+  // one generation ref per resource — a shared counter would let the last
+  // synchronous fetcher (claims) invalidate the two that started earlier
+  const summaryGen = useRef(0);
+  const eventsGen = useRef(0);
+  const claimsGen = useRef(0);
 
-  useEffect(() => {
-    api.summary(hotspot.hotspot_id, token).then(setSummary).catch(() => setSummary(null));
-    api.hotspotEvents(hotspot.hotspot_id, token).then(setEvents).catch(() => setEvents([]));
-    api.hotspotClaims(hotspot.hotspot_id, token).then(setClaims).catch(() => setClaims(null));
+  // guard every set* with a generation check so a stale in-flight response
+  // (older retry, or a previous hotspot) can never populate this panel
+  const fetchSummary = useCallback(() => {
+    const gen = ++summaryGen.current;
+    api.summary(hotspot.hotspot_id, token)
+      .then((s) => { if (summaryGen.current === gen) setSummary(s); })
+      .catch(() => { if (summaryGen.current === gen) setSummaryError(true); });
   }, [hotspot.hotspot_id, token]);
+
+  const fetchEvents = useCallback(() => {
+    const gen = ++eventsGen.current;
+    api.hotspotEvents(hotspot.hotspot_id, token)
+      .then((e) => { if (eventsGen.current === gen) setEvents(e); })
+      .catch(() => { if (eventsGen.current === gen) setEventsError(true); });
+  }, [hotspot.hotspot_id, token]);
+
+  const fetchClaims = useCallback(() => {
+    const gen = ++claimsGen.current;
+    api.hotspotClaims(hotspot.hotspot_id, token)
+      .then((c) => { if (claimsGen.current === gen) setClaims(c); })
+      .catch(() => { if (claimsGen.current === gen) setClaims(null); });
+  }, [hotspot.hotspot_id, token]);
+
+  useEffect(() => { fetchSummary(); fetchEvents(); fetchClaims(); }, [fetchSummary, fetchEvents, fetchClaims]);
+
+  const retrySummary = () => { setSummaryError(false); fetchSummary(); };
+  const retryEvents = () => { setEventsError(false); fetchEvents(); };
+
+  const retryButtonStyle = { background: "#333", color: "#eee", padding: "2px 10px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 12, marginLeft: 8 };
 
   const jumpTo = (n: number) => {
     const row = listRef.current?.querySelector<HTMLElement>(`[data-cite="${n}"]`);
@@ -70,7 +101,11 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
             </p>
           )}
         </>
-      ) : <p>{t("detail.loading")}</p>}
+      ) : summaryError ? (
+        <p>{t("detail.error")} <button onClick={retrySummary} style={retryButtonStyle}>{t("detail.retry")}</button></p>
+      ) : (
+        <p>{t("detail.loading")}</p>
+      )}
       {(hotspot.consistency_score != null || (claims?.claims.length ?? 0) > 0) && (
         <>
           <h4>{t("detail.consistency")}</h4>
@@ -121,7 +156,10 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
           </ul>
         </>
       )}
-      <h4>{t("detail.sources")} ({cited.length})</h4>
+      <h4>{t("detail.sources")}{!eventsError && ` (${cited.length})`}</h4>
+      {eventsError ? (
+        <p>{t("detail.error")} <button onClick={retryEvents} style={retryButtonStyle}>{t("detail.retry")}</button></p>
+      ) : (
       <ol ref={listRef} style={{ paddingLeft: 20, fontSize: 13 }}>
         {cited.map((e) => (
           <li key={e.event_id} data-cite={e.citation_index}
@@ -139,6 +177,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
           </li>
         ))}
       </ol>
+      )}
       <TrustTierEditor />
     </aside>
   );

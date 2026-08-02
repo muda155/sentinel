@@ -1,7 +1,9 @@
 export const en = {
   "header.heatmap": "Convergence heatmap",
   "header.globe": "Globe view",
+  "globe.unavailable": "WebGL is not available in this browser",
   "header.logout": "Log out",
+  "app.loading": "Loading…",
   "detail.confidence": "Confidence (source reliability)",
   "detail.convergence": "Convergence (cross-domain co-occurrence)",
   "detail.aiBrief": "AI Intelligence Brief",
@@ -9,6 +11,8 @@ export const en = {
   "detail.sitrepPending": "SITREP pending — being generated.",
   "detail.conflictDetected": "Conflict detected across sources.",
   "detail.loading": "Loading…",
+  "detail.error": "Failed to load data.",
+  "detail.retry": "Retry",
   "detail.sources": "Sources",
   "detail.events": "events",
   "detail.trustTier": "Trust tier",

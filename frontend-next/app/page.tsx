@@ -63,7 +63,13 @@ export default function Page() {
     if (showHeat && cells.length === 0 && token) api.gridCells(token).then(setCells).catch(() => {});
   }, [showHeat, cells.length, token]);
 
-  if (!hydrated) return null; // avoid hydration mismatch
+  if (!hydrated) {
+    return (
+      <main style={{ position: "absolute", inset: 0, background: "#0d1117", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <span style={{ color: "#6b7280", fontSize: 14 }}>{t("app.loading")}</span>
+      </main>
+    );
+  }
   if (!token || !user) return null; // redirecting
 
   const heatLayer = showHeat
@@ -78,7 +84,7 @@ export default function Page() {
     <main style={{ position: "absolute", inset: 0, display: "flex" }}>
       <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
         <SearchBar token={token} onSelectHotspot={handleSearchSelect} />
-        {globe ? <GlobeView /> : <MapView onSelect={handleSelectHotspot} extraLayers={heatLayer} hotspots={filteredHotspots} focus={focus} newHotspots={newHotspots} />}
+        {globe ? <GlobeView hotspots={filteredHotspots} onSelect={handleSelectHotspot} /> : <MapView onSelect={handleSelectHotspot} extraLayers={heatLayer} hotspots={filteredHotspots} focus={focus} newHotspots={newHotspots} />}
         <div style={{ position: "absolute", top: 12, left: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <label style={{ background: "#111", color: "#eee", padding: "8px 12px", borderRadius: 6, cursor: "pointer" }}>
             <input type="checkbox" checked={showHeat} onChange={(e) => setShowHeat(e.target.checked)} /> {t("header.heatmap")}
@@ -99,7 +105,7 @@ export default function Page() {
           </button>
         </div>
       </div>
-      {selected && <HotspotDetail hotspot={selected} onClose={() => setSelected(null)} />}
+      {selected && <HotspotDetail key={selected.hotspot_id} hotspot={selected} onClose={() => setSelected(null)} />}
     </main>
   );
 }

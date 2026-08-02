@@ -3,7 +3,9 @@ import type { MessageKey } from "./en";
 export const vi: Record<MessageKey, string> = {
   "header.heatmap": "Bản đồ nhiệt hội tụ",
   "header.globe": "Chế độ quả cầu",
+  "globe.unavailable": "Trình duyệt không hỗ trợ WebGL",
   "header.logout": "Đăng xuất",
+  "app.loading": "Đang tải…",
   "detail.confidence": "Độ tin cậy (độ tin cậy nguồn)",
   "detail.convergence": "Độ hội tụ (đồng xuất hiện đa lĩnh vực)",
   "detail.aiBrief": "Bản tin tình báo AI",
@@ -11,6 +13,8 @@ export const vi: Record<MessageKey, string> = {
   "detail.sitrepPending": "SITREP đang được tạo.",
   "detail.conflictDetected": "Phát hiện mâu thuẫn giữa các nguồn.",
   "detail.loading": "Đang tải…",
+  "detail.error": "Không tải được dữ liệu.",
+  "detail.retry": "Thử lại",
   "detail.sources": "Nguồn tin",
   "detail.events": "sự kiện",
   "detail.trustTier": "Bậc tin cậy",
