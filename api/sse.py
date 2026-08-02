@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import date, datetime
 
 from api import queries
 from pipeline.db import get_pooled_connection
@@ -11,6 +12,21 @@ from pipeline.streams import StreamBus
 
 SSE_GROUP = "cg:api-sse"
 STREAMS = ["sentinel:hotspot_created", "sentinel:summary_ready"]
+
+
+def _json_default(o):
+    # hotspots.end_window/created_at are `timestamp with time zone` -> datetime,
+    # which json.dumps cannot encode. An exception here escapes mid-yield, so the
+    # chunked response ends without its final chunk (browser:
+    # ERR_INCOMPLETE_CHUNKED_ENCODING) and the message never reaches the ack
+    # below. Reads use `>` (new entries only), so the unacked message is never
+    # retried -- it strands in the group's pending list while the next emitted
+    # event crashes the next connection the same way. Every hotspot_created
+    # frame was lost this way; 18k messages had piled up pending.
+    # ISO-8601 matches what the Hotspot response_model emits on GET /hotspots.
+    if isinstance(o, (datetime, date)):
+        return o.isoformat()
+    raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
 
 
 def _enrich(payload: dict) -> dict:
@@ -45,7 +61,7 @@ async def hotspot_event_source(bus: StreamBus, consumer: str):
                     if s.endswith("hotspot_created")
                     else data
                 )
-                yield {"event": s.split(":")[-1], "data": json.dumps(frame)}
+                yield {"event": s.split(":")[-1], "data": json.dumps(frame, default=_json_default)}
                 await asyncio.to_thread(bus.ack, s, SSE_GROUP, mid)
         if not got:
             await asyncio.sleep(0.5)
