@@ -254,6 +254,7 @@ def fetch_hotspot_events(conn, hotspot_id: int) -> list[dict] | None:
                        THEN lower(e.cameo_code)
                      ELSE 'unknown'
                    END AS event_type_label,
+                   e.goldstein_scale, e.avg_tone, e.num_sources, e.fatalities,
                    s.trust_tier, COALESCE(s.trust_score, 0.4) AS trust_score
             FROM event_hotspot eh
             JOIN events e ON e.event_id = eh.event_id

@@ -50,6 +50,10 @@ class HotspotEvent(BaseModel):
     source_system: str
     event_type_label: str
     event_date: datetime
+    goldstein_scale: float | None = None
+    avg_tone: float | None = None
+    num_sources: int | None = None
+    fatalities: int | None = None
     trust_tier: int | None = None
     trust_score: float
     citation_index: int | None = None
