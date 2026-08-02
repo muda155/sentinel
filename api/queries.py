@@ -124,7 +124,8 @@ def fetch_events_bbox(conn, *, sw_lat, sw_lon, ne_lat, ne_lon, start, end,
 
 
 _HOTSPOT_SELECT = """
-    SELECT h.hotspot_id, h.name, ST_Y(h.centroid_geom) lat, ST_X(h.centroid_geom) lon,
+    SELECT h.hotspot_id, h.name, h.start_window,
+           ST_Y(h.centroid_geom) lat, ST_X(h.centroid_geom) lon,
            h.end_window, h.created_at,
            COALESCE(h.conf_score,0) conf_score, h.event_count,
            h.consistency_score,
@@ -159,7 +160,8 @@ def fetch_search(conn, q: str) -> dict[str, list]:
         cur.execute(
             """
             SELECT e.event_id, e.title, e.url, e.event_date,
-                   h.hotspot_id, h.name, ST_Y(h.centroid_geom) h_lat,
+                   h.hotspot_id, h.name, h.start_window h_start_window,
+                   ST_Y(h.centroid_geom) h_lat,
                    ST_X(h.centroid_geom) h_lon, COALESCE(h.conf_score,0) h_conf,
                    h.event_count h_event_count,
                    COALESCE(g.convergence_score,h.convergence_score,0) h_convergence,
@@ -180,6 +182,7 @@ def fetch_search(conn, q: str) -> dict[str, list]:
                 "domain": _domain(r["url"]), "event_date": r["event_date"],
                 "hotspot": {
                     "hotspot_id": r["hotspot_id"], "name": r["name"],
+                    "start_window": r["h_start_window"],
                     "lat": r["h_lat"], "lon": r["h_lon"], "conf_score": r["h_conf"],
                     "convergence_score": r["h_convergence"],
                     "alert_level": r["h_alert"], "event_count": r["h_event_count"],
