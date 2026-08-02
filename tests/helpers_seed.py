@@ -4,7 +4,21 @@ events guaranteed to fire convergence + DBSCAN."""
 
 from __future__ import annotations
 
+from datetime import date
+
 from pipeline.source_country import resolve_country
+
+
+def current_month_start() -> date:
+    """First day of the current month, for fixtures that need a literal event_date.
+
+    Migration 010 only provisions partitions through the current month on a fresh
+    DB, so a hardcoded past date aborts the insert with `no partition of relation
+    "events" found for row` — green on a dev DB that has accumulated partitions,
+    red in CI the moment the wall clock rolls into a new month. Stable within a
+    run, so ON CONFLICT dedup still fires. Prefer NOW() in SQL where possible.
+    """
+    return date.today().replace(day=1)
 
 
 def seed_demo_events(conn) -> list[int]:
