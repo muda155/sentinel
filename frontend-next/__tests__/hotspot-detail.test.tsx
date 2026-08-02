@@ -217,4 +217,21 @@ describe("HotspotDetail data loading", () => {
     expect(screen.getAllByText(new RegExp(`12 ${viLocale["detail.fatalities"]}`)).length).toBe(2);
     expect(screen.getByText(new RegExp(viLocale["detail.activeSince"]))).toBeTruthy();
   });
+
+  it("shows NLI probability next to a contradicting citation", async () => {
+    summaryMock.mockResolvedValue(summaryFixture);
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue({
+      claims: [{
+        claim_id: 1, claim_text: "Claim A", status: "disputed",
+        evidence: [{ event_id: 1, citation_index: 1, relation: "contradicts", probability: 0.91, domain: "example.com" }],
+      }],
+      insufficient_sources: false,
+    });
+
+    renderPanel();
+
+    await screen.findByText("Claim A");
+    expect(screen.getByTitle(/0\.91/)).toBeTruthy();
+  });
 });

@@ -149,8 +149,16 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
                   const cite = (e: ClaimEvidence, color: string) => (
                     <sup key={e.event_id} role="button"
                          onClick={() => jumpTo(e.citation_index as number)}
+                         title={e.probability != null
+                           ? `${t("detail.probability")} ${e.probability.toFixed(2)}`
+                           : undefined}
                          style={{ color, cursor: "pointer", fontWeight: 600 }}>
                       [{e.citation_index}]
+                      {e.probability != null && (
+                        <span style={{ fontWeight: 400, opacity: 0.75 }}>
+                          {" "}p={e.probability.toFixed(2)}
+                        </span>
+                      )}
                     </sup>
                   );
                   return (
