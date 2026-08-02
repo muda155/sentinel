@@ -9,10 +9,15 @@ import { useT } from "@/lib/i18n";
 export default function GlobeView({ hotspots, onSelect }: { hotspots: Hotspot[]; onSelect?: (h: Hotspot) => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const instanceRef = useRef<GlobeInstance | null>(null);
+  const onSelectRef = useRef(onSelect);
+  useEffect(() => { onSelectRef.current = onSelect; });
   const { t } = useT();
   const [webglOk] = useState(() => {
     const c = document.createElement("canvas");
-    return Boolean(c.getContext("webgl2") || c.getContext("webgl"));
+    const gl = c.getContext("webgl2") || c.getContext("webgl");
+    // the probe itself must release its context, or every toggle leaks one
+    gl?.getExtension("WEBGL_lose_context")?.loseContext();
+    return Boolean(gl);
   });
 
   useEffect(() => {
@@ -27,7 +32,7 @@ export default function GlobeView({ hotspots, onSelect }: { hotspots: Hotspot[];
         const [r, gr, b] = fillColor((d as Hotspot).conf_score);
         return `rgb(${r},${gr},${b})`;
       })
-      .onPointClick((d) => onSelect?.(d as Hotspot));
+      .onPointClick((d) => onSelectRef.current?.(d as Hotspot));
     instanceRef.current = g;
     return () => {
       const inst = instanceRef.current;
