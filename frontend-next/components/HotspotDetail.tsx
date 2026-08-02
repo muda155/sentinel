@@ -9,7 +9,9 @@ import { parseCitations } from "@/lib/citations";
 import { sitrepState } from "@/lib/sitrep";
 import { buildSubtitle } from "@/lib/subtitle";
 import { formatIntensity, formatTone, maxFatalities, meanTone } from "@/lib/severity";
+import { bucketByDay } from "@/lib/sparkline";
 import TrustTierEditor from "@/components/TrustTierEditor";
+import Sparkline from "@/components/Sparkline";
 
 export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; onClose: () => void }) {
   const { token } = useAuth();
@@ -182,6 +184,12 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
               </li>
             ))}
           </ul>
+        </>
+      )}
+      {events.length > 0 && (
+        <>
+          <h4>{t("detail.activity")}</h4>
+          <Sparkline counts={bucketByDay(events, 14).map((b) => b.count)} />
         </>
       )}
       <h4>{t("detail.sources")}{!eventsError && ` (${cited.length})`}</h4>
