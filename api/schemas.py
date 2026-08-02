@@ -16,6 +16,7 @@ class Hotspot(BaseModel):
     event_count: int
     consistency_score: float | None = None
     name: str | None = None
+    start_window: datetime | None = None
     end_window: datetime | None = None
     created_at: datetime | None = None
 
@@ -50,6 +51,10 @@ class HotspotEvent(BaseModel):
     source_system: str
     event_type_label: str
     event_date: datetime
+    goldstein_scale: float | None = None
+    avg_tone: float | None = None
+    num_sources: int | None = None
+    fatalities: int | None = None
     trust_tier: int | None = None
     trust_score: float
     citation_index: int | None = None

@@ -30,8 +30,9 @@ interface HotspotProps {
   alert_level: string;
   event_count: number;
   name: string | null;
-  end_window: string;
-  created_at: string;
+  start_window: string | null;
+  end_window: string | null;
+  created_at: string | null;
 }
 
 function toProps(h: Hotspot): HotspotProps {
@@ -43,6 +44,7 @@ function toProps(h: Hotspot): HotspotProps {
     alert_level: h.alert_level,
     event_count: h.event_count,
     name: h.name,
+    start_window: h.start_window,
     end_window: h.end_window,
     created_at: h.created_at,
   };
@@ -58,6 +60,7 @@ function fromProps(p: HotspotProps, lon: number, lat: number): Hotspot {
     alert_level: p.alert_level as Hotspot["alert_level"],
     event_count: p.event_count,
     name: p.name,
+    start_window: p.start_window,
     end_window: p.end_window,
     created_at: p.created_at,
     consistency_score: p.consistency_score ?? null,

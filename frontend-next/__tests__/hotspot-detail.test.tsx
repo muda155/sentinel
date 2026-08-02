@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { vi as viLocale } from "@/lib/locales/vi";
 import type { Claim, Hotspot, HotspotClaims, HotspotEvent, HotspotSummary } from "@/lib/api";
 
@@ -31,7 +31,8 @@ import HotspotDetail from "@/components/HotspotDetail";
 const hotspotFixture: Hotspot = {
   hotspot_id: 123, lat: 10.5, lon: 20.5, conf_score: 80, convergence_score: 55,
   alert_level: "Critical", event_count: 3, consistency_score: 70,
-  name: "Test Hotspot", end_window: "2026-08-02T00:00:00Z", created_at: "2026-08-01T00:00:00Z",
+  name: "Test Hotspot", start_window: "2026-07-30T00:00:00Z",
+  end_window: "2026-08-02T00:00:00Z", created_at: "2026-08-01T00:00:00Z",
 };
 
 const summaryFixture: HotspotSummary = {
@@ -42,6 +43,7 @@ const summaryFixture: HotspotSummary = {
 const eventFixture: HotspotEvent = {
   event_id: 1, title: "Clashes reported", url: "https://example.com/1", domain: "example.com",
   source_system: "GDELT", event_type_label: "military_conflict", event_date: "2026-08-01T00:00:00Z",
+  goldstein_scale: -8, avg_tone: -5.25, num_sources: 12, fatalities: 3,
   trust_tier: 3, trust_score: 0.8, citation_index: 1,
 };
 
@@ -185,4 +187,105 @@ describe("HotspotDetail data loading", () => {
       expect(screen.getByText(freshText)).toBeTruthy();
     },
   );
+
+  it("renders severity badges on a source row", async () => {
+    summaryMock.mockResolvedValue(summaryFixture);
+    eventsMock.mockResolvedValue([
+      eventFixture,
+      { ...eventFixture, event_id: 2, title: "ACLED Clashes", source_system: "ACLED", event_type_label: "armed_conflict",
+        num_sources: null, fatalities: null, goldstein_scale: null, avg_tone: null, citation_index: 2 },
+    ]);
+    claimsMock.mockResolvedValue(claimsFixture);
+
+    renderPanel();
+
+    // scope to the source row: the header aggregate renders similar text
+    const gdeltRow = (await screen.findByText(eventFixture.title!)).closest("li")!;
+    expect(within(gdeltRow).getByText("GDELT")).toBeTruthy();
+    expect(within(gdeltRow).getByText("military_conflict")).toBeTruthy();
+    expect(within(gdeltRow).getByText(`3 ${viLocale["detail.fatalities"]}`)).toBeTruthy();
+    expect(within(gdeltRow).getByText(`12 ${viLocale["detail.numSources"]}`)).toBeTruthy();
+
+    // system/type badges only render when the hotspot's events differ in them;
+    // num_sources <= 1 and null fatalities must not render a badge
+    const acledRow = screen.getByText("ACLED").closest("li")!;
+    expect(within(acledRow).getByText("armed_conflict")).toBeTruthy();
+    expect(within(acledRow).queryByText(new RegExp(viLocale["detail.numSources"]))).toBeNull();
+    expect(within(acledRow).queryByText(new RegExp(viLocale["detail.fatalities"]))).toBeNull();
+  });
+
+  it("shows the severity aggregate and lifespan in the header", async () => {
+    summaryMock.mockResolvedValue(summaryFixture);
+    eventsMock.mockResolvedValue([eventFixture, { ...eventFixture, event_id: 2, fatalities: 12, citation_index: 2 }]);
+    claimsMock.mockResolvedValue(claimsFixture);
+
+    renderPanel();
+
+    // the aggregate labels the max as a max (not a total); both events are GDELT
+    // so the per-row system/type badges are gated off and the text is unique
+    await screen.findByText(new RegExp(viLocale["detail.activeSince"]));
+    expect(screen.getByText(new RegExp(`12 ${viLocale["detail.maxFatalities"]}`))).toBeTruthy();
+    expect(screen.getByText(new RegExp(viLocale["detail.activeSince"]))).toBeTruthy();
+  });
+
+  it("collapses the lifespan line when start and end fall on the same day", async () => {
+    summaryMock.mockResolvedValue(summaryFixture);
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue(claimsFixture);
+
+    render(
+      <HotspotDetail hotspot={{ ...hotspotFixture, start_window: "2026-08-02T00:00:00Z", end_window: "2026-08-02T00:00:00Z" }} onClose={() => {}} />
+    );
+
+    await screen.findByText(new RegExp(viLocale["detail.activeSince"]));
+    expect(screen.getByText(new RegExp(viLocale["detail.activeSince"]))).toBeTruthy();
+    expect(screen.queryByText(new RegExp(viLocale["detail.lastSeen"]))).toBeNull();
+  });
+
+  it("shows the activity sparkline only when events span more than one day", async () => {
+    summaryMock.mockResolvedValue(summaryFixture);
+    claimsMock.mockResolvedValue(claimsFixture);
+
+    // all events on a single day -> sparkline hidden (inert chrome)
+    eventsMock.mockResolvedValue([eventFixture]);
+    renderPanel();
+    await screen.findByText(eventFixture.title!);
+    expect(screen.queryByText(viLocale["detail.activity"])).toBeNull();
+
+    // events on two days -> sparkline renders with the translated aria-label
+    eventsMock.mockResolvedValue([
+      eventFixture,
+      { ...eventFixture, event_id: 2, event_date: "2026-07-30T00:00:00Z", citation_index: 2 },
+    ]);
+    renderPanel();
+    // wait for the second panel's events to resolve before asserting the sparkline
+    const imgs = await screen.findAllByRole("img", { name: viLocale["detail.activity"] });
+    expect(imgs.length).toBe(1);
+    expect(screen.getAllByText(viLocale["detail.activity"]).length).toBe(1);
+  });
+
+  it("shows NLI probability next to a contradicting citation", async () => {
+    summaryMock.mockResolvedValue(summaryFixture);
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue({
+      claims: [{
+        claim_id: 1, claim_text: "Claim A", status: "disputed",
+        evidence: [
+          { event_id: 1, citation_index: 1, relation: "contradicts", probability: 0.91, domain: "example.com" },
+          { event_id: 2, citation_index: 2, relation: "supports", probability: 0.5, domain: "example.org" },
+        ],
+      }],
+      insufficient_sources: false,
+    });
+
+    renderPanel();
+
+    await screen.findByText("Claim A");
+    // the title tooltip carries probability on every citation...
+    expect(screen.getByTitle(/0\.91/)).toBeTruthy();
+    expect(screen.getByTitle(/0\.5/)).toBeTruthy();
+    // ...but the inline p= is dispute-only (supporting is near-constant p≈1.00)
+    expect(screen.getByText(/p=0\.91/)).toBeTruthy();
+    expect(screen.queryByText(/p=0\.5/)).toBeNull();
+  });
 });

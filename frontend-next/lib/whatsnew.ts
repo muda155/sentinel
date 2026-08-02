@@ -6,7 +6,8 @@ export const LAST_SEEN_KEY = "sentinel_hotspots_last_seen";
  * Check if a hotspot is new relative to the last-seen timestamp.
  * Returns false for malformed dates.
  */
-export function isNew(createdAt: string, lastSeen: number): boolean {
+export function isNew(createdAt: string | null, lastSeen: number): boolean {
+  if (createdAt == null) return false;
   const created = new Date(createdAt).getTime();
   if (isNaN(created)) return false;
   return created > lastSeen;

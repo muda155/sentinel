@@ -20,6 +20,7 @@ function makeHotspot(overrides: Partial<Hotspot>): Hotspot {
     alert_level: "Medium",
     event_count: 5,
     name: "Test",
+    start_window: null,
     end_window: new Date().toISOString(),
     created_at: new Date().toISOString(),
     ...overrides,
