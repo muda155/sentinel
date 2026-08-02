@@ -2,11 +2,14 @@
 import pandas as pd
 
 from pipeline.ingestion import GDELT2Ingestor
+from tests.helpers_seed import current_month_start
 
 
 def _gdelt_df() -> pd.DataFrame:
     return pd.DataFrame([{
-        "GlobalEventID": 424242, "SQLDATE": 20260726, "EventRootCode": 19,
+        "GlobalEventID": 424242,
+        "SQLDATE": int(current_month_start().strftime("%Y%m%d")),
+        "EventRootCode": 19,
         "EventCode": "190", "Actor1Name": "MILITARY", "Actor2Name": "REBELS",
         "GoldsteinScale": -8.0, "AvgTone": -5.2, "NumSources": 12,
         "ActionGeo_Lat": 31.5, "ActionGeo_Long": 34.45, "ActionGeo_Type": 3,
@@ -48,7 +51,7 @@ def test_acled_insert_persists_notes_and_fatalities(live_conn):
     from pipeline.ingestion import ACLEDIngestor
 
     df = pd.DataFrame([{
-        "event_id_cnty": "TEST-M6-1", "event_date": "2026-07-26",
+        "event_id_cnty": "TEST-M6-1", "event_date": current_month_start().isoformat(),
         "latitude": 31.5, "longitude": 34.45, "country_code": "ISR",
         "event_type_label": "armed_conflict", "location": "Test City",
         "source_domain": "example.org",
