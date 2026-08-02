@@ -1,6 +1,7 @@
 export const en = {
   "header.heatmap": "Convergence heatmap",
   "header.globe": "Globe view",
+  "globe.unavailable": "WebGL is not available in this browser",
   "header.logout": "Log out",
   "detail.confidence": "Confidence (source reliability)",
   "detail.convergence": "Convergence (cross-domain co-occurrence)",
