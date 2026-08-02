@@ -20,29 +20,33 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   const listRef = useRef<HTMLOListElement>(null);
   const [summaryError, setSummaryError] = useState(false);
   const [eventsError, setEventsError] = useState(false);
-  const genRef = useRef(0);
+  // one generation ref per resource — a shared counter would let the last
+  // synchronous fetcher (claims) invalidate the two that started earlier
+  const summaryGen = useRef(0);
+  const eventsGen = useRef(0);
+  const claimsGen = useRef(0);
 
   // guard every set* with a generation check so a stale in-flight response
   // (older retry, or a previous hotspot) can never populate this panel
   const fetchSummary = useCallback(() => {
-    const gen = ++genRef.current;
+    const gen = ++summaryGen.current;
     api.summary(hotspot.hotspot_id, token)
-      .then((s) => { if (genRef.current === gen) setSummary(s); })
-      .catch(() => { if (genRef.current === gen) setSummaryError(true); });
+      .then((s) => { if (summaryGen.current === gen) setSummary(s); })
+      .catch(() => { if (summaryGen.current === gen) setSummaryError(true); });
   }, [hotspot.hotspot_id, token]);
 
   const fetchEvents = useCallback(() => {
-    const gen = ++genRef.current;
+    const gen = ++eventsGen.current;
     api.hotspotEvents(hotspot.hotspot_id, token)
-      .then((e) => { if (genRef.current === gen) setEvents(e); })
-      .catch(() => { if (genRef.current === gen) setEventsError(true); });
+      .then((e) => { if (eventsGen.current === gen) setEvents(e); })
+      .catch(() => { if (eventsGen.current === gen) setEventsError(true); });
   }, [hotspot.hotspot_id, token]);
 
   const fetchClaims = useCallback(() => {
-    const gen = ++genRef.current;
+    const gen = ++claimsGen.current;
     api.hotspotClaims(hotspot.hotspot_id, token)
-      .then((c) => { if (genRef.current === gen) setClaims(c); })
-      .catch(() => { if (genRef.current === gen) setClaims(null); });
+      .then((c) => { if (claimsGen.current === gen) setClaims(c); })
+      .catch(() => { if (claimsGen.current === gen) setClaims(null); });
   }, [hotspot.hotspot_id, token]);
 
   useEffect(() => { fetchSummary(); fetchEvents(); fetchClaims(); }, [fetchSummary, fetchEvents, fetchClaims]);
