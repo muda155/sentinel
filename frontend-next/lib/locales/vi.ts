@@ -12,6 +12,8 @@ export const vi: Record<MessageKey, string> = {
   "detail.sitrepPending": "SITREP đang được tạo.",
   "detail.conflictDetected": "Phát hiện mâu thuẫn giữa các nguồn.",
   "detail.loading": "Đang tải…",
+  "detail.error": "Không tải được dữ liệu.",
+  "detail.retry": "Thử lại",
   "detail.sources": "Nguồn tin",
   "detail.events": "sự kiện",
   "detail.trustTier": "Bậc tin cậy",

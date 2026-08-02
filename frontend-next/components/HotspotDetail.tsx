@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, Claim, ClaimEvidence, Hotspot, HotspotClaims, HotspotEvent, HotspotSummary } from "@/lib/api";
 import { orderClaims, splitEvidence, statusColor, statusLabelKey } from "@/lib/claims";
 import type { MessageKey } from "@/lib/i18n-core";
@@ -18,12 +18,21 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   const [claims, setClaims] = useState<HotspotClaims | null>(null);
   const [flash, setFlash] = useState<number | null>(null);
   const listRef = useRef<HTMLOListElement>(null);
+  const [summaryError, setSummaryError] = useState(false);
+  const [eventsError, setEventsError] = useState(false);
 
-  useEffect(() => {
-    api.summary(hotspot.hotspot_id, token).then(setSummary).catch(() => setSummary(null));
-    api.hotspotEvents(hotspot.hotspot_id, token).then(setEvents).catch(() => setEvents([]));
+  const load = useCallback(() => {
+    setSummary(null); setSummaryError(false);
+    setEvents([]); setEventsError(false);
+    setClaims(null);
+    api.summary(hotspot.hotspot_id, token).then(setSummary).catch(() => setSummaryError(true));
+    api.hotspotEvents(hotspot.hotspot_id, token).then(setEvents).catch(() => setEventsError(true));
     api.hotspotClaims(hotspot.hotspot_id, token).then(setClaims).catch(() => setClaims(null));
   }, [hotspot.hotspot_id, token]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const retryButtonStyle = { background: "#333", color: "#eee", padding: "2px 10px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 12, marginLeft: 8 };
 
   const jumpTo = (n: number) => {
     const row = listRef.current?.querySelector<HTMLElement>(`[data-cite="${n}"]`);
@@ -70,7 +79,11 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
             </p>
           )}
         </>
-      ) : <p>{t("detail.loading")}</p>}
+      ) : summaryError ? (
+        <p>{t("detail.error")} <button onClick={load} style={retryButtonStyle}>{t("detail.retry")}</button></p>
+      ) : (
+        <p>{t("detail.loading")}</p>
+      )}
       {(hotspot.consistency_score != null || (claims?.claims.length ?? 0) > 0) && (
         <>
           <h4>{t("detail.consistency")}</h4>
@@ -122,6 +135,9 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
         </>
       )}
       <h4>{t("detail.sources")} ({cited.length})</h4>
+      {eventsError ? (
+        <p>{t("detail.error")} <button onClick={load} style={retryButtonStyle}>{t("detail.retry")}</button></p>
+      ) : (
       <ol ref={listRef} style={{ paddingLeft: 20, fontSize: 13 }}>
         {cited.map((e) => (
           <li key={e.event_id} data-cite={e.citation_index}
@@ -139,6 +155,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
           </li>
         ))}
       </ol>
+      )}
       <TrustTierEditor />
     </aside>
   );

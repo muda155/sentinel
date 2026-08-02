@@ -10,6 +10,8 @@ export const en = {
   "detail.sitrepPending": "SITREP pending — being generated.",
   "detail.conflictDetected": "Conflict detected across sources.",
   "detail.loading": "Loading…",
+  "detail.error": "Failed to load data.",
+  "detail.retry": "Retry",
   "detail.sources": "Sources",
   "detail.events": "events",
   "detail.trustTier": "Trust tier",
