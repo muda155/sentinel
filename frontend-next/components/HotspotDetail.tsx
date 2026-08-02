@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, Claim, ClaimEvidence, Hotspot, HotspotClaims, HotspotEvent, HotspotSummary } from "@/lib/api";
+import { api, ClaimEvidence, Hotspot, HotspotClaims, HotspotEvent, HotspotSummary } from "@/lib/api";
 import { orderClaims, splitEvidence, statusColor, statusLabelKey } from "@/lib/claims";
 import type { MessageKey } from "@/lib/i18n-core";
 import { useAuth } from "@/lib/auth";
