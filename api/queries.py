@@ -161,6 +161,7 @@ def fetch_search(conn, q: str) -> dict[str, list]:
             """
             SELECT e.event_id, e.title, e.url, e.event_date,
                    h.hotspot_id, h.name, h.start_window h_start_window,
+                   h.end_window h_end_window, h.created_at h_created_at,
                    ST_Y(h.centroid_geom) h_lat,
                    ST_X(h.centroid_geom) h_lon, COALESCE(h.conf_score,0) h_conf,
                    h.event_count h_event_count,
@@ -183,6 +184,7 @@ def fetch_search(conn, q: str) -> dict[str, list]:
                 "hotspot": {
                     "hotspot_id": r["hotspot_id"], "name": r["name"],
                     "start_window": r["h_start_window"],
+                    "end_window": r["h_end_window"], "created_at": r["h_created_at"],
                     "lat": r["h_lat"], "lon": r["h_lon"], "conf_score": r["h_conf"],
                     "convergence_score": r["h_convergence"],
                     "alert_level": r["h_alert"], "event_count": r["h_event_count"],

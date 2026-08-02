@@ -15,6 +15,7 @@ All files in `tests/`.
 - Never hardcode a literal `event_date` in a fixture. Migration 010 provisions partitions only through the current month on a fresh DB, so a past literal passes on a dev DB (which has accumulated partitions) and fails CI with `no partition of relation "events" found for row` the moment the clock rolls into a new month. Use `NOW()`/`date_trunc('month', now())` in SQL, or `tests.helpers_seed.current_month_start()` for Python fixtures (GDELT `SQLDATE`, ACLED `event_date`)
 - `tests/conftest.py` owns all shared fixtures; add new fixtures there, not in individual test files
 - Test files are named `test_<module>.py` matching their target module
+- **Two DSN sources for live tests:** the `live_conn` fixture uses `SENTINEL_TEST_DB`, but worker-driven tests (`IngestionWorker().tick()` → `get_pooled_connection`) read the pool env vars (`PGHOST`/`PGPORT`/`PGDATABASE`/`PGUSER`/`PGPASSWORD`). Point BOTH at the same throwaway DB when running the suite — with only `SENTINEL_TEST_DB` set, the pool defaults to the dev stack (`PGDATABASE=sentinel` via pgbouncer 6432) and `tick()` mutates live data.
 
 ## Work Guidance
 

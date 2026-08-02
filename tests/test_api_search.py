@@ -49,7 +49,7 @@ def test_search_endpoint_groups_and_auth():
                           "start_window"}
     for e in body["events"]:
         assert set(e) >= {"event_id", "title", "url", "domain", "event_date", "hotspot"}
-        assert set(e["hotspot"]) >= {"hotspot_id", "start_window"}
+        assert set(e["hotspot"]) >= {"hotspot_id", "start_window", "end_window", "created_at"}
     for s in body["sources"]:
         assert set(s) >= {"source_id", "domain", "trust_tier", "hotspots"}
 
@@ -87,10 +87,14 @@ def test_search_hotspot_and_event_carry_start_window(live_conn):
     by_name = [h for h in fetch_search(live_conn, "StartWindowTestHotspot")["hotspots"]
                if h["hotspot_id"] == hid]
     assert by_name and by_name[0]["start_window"] is not None
+    assert by_name[0]["end_window"] is not None
+    assert by_name[0]["created_at"] is not None
 
     by_title = [e["hotspot"] for e in fetch_search(live_conn, "Searchable")["events"]
                 if e["hotspot"]["hotspot_id"] == hid]
     assert by_title and by_title[0]["start_window"] is not None
+    assert by_title[0]["end_window"] is not None
+    assert by_title[0]["created_at"] is not None
 
 
 @pytest_live
