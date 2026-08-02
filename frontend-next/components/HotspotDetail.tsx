@@ -67,6 +67,11 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   };
 
   const cited = events.filter((e) => e.citation_index !== null);
+  // provenance badges only earn their row-height when the hotspot actually
+  // mixes systems/types — a single-GDELT hotspot shows them identically on
+  // every row, so they are inert chrome there
+  const distinctSystems = new Set(events.map((e) => e.source_system)).size > 1;
+  const distinctTypes = new Set(events.map((e) => e.event_type_label)).size > 1;
 
   return (
     <aside style={{ width: 340, flexShrink: 0, height: "100%", overflowY: "auto", background: "#111", color: "#eee", padding: 16, boxSizing: "border-box" }}>
@@ -77,16 +82,18 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
         const fat = maxFatalities(events);
         const tone = meanTone(events);
         if (fat == null && tone == null && hotspot.start_window == null) return null;
+        const sameDay = hotspot.start_window && hotspot.end_window &&
+          new Date(hotspot.start_window).toDateString() === new Date(hotspot.end_window).toDateString();
         return (
           <p style={{ marginTop: 0, marginBottom: 8, fontSize: 11, color: "#9ca3af" }}>
-            {fat != null && <span style={{ color: "#fca5a5" }}>{fat} {t("detail.fatalities")}</span>}
+            {fat != null && <span style={{ color: "#fca5a5" }}>{fat} {t("detail.maxFatalities")}</span>}
             {fat != null && tone != null && " · "}
             {tone != null && <span>{t("detail.tone")} {tone.toFixed(1)}</span>}
             {hotspot.start_window && (
               <>
                 <br />
                 {t("detail.activeSince")} {new Date(hotspot.start_window).toLocaleDateString()}
-                {hotspot.end_window && <> · {t("detail.lastSeen")} {new Date(hotspot.end_window).toLocaleDateString()}</>}
+                {hotspot.end_window && !sameDay && <> · {t("detail.lastSeen")} {new Date(hotspot.end_window).toLocaleDateString()}</>}
               </>
             )}
           </p>
@@ -148,7 +155,10 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
                 {c.claim_text}
                 {(() => {
                   const { supporting, contradicting } = splitEvidence(c);
-                  const cite = (e: ClaimEvidence, color: string) => (
+                  // inline probability is dispute-only: on supporting citations it is
+                  // near-constant (p≈1.00) and reads as noise; the title tooltip stays
+                  // on every citation so the number is still one hover away
+                  const cite = (e: ClaimEvidence, color: string, showProb: boolean) => (
                     <sup key={e.event_id} role="button"
                          onClick={() => jumpTo(e.citation_index as number)}
                          title={e.probability != null
@@ -156,7 +166,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
                            : undefined}
                          style={{ color, cursor: "pointer", fontWeight: 600 }}>
                       [{e.citation_index}]
-                      {e.probability != null && (
+                      {showProb && e.probability != null && (
                         <span style={{ fontWeight: 400, opacity: 0.75 }}>
                           {" "}p={e.probability.toFixed(2)}
                         </span>
@@ -168,14 +178,14 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
                       {supporting.length > 0 && (
                         <span>
                           {t("claims.supportedBy")}{" "}
-                          {supporting.map((e) => cite(e, "#60a5fa"))}
+                          {supporting.map((e) => cite(e, "#60a5fa", false))}
                         </span>
                       )}
                       {supporting.length > 0 && contradicting.length > 0 && " · "}
                       {contradicting.length > 0 && (
                         <span>
                           {t("claims.contradictedBy")}{" "}
-                          {contradicting.map((e) => cite(e, "#f87171"))}
+                          {contradicting.map((e) => cite(e, "#f87171", true))}
                         </span>
                       )}
                     </div>
@@ -186,12 +196,18 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
           </ul>
         </>
       )}
-      {events.length > 0 && (
-        <>
-          <h4>{t("detail.activity")}</h4>
-          <Sparkline counts={bucketByDay(events, 14).map((b) => b.count)} />
-        </>
-      )}
+      {events.length > 0 && (() => {
+        const buckets = bucketByDay(events, 14);
+        // per-tick clustering lands all events on one day, so a 14-day window is
+        // a single spike — hide the sparkline rather than draw inert chrome
+        if (buckets.filter((b) => b.count > 0).length <= 1) return null;
+        return (
+          <>
+            <h4>{t("detail.activity")}</h4>
+            <Sparkline counts={buckets.map((b) => b.count)} label={t("detail.activity")} />
+          </>
+        );
+      })()}
       <h4>{t("detail.sources")}{!eventsError && ` (${cited.length})`}</h4>
       {eventsError ? (
         <p>{t("detail.error")} <button onClick={retryEvents} style={retryButtonStyle}>{t("detail.retry")}</button></p>
@@ -211,18 +227,22 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
               {" · "}{new Date(e.event_date).toLocaleDateString()}
             </div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 3 }}>
-              <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "#1f2937", color: "#9ca3af" }}>
-                {e.source_system}
-              </span>
-              <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "#1f2937", color: "#9ca3af" }}>
-                {e.event_type_label}
-              </span>
+              {distinctSystems && (
+                <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "#1f2937", color: "#9ca3af" }}>
+                  {e.source_system}
+                </span>
+              )}
+              {distinctTypes && (
+                <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "#1f2937", color: "#9ca3af" }}>
+                  {e.event_type_label}
+                </span>
+              )}
               {e.fatalities != null && e.fatalities > 0 && (
                 <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "#7f1d1d", color: "#fecaca" }}>
                   {e.fatalities} {t("detail.fatalities")}
                 </span>
               )}
-              {e.num_sources != null && (
+              {e.num_sources != null && e.num_sources > 1 && (
                 <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "#1f2937", color: "#9ca3af" }}>
                   {e.num_sources} {t("detail.numSources")}
                 </span>

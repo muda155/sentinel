@@ -190,17 +190,28 @@ describe("HotspotDetail data loading", () => {
 
   it("renders severity badges on a source row", async () => {
     summaryMock.mockResolvedValue(summaryFixture);
-    eventsMock.mockResolvedValue([eventFixture]);
+    eventsMock.mockResolvedValue([
+      eventFixture,
+      { ...eventFixture, event_id: 2, title: "ACLED Clashes", source_system: "ACLED", event_type_label: "armed_conflict",
+        num_sources: null, fatalities: null, goldstein_scale: null, avg_tone: null, citation_index: 2 },
+    ]);
     claimsMock.mockResolvedValue(claimsFixture);
 
     renderPanel();
 
-    // scope to the source row: the header aggregate renders the same
-    // "3 <fatalities>" text, so a bare getByText would find two elements
-    const row = (await screen.findByText(eventFixture.title!)).closest("li")!;
-    expect(within(row).getByText(`3 ${viLocale["detail.fatalities"]}`)).toBeTruthy();
-    expect(within(row).getByText(`12 ${viLocale["detail.numSources"]}`)).toBeTruthy();
-    expect(within(row).getByText("GDELT")).toBeTruthy();
+    // scope to the source row: the header aggregate renders similar text
+    const gdeltRow = (await screen.findByText(eventFixture.title!)).closest("li")!;
+    expect(within(gdeltRow).getByText("GDELT")).toBeTruthy();
+    expect(within(gdeltRow).getByText("military_conflict")).toBeTruthy();
+    expect(within(gdeltRow).getByText(`3 ${viLocale["detail.fatalities"]}`)).toBeTruthy();
+    expect(within(gdeltRow).getByText(`12 ${viLocale["detail.numSources"]}`)).toBeTruthy();
+
+    // system/type badges only render when the hotspot's events differ in them;
+    // num_sources <= 1 and null fatalities must not render a badge
+    const acledRow = screen.getByText("ACLED").closest("li")!;
+    expect(within(acledRow).getByText("armed_conflict")).toBeTruthy();
+    expect(within(acledRow).queryByText(new RegExp(viLocale["detail.numSources"]))).toBeNull();
+    expect(within(acledRow).queryByText(new RegExp(viLocale["detail.fatalities"]))).toBeNull();
   });
 
   it("shows the severity aggregate and lifespan in the header", async () => {
@@ -210,12 +221,47 @@ describe("HotspotDetail data loading", () => {
 
     renderPanel();
 
-    // wait on the unique lifespan text (aggregate renders only once events load),
-    // then assert the aggregate's max-fatalities: the per-event badge for event 2
-    // renders the same "12 <fatalities>" text, so expect exactly two occurrences
+    // the aggregate labels the max as a max (not a total); both events are GDELT
+    // so the per-row system/type badges are gated off and the text is unique
     await screen.findByText(new RegExp(viLocale["detail.activeSince"]));
-    expect(screen.getAllByText(new RegExp(`12 ${viLocale["detail.fatalities"]}`)).length).toBe(2);
+    expect(screen.getByText(new RegExp(`12 ${viLocale["detail.maxFatalities"]}`))).toBeTruthy();
     expect(screen.getByText(new RegExp(viLocale["detail.activeSince"]))).toBeTruthy();
+  });
+
+  it("collapses the lifespan line when start and end fall on the same day", async () => {
+    summaryMock.mockResolvedValue(summaryFixture);
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue(claimsFixture);
+
+    render(
+      <HotspotDetail hotspot={{ ...hotspotFixture, start_window: "2026-08-02T00:00:00Z", end_window: "2026-08-02T00:00:00Z" }} onClose={() => {}} />
+    );
+
+    await screen.findByText(new RegExp(viLocale["detail.activeSince"]));
+    expect(screen.getByText(new RegExp(viLocale["detail.activeSince"]))).toBeTruthy();
+    expect(screen.queryByText(new RegExp(viLocale["detail.lastSeen"]))).toBeNull();
+  });
+
+  it("shows the activity sparkline only when events span more than one day", async () => {
+    summaryMock.mockResolvedValue(summaryFixture);
+    claimsMock.mockResolvedValue(claimsFixture);
+
+    // all events on a single day -> sparkline hidden (inert chrome)
+    eventsMock.mockResolvedValue([eventFixture]);
+    renderPanel();
+    await screen.findByText(eventFixture.title!);
+    expect(screen.queryByText(viLocale["detail.activity"])).toBeNull();
+
+    // events on two days -> sparkline renders with the translated aria-label
+    eventsMock.mockResolvedValue([
+      eventFixture,
+      { ...eventFixture, event_id: 2, event_date: "2026-07-30T00:00:00Z", citation_index: 2 },
+    ]);
+    renderPanel();
+    // wait for the second panel's events to resolve before asserting the sparkline
+    const imgs = await screen.findAllByRole("img", { name: viLocale["detail.activity"] });
+    expect(imgs.length).toBe(1);
+    expect(screen.getAllByText(viLocale["detail.activity"]).length).toBe(1);
   });
 
   it("shows NLI probability next to a contradicting citation", async () => {
@@ -224,7 +270,10 @@ describe("HotspotDetail data loading", () => {
     claimsMock.mockResolvedValue({
       claims: [{
         claim_id: 1, claim_text: "Claim A", status: "disputed",
-        evidence: [{ event_id: 1, citation_index: 1, relation: "contradicts", probability: 0.91, domain: "example.com" }],
+        evidence: [
+          { event_id: 1, citation_index: 1, relation: "contradicts", probability: 0.91, domain: "example.com" },
+          { event_id: 2, citation_index: 2, relation: "supports", probability: 0.5, domain: "example.org" },
+        ],
       }],
       insufficient_sources: false,
     });
@@ -232,6 +281,11 @@ describe("HotspotDetail data loading", () => {
     renderPanel();
 
     await screen.findByText("Claim A");
+    // the title tooltip carries probability on every citation...
     expect(screen.getByTitle(/0\.91/)).toBeTruthy();
+    expect(screen.getByTitle(/0\.5/)).toBeTruthy();
+    // ...but the inline p= is dispute-only (supporting is near-constant p≈1.00)
+    expect(screen.getByText(/p=0\.91/)).toBeTruthy();
+    expect(screen.queryByText(/p=0\.5/)).toBeNull();
   });
 });

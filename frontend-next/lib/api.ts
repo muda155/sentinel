@@ -5,7 +5,7 @@ export type Hotspot = {
   consistency_score?: number | null;
   name: string | null;
   start_window: string | null;
-  end_window: string; created_at: string;
+  end_window: string | null; created_at: string | null;
 };
 export type HotspotSummary = {
   summary: string; conflict_detected: boolean; sources_cited: string[];

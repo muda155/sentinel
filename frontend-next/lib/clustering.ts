@@ -31,8 +31,8 @@ interface HotspotProps {
   event_count: number;
   name: string | null;
   start_window: string | null;
-  end_window: string;
-  created_at: string;
+  end_window: string | null;
+  created_at: string | null;
 }
 
 function toProps(h: Hotspot): HotspotProps {
