@@ -33,7 +33,7 @@ def fetch_hotspots(conn, *, limit=50, min_conf=0.0, min_convergence=0.0,
     limit = max(1, min(int(limit), 200))   # spec: max 200
     q = """
         SELECT h.hotspot_id, ST_Y(h.centroid_geom) lat, ST_X(h.centroid_geom) lon,
-               h.name, h.end_window, h.created_at,
+               h.name, h.start_window, h.end_window, h.created_at,
                COALESCE(h.conf_score,0) conf_score, h.event_count,
                h.consistency_score,
                COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
@@ -76,7 +76,7 @@ def fetch_hotspot_by_id(conn, hotspot_id: int) -> dict | None:
     """Fetch a single hotspot by ID with full enrichment (lat, lon, conf, convergence, alert)."""
     q = """
         SELECT h.hotspot_id, ST_Y(h.centroid_geom) lat, ST_X(h.centroid_geom) lon,
-               h.name, h.end_window, h.created_at,
+               h.name, h.start_window, h.end_window, h.created_at,
                COALESCE(h.conf_score,0) conf_score, h.event_count,
                h.consistency_score,
                COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,

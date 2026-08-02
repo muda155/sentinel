@@ -55,3 +55,28 @@ def test_hotspots_excludes_rows_older_than_max_age():
     cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
     for h in r.json():
         assert datetime.fromisoformat(h["end_window"]) >= cutoff
+
+
+def test_hotspot_payload_includes_start_window(live_conn):
+    """start_window is in the hotspots table but was never selected, so the
+    UI could not show how long a hotspot has been active."""
+    from api import queries
+
+    with live_conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO hotspots (centroid_geom, radius_km, start_window,
+                   end_window, event_count, unique_sources)
+               VALUES (ST_SetSRID(ST_MakePoint(34.45, 31.5), 4326), 5.0,
+                       now(), now(), 1, 1)
+               RETURNING hotspot_id"""
+        )
+        hid = cur.fetchone()[0]
+
+    listed = [h for h in queries.fetch_hotspots(live_conn, limit=200, max_age_hours=None)
+              if h["hotspot_id"] == hid]
+    assert listed, "inserted hotspot not returned by fetch_hotspots"
+    assert "start_window" in listed[0]
+
+    single = queries.fetch_hotspot_by_id(live_conn, hid)
+    assert single is not None
+    assert "start_window" in single

@@ -16,6 +16,7 @@ class Hotspot(BaseModel):
     event_count: int
     consistency_score: float | None = None
     name: str | None = None
+    start_window: datetime | None = None
     end_window: datetime | None = None
     created_at: datetime | None = None
 
