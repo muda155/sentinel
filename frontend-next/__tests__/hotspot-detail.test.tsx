@@ -187,4 +187,17 @@ describe("HotspotDetail data loading", () => {
       expect(screen.getByText(freshText)).toBeTruthy();
     },
   );
+
+  it("renders severity badges on a source row", async () => {
+    summaryMock.mockResolvedValue(summaryFixture);
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue(claimsFixture);
+
+    renderPanel();
+
+    await screen.findByText(eventFixture.title!);
+    expect(screen.getByText(`3 ${viLocale["detail.fatalities"]}`)).toBeTruthy();
+    expect(screen.getByText(`12 ${viLocale["detail.numSources"]}`)).toBeTruthy();
+    expect(screen.getByText("GDELT")).toBeTruthy();
+  });
 });

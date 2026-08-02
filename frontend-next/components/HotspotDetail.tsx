@@ -8,6 +8,7 @@ import { useT } from "@/lib/i18n";
 import { parseCitations } from "@/lib/citations";
 import { sitrepState } from "@/lib/sitrep";
 import { buildSubtitle } from "@/lib/subtitle";
+import { formatIntensity, formatTone } from "@/lib/severity";
 import TrustTierEditor from "@/components/TrustTierEditor";
 
 export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; onClose: () => void }) {
@@ -173,6 +174,34 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
               {e.domain}
               {e.trust_tier !== null && <> &middot; {t("detail.trustTier")} {e.trust_tier}</>}
               {" · "}{new Date(e.event_date).toLocaleDateString()}
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 3 }}>
+              <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "#1f2937", color: "#9ca3af" }}>
+                {e.source_system}
+              </span>
+              <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "#1f2937", color: "#9ca3af" }}>
+                {e.event_type_label}
+              </span>
+              {e.fatalities != null && e.fatalities > 0 && (
+                <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "#7f1d1d", color: "#fecaca" }}>
+                  {e.fatalities} {t("detail.fatalities")}
+                </span>
+              )}
+              {e.num_sources != null && (
+                <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "#1f2937", color: "#9ca3af" }}>
+                  {e.num_sources} {t("detail.numSources")}
+                </span>
+              )}
+              {formatIntensity(e.goldstein_scale) && (
+                <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "#1f2937", color: "#9ca3af" }}>
+                  {t("detail.intensity")} {formatIntensity(e.goldstein_scale)}
+                </span>
+              )}
+              {formatTone(e.avg_tone) && (
+                <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "#1f2937", color: "#9ca3af" }}>
+                  {t("detail.tone")} {formatTone(e.avg_tone)}
+                </span>
+              )}
             </div>
           </li>
         ))}
