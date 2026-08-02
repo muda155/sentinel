@@ -25,7 +25,7 @@ All files in `frontend-next/`, including `lib/`, `components/`, `app/`, `__tests
 - SSE stream handling lives in `lib/sse.ts` with exponential backoff (1s→30s, ±500ms jitter).
 - Auth context in `lib/auth.tsx` wraps the app; `useAuth()` exposes `token`, `user`, `login()`, `logout()`, `isAdmin`.
 - Login page at `/login`; unauthenticated users are redirected there from `/`.
-- SSE stream in `MapView` uses `connectHotspotStream` with the Bearer token; re-fetches hotspots on push events.
+- SSE lives in `lib/useHotspots.ts` (called from `app/page.tsx`), not in `MapView` — `connectHotspotStream` with the Bearer token, re-fetching hotspots on push events. It is page-level on purpose: toggling 2D/globe must not tear down the stream.
 - Layout: `app/page.tsx` is a flex row — a `position:relative; flex:1; minWidth:0` map container (all overlay controls anchor to it) with `HotspotDetail` as a flex **sibling** column (340px, full height). The detail panel must never absolutely overlay the map: an overlay panel created a ~370×713px click dead zone that swallowed marker clicks and hid `FilterPanel`. First paint renders a dark loading skeleton while auth hydrates; `html, body` background is `#0d1117` so the pre-hydration and redirect gaps never flash white.
 - `lib/useHotspots.ts` wraps SSE refetches in `trailingDebounce(fn, 3000)` (`lib/debounce.ts`, returns a `DebouncedFn` with `.cancel()`) — one refetch per burst, or `/hotspots` (60 req/min) 429s during pipeline ticks; the effect cleanup calls `.cancel()` so no refetch fires after unmount/token change.
 - `TrustTierEditor` (admin-only) lists sources with dropdowns to PATCH `/sources/{id}` trust_tier.
