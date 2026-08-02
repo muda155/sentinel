@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import { vi as viLocale } from "@/lib/locales/vi";
 import type { Hotspot, HotspotClaims, HotspotEvent, HotspotSummary } from "@/lib/api";
+
+// token is mutable so a test can supersede an in-flight fetch (generation counter)
+const authState = vi.hoisted(() => ({ token: "test-token" }));
 
 vi.mock("@/lib/api", () => ({
   api: {
@@ -11,12 +15,12 @@ vi.mock("@/lib/api", () => ({
 }));
 
 vi.mock("@/lib/auth", () => ({
-  useAuth: () => ({ token: "test-token" }),
+  useAuth: () => ({ token: authState.token }),
 }));
 
 vi.mock("@/lib/i18n", async () => {
-  const { vi } = await import("@/lib/locales/vi");
-  return { useT: () => ({ t: (k: string) => vi[k as keyof typeof vi] ?? k }) };
+  const { vi: dict } = await import("@/lib/locales/vi");
+  return { useT: () => ({ t: (k: string) => dict[k as keyof typeof dict] ?? k }) };
 });
 
 vi.mock("@/components/TrustTierEditor", () => ({ default: () => null }));
@@ -51,6 +55,7 @@ const renderPanel = () => render(<HotspotDetail hotspot={hotspotFixture} onClose
 
 beforeEach(() => {
   vi.clearAllMocks();
+  authState.token = "test-token";
 });
 
 describe("HotspotDetail data loading", () => {
@@ -62,11 +67,11 @@ describe("HotspotDetail data loading", () => {
     renderPanel();
 
     // regression: a shared generation counter invalidated every fetch but the
-    // last synchronous caller, leaving the brief on "Đang tải…" forever
+    // last synchronous caller, leaving the brief on loading forever
     await screen.findByText(summaryFixture.summary);
     await screen.findByText(eventFixture.title!);
-    expect(screen.getByText("Nguồn tin (1)")).toBeTruthy();
-    expect(screen.queryByText("Đang tải…")).toBeNull();
+    expect(screen.getByText(`${viLocale["detail.sources"]} (1)`)).toBeTruthy();
+    expect(screen.queryByText(viLocale["detail.loading"])).toBeNull();
   });
 
   it("shows a summary error with retry while sources still render", async () => {
@@ -76,8 +81,8 @@ describe("HotspotDetail data loading", () => {
 
     renderPanel();
 
-    await screen.findByText("Không tải được dữ liệu.");
-    expect(screen.getByText("Thử lại")).toBeTruthy();
+    await screen.findByText(viLocale["detail.error"]);
+    expect(screen.getByText(viLocale["detail.retry"])).toBeTruthy();
     await screen.findByText(eventFixture.title!);
   });
 
@@ -87,13 +92,59 @@ describe("HotspotDetail data loading", () => {
     claimsMock.mockResolvedValue(claimsFixture);
 
     renderPanel();
-    await screen.findByText("Không tải được dữ liệu.");
+    await screen.findByText(viLocale["detail.error"]);
 
-    fireEvent.click(screen.getByText("Thử lại"));
+    fireEvent.click(screen.getByText(viLocale["detail.retry"]));
 
     await screen.findByText(summaryFixture.summary);
     expect(summaryMock).toHaveBeenCalledTimes(2);
     expect(eventsMock).toHaveBeenCalledTimes(1);
     expect(claimsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows an events error with retry, then recovers on retry", async () => {
+    summaryMock.mockResolvedValue(summaryFixture);
+    eventsMock.mockRejectedValueOnce(new Error("boom")).mockResolvedValueOnce([eventFixture]);
+    claimsMock.mockResolvedValue(claimsFixture);
+
+    renderPanel();
+
+    await screen.findByText(viLocale["detail.error"]);
+    expect(screen.getByText(viLocale["detail.retry"])).toBeTruthy();
+    await screen.findByText(summaryFixture.summary);
+    // per-resource isolation: the brief renders while the sources header hides its count
+    expect(screen.queryByText(`${viLocale["detail.sources"]} (1)`)).toBeNull();
+
+    fireEvent.click(screen.getByText(viLocale["detail.retry"]));
+
+    await screen.findByText(eventFixture.title!);
+    expect(screen.getByText(`${viLocale["detail.sources"]} (1)`)).toBeTruthy();
+    expect(eventsMock).toHaveBeenCalledTimes(2);
+    expect(summaryMock).toHaveBeenCalledTimes(1);
+    expect(claimsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("discards a stale summary response that settles after a superseding fetch", async () => {
+    let resolveStale!: (s: HotspotSummary) => void;
+    summaryMock.mockReturnValueOnce(
+      new Promise<HotspotSummary>((resolve) => { resolveStale = resolve; }),
+    );
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue(claimsFixture);
+
+    const { rerender } = renderPanel();
+    await screen.findByText(viLocale["detail.loading"]);
+
+    // A token change re-fires the mount effect on the same instance, so generation
+    // 2 supersedes generation 1 while fetch #1 is still in flight.
+    authState.token = "token-b";
+    summaryMock.mockResolvedValueOnce(summaryFixture);
+    rerender(<HotspotDetail hotspot={hotspotFixture} onClose={() => {}} />);
+    await screen.findByText(summaryFixture.summary);
+
+    // The stale response settles last; the generation guard must discard it.
+    await act(async () => { resolveStale({ ...summaryFixture, summary: "STALE superseded data" }); });
+    expect(screen.queryByText("STALE superseded data")).toBeNull();
+    expect(screen.getByText(summaryFixture.summary)).toBeTruthy();
   });
 });
