@@ -42,6 +42,7 @@ All files in `frontend-next/`, including `lib/`, `components/`, `app/`, `__tests
 
 - All new components go in `components/` as `"use client"` if they use browser APIs.
 - Pure-logic modules go in `lib/` with corresponding tests in `__tests__/` (TDD).
+- Component tests in `__tests__/` mock `@/lib/api`, `@/lib/auth`, `@/lib/i18n`, and `TrustTierEditor`; assert through the imported vi dict (`viLocale["detail.retry"]`) so copy edits in `lib/locales/` don't break assertions, and keep `@/lib/auth`'s token in a `vi.hoisted` object so a test can supersede an in-flight fetch (generation counter).
 - Map-related components must be imported via `dynamic(..., { ssr: false })`.
 - Do not import from `api/` (backend) — the frontend talks exclusively through the REST API.
 
