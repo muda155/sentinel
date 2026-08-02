@@ -105,7 +105,7 @@ export default function Page() {
           </button>
         </div>
       </div>
-      {selected && <HotspotDetail hotspot={selected} onClose={() => setSelected(null)} />}
+      {selected && <HotspotDetail key={selected.hotspot_id} hotspot={selected} onClose={() => setSelected(null)} />}
     </main>
   );
 }

@@ -20,17 +20,35 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   const listRef = useRef<HTMLOListElement>(null);
   const [summaryError, setSummaryError] = useState(false);
   const [eventsError, setEventsError] = useState(false);
+  const genRef = useRef(0);
 
-  const load = useCallback(() => {
-    setSummary(null); setSummaryError(false);
-    setEvents([]); setEventsError(false);
-    setClaims(null);
-    api.summary(hotspot.hotspot_id, token).then(setSummary).catch(() => setSummaryError(true));
-    api.hotspotEvents(hotspot.hotspot_id, token).then(setEvents).catch(() => setEventsError(true));
-    api.hotspotClaims(hotspot.hotspot_id, token).then(setClaims).catch(() => setClaims(null));
+  // guard every set* with a generation check so a stale in-flight response
+  // (older retry, or a previous hotspot) can never populate this panel
+  const fetchSummary = useCallback(() => {
+    const gen = ++genRef.current;
+    api.summary(hotspot.hotspot_id, token)
+      .then((s) => { if (genRef.current === gen) setSummary(s); })
+      .catch(() => { if (genRef.current === gen) setSummaryError(true); });
   }, [hotspot.hotspot_id, token]);
 
-  useEffect(() => { load(); }, [load]);
+  const fetchEvents = useCallback(() => {
+    const gen = ++genRef.current;
+    api.hotspotEvents(hotspot.hotspot_id, token)
+      .then((e) => { if (genRef.current === gen) setEvents(e); })
+      .catch(() => { if (genRef.current === gen) setEventsError(true); });
+  }, [hotspot.hotspot_id, token]);
+
+  const fetchClaims = useCallback(() => {
+    const gen = ++genRef.current;
+    api.hotspotClaims(hotspot.hotspot_id, token)
+      .then((c) => { if (genRef.current === gen) setClaims(c); })
+      .catch(() => { if (genRef.current === gen) setClaims(null); });
+  }, [hotspot.hotspot_id, token]);
+
+  useEffect(() => { fetchSummary(); fetchEvents(); fetchClaims(); }, [fetchSummary, fetchEvents, fetchClaims]);
+
+  const retrySummary = () => { setSummaryError(false); fetchSummary(); };
+  const retryEvents = () => { setEventsError(false); fetchEvents(); };
 
   const retryButtonStyle = { background: "#333", color: "#eee", padding: "2px 10px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 12, marginLeft: 8 };
 
@@ -80,7 +98,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
           )}
         </>
       ) : summaryError ? (
-        <p>{t("detail.error")} <button onClick={load} style={retryButtonStyle}>{t("detail.retry")}</button></p>
+        <p>{t("detail.error")} <button onClick={retrySummary} style={retryButtonStyle}>{t("detail.retry")}</button></p>
       ) : (
         <p>{t("detail.loading")}</p>
       )}
@@ -134,9 +152,9 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
           </ul>
         </>
       )}
-      <h4>{t("detail.sources")} ({cited.length})</h4>
+      <h4>{t("detail.sources")}{!eventsError && ` (${cited.length})`}</h4>
       {eventsError ? (
-        <p>{t("detail.error")} <button onClick={load} style={retryButtonStyle}>{t("detail.retry")}</button></p>
+        <p>{t("detail.error")} <button onClick={retryEvents} style={retryButtonStyle}>{t("detail.retry")}</button></p>
       ) : (
       <ol ref={listRef} style={{ paddingLeft: 20, fontSize: 13 }}>
         {cited.map((e) => (
