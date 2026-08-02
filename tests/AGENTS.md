@@ -12,6 +12,7 @@ All files in `tests/`.
 
 - Integration tests hit a real database — do not mock the DB layer (past mock/prod divergence caused silent failures)
 - Seed helpers live in `tests/helpers_seed.py` — use them rather than duplicating fixture logic
+- Never hardcode a literal `event_date` in a fixture. Migration 010 provisions partitions only through the current month on a fresh DB, so a past literal passes on a dev DB (which has accumulated partitions) and fails CI with `no partition of relation "events" found for row` the moment the clock rolls into a new month. Use `NOW()`/`date_trunc('month', now())` in SQL, or `tests.helpers_seed.current_month_start()` for Python fixtures (GDELT `SQLDATE`, ACLED `event_date`)
 - `tests/conftest.py` owns all shared fixtures; add new fixtures there, not in individual test files
 - Test files are named `test_<module>.py` matching their target module
 

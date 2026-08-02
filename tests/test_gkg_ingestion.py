@@ -3,11 +3,14 @@ import pandas as pd
 import pytest
 
 from pipeline.ingestion import GDELT2Ingestor
+from tests.helpers_seed import current_month_start
 
 
 def _gdelt_df() -> pd.DataFrame:
     return pd.DataFrame([{
-        "GlobalEventID": 525252, "SQLDATE": 20260727, "EventRootCode": 19,
+        "GlobalEventID": 525252,
+        "SQLDATE": int(current_month_start().strftime("%Y%m%d")),
+        "EventRootCode": 19,
         "EventCode": "190", "Actor1Name": "SOUTH KOREAN", "Actor2Name": "RUSSIA",
         "GoldsteinScale": -8.0, "AvgTone": -5.2, "NumSources": 4,
         "ActionGeo_Lat": 37.5, "ActionGeo_Long": 127.0, "ActionGeo_Type": 3,
