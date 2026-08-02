@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { vi as viLocale } from "@/lib/locales/vi";
 import type { Claim, Hotspot, HotspotClaims, HotspotEvent, HotspotSummary } from "@/lib/api";
 
@@ -195,9 +195,26 @@ describe("HotspotDetail data loading", () => {
 
     renderPanel();
 
-    await screen.findByText(eventFixture.title!);
-    expect(screen.getByText(`3 ${viLocale["detail.fatalities"]}`)).toBeTruthy();
-    expect(screen.getByText(`12 ${viLocale["detail.numSources"]}`)).toBeTruthy();
-    expect(screen.getByText("GDELT")).toBeTruthy();
+    // scope to the source row: the header aggregate renders the same
+    // "3 <fatalities>" text, so a bare getByText would find two elements
+    const row = (await screen.findByText(eventFixture.title!)).closest("li")!;
+    expect(within(row).getByText(`3 ${viLocale["detail.fatalities"]}`)).toBeTruthy();
+    expect(within(row).getByText(`12 ${viLocale["detail.numSources"]}`)).toBeTruthy();
+    expect(within(row).getByText("GDELT")).toBeTruthy();
+  });
+
+  it("shows the severity aggregate and lifespan in the header", async () => {
+    summaryMock.mockResolvedValue(summaryFixture);
+    eventsMock.mockResolvedValue([eventFixture, { ...eventFixture, event_id: 2, fatalities: 12, citation_index: 2 }]);
+    claimsMock.mockResolvedValue(claimsFixture);
+
+    renderPanel();
+
+    // wait on the unique lifespan text (aggregate renders only once events load),
+    // then assert the aggregate's max-fatalities: the per-event badge for event 2
+    // renders the same "12 <fatalities>" text, so expect exactly two occurrences
+    await screen.findByText(new RegExp(viLocale["detail.activeSince"]));
+    expect(screen.getAllByText(new RegExp(`12 ${viLocale["detail.fatalities"]}`)).length).toBe(2);
+    expect(screen.getByText(new RegExp(viLocale["detail.activeSince"]))).toBeTruthy();
   });
 });

@@ -8,7 +8,7 @@ import { useT } from "@/lib/i18n";
 import { parseCitations } from "@/lib/citations";
 import { sitrepState } from "@/lib/sitrep";
 import { buildSubtitle } from "@/lib/subtitle";
-import { formatIntensity, formatTone } from "@/lib/severity";
+import { formatIntensity, formatTone, maxFatalities, meanTone } from "@/lib/severity";
 import TrustTierEditor from "@/components/TrustTierEditor";
 
 export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; onClose: () => void }) {
@@ -71,6 +71,25 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
       <button onClick={onClose} style={{ float: "right" }}>&times;</button>
       <h3 style={{ marginBottom: 2 }}>{hotspot.name ?? `Hotspot #${hotspot.hotspot_id}`}</h3>
       <p style={{ marginTop: 0, fontSize: 12, color: "#9ca3af" }}>{buildSubtitle(events, t)}</p>
+      {(() => {
+        const fat = maxFatalities(events);
+        const tone = meanTone(events);
+        if (fat == null && tone == null && hotspot.start_window == null) return null;
+        return (
+          <p style={{ marginTop: 0, marginBottom: 8, fontSize: 11, color: "#9ca3af" }}>
+            {fat != null && <span style={{ color: "#fca5a5" }}>{fat} {t("detail.fatalities")}</span>}
+            {fat != null && tone != null && " · "}
+            {tone != null && <span>{t("detail.tone")} {tone.toFixed(1)}</span>}
+            {hotspot.start_window && (
+              <>
+                <br />
+                {t("detail.activeSince")} {new Date(hotspot.start_window).toLocaleDateString()}
+                {hotspot.end_window && <> · {t("detail.lastSeen")} {new Date(hotspot.end_window).toLocaleDateString()}</>}
+              </>
+            )}
+          </p>
+        );
+      })()}
       <dl>
         <dt>{t("detail.confidence")}</dt>
         <dd><b>conf_score: {hotspot.conf_score.toFixed(1)}</b></dd>
