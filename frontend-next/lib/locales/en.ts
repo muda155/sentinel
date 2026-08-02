@@ -3,6 +3,7 @@ export const en = {
   "header.globe": "Globe view",
   "globe.unavailable": "WebGL is not available in this browser",
   "header.logout": "Log out",
+  "app.loading": "Loading…",
   "detail.confidence": "Confidence (source reliability)",
   "detail.convergence": "Convergence (cross-domain co-occurrence)",
   "detail.aiBrief": "AI Intelligence Brief",

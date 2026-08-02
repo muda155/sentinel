@@ -63,7 +63,13 @@ export default function Page() {
     if (showHeat && cells.length === 0 && token) api.gridCells(token).then(setCells).catch(() => {});
   }, [showHeat, cells.length, token]);
 
-  if (!hydrated) return null; // avoid hydration mismatch
+  if (!hydrated) {
+    return (
+      <main style={{ position: "absolute", inset: 0, background: "#0d1117", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <span style={{ color: "#6b7280", fontSize: 14 }}>{t("app.loading")}</span>
+      </main>
+    );
+  }
   if (!token || !user) return null; // redirecting
 
   const heatLayer = showHeat

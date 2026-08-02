@@ -5,6 +5,7 @@ export const vi: Record<MessageKey, string> = {
   "header.globe": "Chế độ quả cầu",
   "globe.unavailable": "Trình duyệt không hỗ trợ WebGL",
   "header.logout": "Đăng xuất",
+  "app.loading": "Đang tải…",
   "detail.confidence": "Độ tin cậy (độ tin cậy nguồn)",
   "detail.convergence": "Độ hội tụ (đồng xuất hiện đa lĩnh vực)",
   "detail.aiBrief": "Bản tin tình báo AI",
