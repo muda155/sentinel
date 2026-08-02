@@ -11,9 +11,11 @@ import { useCluster } from "@/lib/useCluster";
 import type { ClusterFeature } from "@/lib/clustering";
 
 const INITIAL_VIEW = { longitude: 30, latitude: 30, zoom: 2, pitch: 0, bearing: 0 };
-const MAP_STYLE = process.env.NEXT_PUBLIC_MAP_STYLE ?? "https://demotiles.maplibre.org/style.json";
+const MAP_STYLE = process.env.NEXT_PUBLIC_MAP_STYLE ?? "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
 const WORLD_BBOX: [number, number, number, number] = [-180, -90, 180, 90];
 const CLUSTER_ZOOM_THRESHOLD = 7;
+const FOCUS_ZOOM = 6;
+const MAX_CLUSTER_ZOOM = 10; // beyond this, cell-level context is lost
 
 const COUNT_COLOR: [number, number, number, number] = [120, 180, 255, 200];
 const COUNT_TEXT_COLOR: [number, number, number, number] = [255, 255, 255, 255];
@@ -32,7 +34,7 @@ export default function MapView({
   useEffect(() => {
     if (!focus) return;
     setViewState((vs) => ({
-      ...vs, longitude: focus.lon, latitude: focus.lat, zoom: 6,
+      ...vs, longitude: focus.lon, latitude: focus.lat, zoom: FOCUS_ZOOM,
       transitionDuration: 1200, transitionInterpolator: new FlyToInterpolator(),
     }));
   }, [focus]);
@@ -70,7 +72,7 @@ export default function MapView({
       ...vs,
       longitude: lon,
       latitude: lat,
-      zoom: expansionZoom + 1,
+      zoom: Math.min(expansionZoom + 1, MAX_CLUSTER_ZOOM),
       transitionDuration: 800,
       transitionInterpolator: new FlyToInterpolator(),
     }));
