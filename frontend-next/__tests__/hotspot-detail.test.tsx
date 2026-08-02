@@ -1,7 +1,7 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { vi as viLocale } from "@/lib/locales/vi";
-import type { Hotspot, HotspotClaims, HotspotEvent, HotspotSummary } from "@/lib/api";
+import type { Claim, Hotspot, HotspotClaims, HotspotEvent, HotspotSummary } from "@/lib/api";
 
 // token is mutable so a test can supersede an in-flight fetch (generation counter)
 const authState = vi.hoisted(() => ({ token: "test-token" }));
@@ -46,6 +46,10 @@ const eventFixture: HotspotEvent = {
 };
 
 const claimsFixture: HotspotClaims = { claims: [], insufficient_sources: true };
+
+const claimFixture: Claim = {
+  claim_id: 1, claim_text: "Claim A", status: "corroborated", evidence: [],
+};
 
 const summaryMock = vi.mocked(api.summary);
 const eventsMock = vi.mocked(api.hotspotEvents);
@@ -124,27 +128,61 @@ describe("HotspotDetail data loading", () => {
     expect(claimsMock).toHaveBeenCalledTimes(1);
   });
 
-  it("discards a stale summary response that settles after a superseding fetch", async () => {
-    let resolveStale!: (s: HotspotSummary) => void;
-    summaryMock.mockReturnValueOnce(
-      new Promise<HotspotSummary>((resolve) => { resolveStale = resolve; }),
-    );
-    eventsMock.mockResolvedValue([eventFixture]);
-    claimsMock.mockResolvedValue(claimsFixture);
+  // the three fetchers are structurally identical, so a copy/paste miss in any
+  // generation guard must fail here — parameterize the stale-discard test over
+  // the resource instead of duplicating it (the original bug was exactly that miss)
+  it.each([
+    {
+      resource: "summary",
+      mock: summaryMock,
+      fresh: summaryFixture,
+      stale: { ...summaryFixture, summary: "STALE summary" },
+      freshText: summaryFixture.summary,
+      staleText: "STALE summary",
+    },
+    {
+      resource: "events",
+      mock: eventsMock,
+      fresh: [eventFixture],
+      stale: [{ ...eventFixture, event_id: 2, title: "STALE event", citation_index: 2 }],
+      freshText: eventFixture.title!,
+      staleText: "STALE event",
+    },
+    {
+      resource: "claims",
+      mock: claimsMock,
+      fresh: { claims: [claimFixture], insufficient_sources: false },
+      stale: { claims: [{ ...claimFixture, claim_id: 2, claim_text: "STALE claim" }], insufficient_sources: false },
+      freshText: claimFixture.claim_text,
+      staleText: "STALE claim",
+    },
+  ])(
+    "discards a stale $resource response that settles after a superseding fetch",
+    async ({ mock, fresh, stale, freshText, staleText }: { mock: Mock; fresh: unknown; stale: unknown; freshText: string; staleText: string }) => {
+      // fetch #1 for the resource under test stays pending until we settle it
+      let resolveFirst!: (v: unknown) => void;
+      mock.mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve; }));
 
-    const { rerender } = renderPanel();
-    await screen.findByText(viLocale["detail.loading"]);
+      // the other two resources resolve normally on both generations
+      summaryMock.mockResolvedValue(summaryFixture);
+      eventsMock.mockResolvedValue([eventFixture]);
+      claimsMock.mockResolvedValue(claimsFixture);
 
-    // A token change re-fires the mount effect on the same instance, so generation
-    // 2 supersedes generation 1 while fetch #1 is still in flight.
-    authState.token = "token-b";
-    summaryMock.mockResolvedValueOnce(summaryFixture);
-    rerender(<HotspotDetail hotspot={hotspotFixture} onClose={() => {}} />);
-    await screen.findByText(summaryFixture.summary);
+      const { rerender } = renderPanel();
 
-    // The stale response settles last; the generation guard must discard it.
-    await act(async () => { resolveStale({ ...summaryFixture, summary: "STALE superseded data" }); });
-    expect(screen.queryByText("STALE superseded data")).toBeNull();
-    expect(screen.getByText(summaryFixture.summary)).toBeTruthy();
-  });
+      // A token change re-fires the mount effect on the same instance, so generation
+      // 2 supersedes generation 1 while fetch #1 is still in flight.
+      authState.token = "token-b";
+      mock.mockResolvedValueOnce(fresh);
+      rerender(<HotspotDetail hotspot={hotspotFixture} onClose={() => {}} />);
+
+      // fresh (generation 2) applied
+      await screen.findByText(freshText);
+
+      // the stale (generation 1) response settles last; the guard must discard it
+      await act(async () => { resolveFirst(stale); });
+      expect(screen.queryByText(staleText)).toBeNull();
+      expect(screen.getByText(freshText)).toBeTruthy();
+    },
+  );
 });
