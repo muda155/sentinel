@@ -4,6 +4,7 @@ export type Hotspot = {
   alert_level: "Critical" | "High" | "Medium"; event_count: number;
   consistency_score?: number | null;
   name: string | null;
+  start_window: string | null;
   end_window: string; created_at: string;
 };
 export type HotspotSummary = {
@@ -22,6 +23,8 @@ export type Source = {
 export type HotspotEvent = {
   event_id: number; title: string | null; url: string | null; domain: string;
   source_system: string; event_type_label: string; event_date: string;
+  goldstein_scale: number | null; avg_tone: number | null;
+  num_sources: number | null; fatalities: number | null;
   trust_tier: number | null; trust_score: number; citation_index: number | null;
 };
 

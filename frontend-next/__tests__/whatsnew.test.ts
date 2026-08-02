@@ -12,6 +12,7 @@ function makeHotspot(overrides: Partial<Hotspot> & { created_at: string }): Hots
     alert_level: "Medium",
     event_count: 1,
     name: null,
+    start_window: null,
     end_window: "2026-07-01T00:00:00Z",
     ...overrides,
   };

@@ -31,7 +31,8 @@ import HotspotDetail from "@/components/HotspotDetail";
 const hotspotFixture: Hotspot = {
   hotspot_id: 123, lat: 10.5, lon: 20.5, conf_score: 80, convergence_score: 55,
   alert_level: "Critical", event_count: 3, consistency_score: 70,
-  name: "Test Hotspot", end_window: "2026-08-02T00:00:00Z", created_at: "2026-08-01T00:00:00Z",
+  name: "Test Hotspot", start_window: "2026-07-30T00:00:00Z",
+  end_window: "2026-08-02T00:00:00Z", created_at: "2026-08-01T00:00:00Z",
 };
 
 const summaryFixture: HotspotSummary = {
@@ -42,6 +43,7 @@ const summaryFixture: HotspotSummary = {
 const eventFixture: HotspotEvent = {
   event_id: 1, title: "Clashes reported", url: "https://example.com/1", domain: "example.com",
   source_system: "GDELT", event_type_label: "military_conflict", event_date: "2026-08-01T00:00:00Z",
+  goldstein_scale: -8, avg_tone: -5.25, num_sources: 12, fatalities: 3,
   trust_tier: 3, trust_score: 0.8, citation_index: 1,
 };
 
