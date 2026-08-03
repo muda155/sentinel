@@ -33,6 +33,16 @@ export default function TriageRail(
     optionRefs.current[i]?.scrollIntoView?.({ block: "nearest" });
   };
 
+  // ARIA APG: on Tab-in, roving focus lands on the selected (or first) row so
+  // one ArrowDown advances to the next row instead of landing on row 0. The
+  // e.target guard keeps a mouse click that focused a row from being hijacked
+  // back to the selected row (the container's focusin bubbles from the row).
+  const handleListboxFocus = (e: React.FocusEvent<HTMLDivElement>) => {
+    if (e.target !== e.currentTarget) return;
+    const selIdx = hotspots.findIndex((h) => h.hotspot_id === selectedId);
+    focusOption(selIdx >= 0 ? selIdx : 0);
+  };
+
   // ARIA listbox navigation lives on the container, the single tab stop. With
   // up to 200 rows, Tab-walking every option is unusable. `e.target` tells us
   // which row the keypress is about even though the handler is on the listbox.
@@ -43,7 +53,7 @@ export default function TriageRail(
     const activeIdx = document.activeElement
       ? optionRefs.current.indexOf(document.activeElement as HTMLDivElement)
       : -1;
-    const from = Math.max(targetIdx, activeIdx);   // -1 → nothing focused yet
+    const from = targetIdx >= 0 ? targetIdx : activeIdx;   // the row the event came from, else the focused row
 
     switch (e.key) {
       case "ArrowDown":
@@ -127,6 +137,7 @@ export default function TriageRail(
           role="listbox"
           aria-label={t("triage.title")}
           tabIndex={0}
+          onFocus={handleListboxFocus}
           onKeyDown={handleListboxKeyDown}
           style={{ overflowY: "auto", flex: 1, minHeight: 0 }}
         >

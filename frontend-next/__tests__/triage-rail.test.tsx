@@ -75,15 +75,21 @@ describe("TriageRail", () => {
   });
 
   it("navigates rows with ArrowDown/ArrowUp from the listbox", () => {
-    // ARIA listbox: the container is the single tab stop; arrows move focus.
+    // ARIA listbox: the container is the single tab stop; Tab-in already places
+    // roving focus on the first row (APG), so one ArrowDown advances to row 1.
     renderRail();
     listbox().focus();
-    fireEvent.keyDown(listbox(), { key: "ArrowDown" });
     expect(document.activeElement).toBe(options()[0]);
     fireEvent.keyDown(listbox(), { key: "ArrowDown" });
     expect(document.activeElement).toBe(options()[1]);
     fireEvent.keyDown(listbox(), { key: "ArrowUp" });
     expect(document.activeElement).toBe(options()[0]);
+  });
+
+  it("places roving focus on the selected row when the listbox gains focus", () => {
+    renderRail({ selectedId: 2 });
+    listbox().focus();
+    expect(document.activeElement).toBe(options()[1]);
   });
 
   it("jumps to the first and last rows with Home/End", () => {
