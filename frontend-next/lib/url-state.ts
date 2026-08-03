@@ -20,7 +20,9 @@ const ALL_LEVELS: AlertLevel[] = ["Critical", "High", "Medium"];
 
 export const DEFAULT_URL_STATE: UrlState = {
   hotspotId: null,
-  filters: DEFAULT_FILTERS,
+  // Fresh copy, not the module-level DEFAULT_FILTERS (whose alertLevels is a
+  // mutable Set): a consumer mutating this must not poison the shared default.
+  filters: { ...DEFAULT_FILTERS, alertLevels: new Set(DEFAULT_FILTERS.alertLevels) },
   heat: false,
   globe: false,
   rail: false,

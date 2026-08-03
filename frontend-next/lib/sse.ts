@@ -1,11 +1,11 @@
+import type { StreamStatus } from "@/lib/stream-status";
+
 // Reconnect backoff: 1s -> 30s, doubling, with +/-500ms jitter (NFR-5 contract).
 export function backoffDelay(attempt: number, rng: () => number = Math.random): number {
   const base = Math.min(30000, 1000 * 2 ** attempt);
   const jitter = (rng() - 0.5) * 1000;   // [-500, +500]
   return Math.max(0, base + jitter);
 }
-
-import type { StreamStatus } from "@/lib/stream-status";
 
 export type SSEHandlers = {
   onHotspot?: (data: unknown) => void;
