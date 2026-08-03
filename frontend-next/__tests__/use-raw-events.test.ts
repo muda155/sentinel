@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import { useRawEvents } from "@/lib/useRawEvents";
 import type { EventFeature } from "@/lib/api";
-import type { Bbox } from "@/lib/events-layer";
+import { RAW_PAGE_SIZE, type Bbox } from "@/lib/events-layer";
 import type { TimeWindow } from "@/lib/filters";
 
 const eventsMock = vi.hoisted(() => vi.fn());
@@ -50,6 +50,31 @@ describe("useRawEvents", () => {
     await flush();
     expect(eventsMock).toHaveBeenCalledTimes(1);
     expect(result.current.features).toHaveLength(1);
+    expect(result.current.failed).toBe(false);
+  });
+
+  it("pins pageSize to RAW_PAGE_SIZE so the truncation chip matches the server", async () => {
+    eventsMock.mockResolvedValue(COLLECTION([1]));
+    renderHook(() => useRawEvents("tok", true, BBOX, "7d"));
+    await flush();
+    expect(eventsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ pageSize: RAW_PAGE_SIZE }),
+      "tok",
+    );
+  });
+
+  it("clears the layer while the bbox is invalid (dateline wrap)", async () => {
+    eventsMock.mockResolvedValue(COLLECTION([1]));
+    const { result, rerender } = renderHook(
+      ({ bbox }) => useRawEvents("tok", true, bbox, "7d"),
+      { initialProps: { bbox: { ...BBOX } } });
+    await flush();
+    expect(result.current.features).toHaveLength(1);
+
+    // bboxFromBounds returns null for an inverted envelope — the previous
+    // viewport's events must not keep rendering over the new side.
+    rerender({ bbox: null });
+    expect(result.current.features).toHaveLength(0);
     expect(result.current.failed).toBe(false);
   });
 

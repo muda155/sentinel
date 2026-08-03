@@ -61,7 +61,7 @@ export default function MapView({
       width: el.clientWidth || 1, height: el.clientHeight || 1,
     });
     const raw = bboxFromBounds(vp.getBounds());
-    if (!raw) return;
+    if (!raw) { setBbox(null); return; }   // dateline wrap — clear, don't keep the old side
     const next = quantizeBbox(raw);
     setBbox((prev) => (prev && bboxKey(prev) === bboxKey(next) ? prev : next));
   }, [showEvents, viewState]);
@@ -74,7 +74,7 @@ export default function MapView({
   // MapLibre's bottom-right attribution.
   const rawHint = showEvents && (failed || rawEvents.length === RAW_PAGE_SIZE) ? (
     <div style={{ position: "absolute", bottom: 12, left: 12, background: "#111", color: failed ? "#f87171" : "#9ca3af", padding: "4px 8px", borderRadius: 4, fontSize: 11, border: "1px solid #262d3a" }}>
-      {failed ? t("events.failed") : t("events.truncated")}
+      {failed ? t("events.failed") : t("events.truncated").replace("{n}", String(RAW_PAGE_SIZE))}
     </div>
   ) : null;
 

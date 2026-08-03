@@ -2,7 +2,7 @@ export const en = {
   "header.heatmap": "Convergence heatmap",
   "header.globe": "Globe view",
   "header.rawEvents": "Raw events",
-  "events.truncated": "Showing first 1000 events",
+  "events.truncated": "Showing first {n} events",
   "events.failed": "Raw events failed to load",
   "globe.unavailable": "WebGL is not available in this browser",
   "header.logout": "Log out",
