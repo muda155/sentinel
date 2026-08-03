@@ -50,6 +50,7 @@ export default function Page() {
   const [filters, setFilters] = useState<HotspotFilters>(initial.filters);
   const [railOpen, setRailOpen] = useState(initial.rail);
   const [sort, setSort] = useState<TriageSort>(initial.sort);
+  const [showEvents, setShowEvents] = useState(false);
   const { hotspots, status, lastEventAt } = useHotspots(token);
   // Memoize so filteredHotspots keeps a stable reference across unrelated
   // re-renders (e.g. selecting a hotspot), which keeps the cluster index from
@@ -152,10 +153,13 @@ export default function Page() {
       />
       <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
         <SearchBar token={token} onSelectHotspot={handleSearchSelect} />
-        {globe ? <GlobeView hotspots={filteredHotspots} onSelect={handleSelectHotspot} /> : <MapView onSelect={handleSelectHotspot} extraLayers={heatLayer} hotspots={filteredHotspots} focus={focus} newHotspots={newHotspots} />}
+        {globe ? <GlobeView hotspots={filteredHotspots} onSelect={handleSelectHotspot} /> : <MapView onSelect={handleSelectHotspot} extraLayers={heatLayer} hotspots={filteredHotspots} focus={focus} newHotspots={newHotspots} token={token} showEvents={showEvents} timeWindow={filters.timeWindow} />}
         <div style={{ position: "absolute", top: 12, left: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-start", maxWidth: SIDE_MAX }}>
           <label style={{ background: "#111", color: "#eee", padding: "8px 12px", borderRadius: 6, cursor: "pointer" }}>
             <input type="checkbox" checked={showHeat} onChange={(e) => setShowHeat(e.target.checked)} /> {t("header.heatmap")}
+          </label>
+          <label style={{ background: "#111", color: "#eee", padding: "8px 12px", borderRadius: 6, cursor: "pointer" }}>
+            <input type="checkbox" checked={showEvents} onChange={(e) => setShowEvents(e.target.checked)} /> {t("header.rawEvents")}
           </label>
           <button onClick={() => setGlobe((g) => !g)} style={{ background: "#111", color: "#eee", padding: "8px 12px", borderRadius: 6, border: "none", cursor: "pointer" }}>
             {globe ? "2D Map" : t("header.globe")}

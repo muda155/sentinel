@@ -1,17 +1,20 @@
 "use client";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import DeckGL from "@deck.gl/react";
 import { ScatterplotLayer, TextLayer } from "@deck.gl/layers";
-import { FlyToInterpolator } from "@deck.gl/core";
+import { FlyToInterpolator, WebMercatorViewport } from "@deck.gl/core";
 import { Map } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { Hotspot } from "@/lib/api";
+import type { EventFeature, Hotspot } from "@/lib/api";
 import { fillColor, ringColor } from "@/lib/colors";
 import { radiusForConvergence } from "@/lib/marker-size";
 import { useT } from "@/lib/i18n";
-import { gridCellTooltip, type PickInfo } from "@/lib/map-tooltip";
+import { mapTooltip, CELL_PICK_LAYER_ID, RAW_EVENT_LAYER_ID, type PickInfo } from "@/lib/map-tooltip";
 import { useCluster } from "@/lib/useCluster";
 import type { ClusterFeature } from "@/lib/clustering";
+import { useRawEvents } from "@/lib/useRawEvents";
+import { bboxFromBounds, quantizeBbox, bboxKey, type Bbox } from "@/lib/events-layer";
+import type { TimeWindow } from "@/lib/filters";
 
 const INITIAL_VIEW = { longitude: 30, latitude: 30, zoom: 2, pitch: 0, bearing: 0 };
 const MAP_STYLE = process.env.NEXT_PUBLIC_MAP_STYLE ?? "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json";
@@ -34,13 +37,36 @@ function clusterLineColor(worst: string): [number, number, number, number] {
 
 export default function MapView({
   hotspots, onSelect, extraLayers = [], focus, newHotspots = [],
+  token = null, showEvents = false, timeWindow = "7d",
 }: { hotspots: Hotspot[]; onSelect?: (h: Hotspot) => void;
      extraLayers?: unknown[]; focus?: { lat: number; lon: number } | null;
-     newHotspots?: Hotspot[] }) {
+     newHotspots?: Hotspot[]; token?: string | null;
+     showEvents?: boolean; timeWindow?: TimeWindow }) {
   const [viewState, setViewState] = useState<Record<string, unknown>>(INITIAL_VIEW);
   const { t } = useT();
 
   const zoom = Number(viewState.zoom ?? 2);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [bbox, setBbox] = useState<Bbox | null>(null);
+
+  // Recompute only while the layer is on; skip entirely when it is off so
+  // panning costs nothing extra in the common case.
+  useEffect(() => {
+    if (!showEvents) { setBbox(null); return; }
+    const el = containerRef.current;
+    if (!el) return;
+    const vp = new WebMercatorViewport({
+      ...(viewState as { longitude: number; latitude: number; zoom: number }),
+      width: el.clientWidth || 1, height: el.clientHeight || 1,
+    });
+    const raw = bboxFromBounds(vp.getBounds());
+    if (!raw) return;
+    const next = quantizeBbox(raw);
+    setBbox((prev) => (prev && bboxKey(prev) === bboxKey(next) ? prev : next));
+  }, [showEvents, viewState]);
+
+  const rawEvents = useRawEvents(token, showEvents, bbox, timeWindow);
 
   const { clusters, leaves, getExpansionZoom } = useCluster(hotspots, WORLD_BBOX, zoom);
 
@@ -67,6 +93,20 @@ export default function MapView({
         lineWidthUnits: "pixels",
         getLineWidth: 2,
         getLineColor: [120, 200, 255, 120],
+      })
+    : null;
+
+  const rawEventLayer = rawEvents.length > 0
+    ? new ScatterplotLayer<EventFeature>({
+        id: RAW_EVENT_LAYER_ID,
+        data: rawEvents,
+        pickable: true,
+        radiusUnits: "pixels",
+        getPosition: (d) => d.geometry.coordinates,
+        getRadius: 2.5,
+        // Not [148,163,184,*] — that is FR-13's "low confidence" grey from
+        // lib/colors.ts, and a raw point is not a low-confidence hotspot.
+        getFillColor: [100, 116, 139, 90],
       })
     : null;
 
@@ -143,20 +183,23 @@ export default function MapView({
   });
 
   return (
-    <DeckGL
-      viewState={viewState}
-      onViewStateChange={({ viewState: vs }) => setViewState(vs as Record<string, unknown>)}
-      getTooltip={(info: PickInfo) => gridCellTooltip(info, t)}
-      controller
-      layers={[
-        ...(extraLayers as never[]),
-        ...(highlightLayer ? [highlightLayer] : []),
-        ...(clusterLayer ? [clusterLayer] : []),
-        ...(clusterTextLayer ? [clusterTextLayer] : []),
-        hotspotLayer,
-      ]}
-    >
-      <Map mapStyle={MAP_STYLE} />
-    </DeckGL>
+    <div ref={containerRef} style={{ position: "absolute", inset: 0 }}>
+      <DeckGL
+        viewState={viewState}
+        onViewStateChange={({ viewState: vs }) => setViewState(vs as Record<string, unknown>)}
+        getTooltip={(info: PickInfo) => mapTooltip(info, t)}
+        controller
+        layers={[
+          ...(extraLayers as never[]),
+          ...(rawEventLayer ? [rawEventLayer] : []),
+          ...(highlightLayer ? [highlightLayer] : []),
+          ...(clusterLayer ? [clusterLayer] : []),
+          ...(clusterTextLayer ? [clusterTextLayer] : []),
+          hotspotLayer,
+        ]}
+      >
+        <Map mapStyle={MAP_STYLE} />
+      </DeckGL>
+    </div>
   );
 }

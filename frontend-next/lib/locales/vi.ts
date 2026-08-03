@@ -3,6 +3,7 @@ import type { MessageKey } from "./en";
 export const vi: Record<MessageKey, string> = {
   "header.heatmap": "Bản đồ nhiệt hội tụ",
   "header.globe": "Chế độ quả cầu",
+  "header.rawEvents": "Sự kiện thô",
   "globe.unavailable": "Trình duyệt không hỗ trợ WebGL",
   "header.logout": "Đăng xuất",
   "app.loading": "Đang tải…",

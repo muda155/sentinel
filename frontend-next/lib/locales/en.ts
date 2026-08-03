@@ -1,6 +1,7 @@
 export const en = {
   "header.heatmap": "Convergence heatmap",
   "header.globe": "Globe view",
+  "header.rawEvents": "Raw events",
   "globe.unavailable": "WebGL is not available in this browser",
   "header.logout": "Log out",
   "app.loading": "Loading…",
