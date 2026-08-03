@@ -1,6 +1,17 @@
 import Supercluster from "supercluster";
 import type { Hotspot } from "@/lib/api";
 
+export type AlertLevel = "Critical" | "High" | "Medium";
+
+const ALERT_RANK: Record<string, number> = { Medium: 0, High: 1, Critical: 2 };
+
+// Aggregated by supercluster's map/reduce, so a cluster can be triaged
+// without expanding it.
+interface ClusterProps {
+  worst_alert: AlertLevel;
+  max_conf: number;
+}
+
 export interface ClusterFeature {
   /** Cluster centroid longitude */
   lon: number;
@@ -10,6 +21,10 @@ export interface ClusterFeature {
   point_count: number;
   /** Unique cluster id used for expansion */
   cluster_id: number;
+  /** Highest alert level among the contained hotspots */
+  worst_alert: AlertLevel;
+  /** Highest conf_score among the contained hotspots */
+  max_conf: number;
 }
 
 export interface ClusterResult {
@@ -19,7 +34,7 @@ export interface ClusterResult {
 
 /** A supercluster index over hotspot points. Encapsulates supercluster so
  *  callers stay decoupled from the library. */
-export type HotspotClusterIndex = Supercluster<HotspotProps>;
+export type HotspotClusterIndex = Supercluster<HotspotProps, ClusterProps>;
 
 // Properties stored in supercluster for each hotspot feature.
 interface HotspotProps {
@@ -72,9 +87,19 @@ function fromProps(p: HotspotProps, lon: number, lat: number): Hotspot {
  * Configures radius (60px) and maxZoom (12) so clustering activates at world/continent zoom.
  */
 export function createClusterIndex(hotspots: Hotspot[]): HotspotClusterIndex {
-  const index = new Supercluster<HotspotProps>({
+  const index = new Supercluster<HotspotProps, ClusterProps>({
     radius: 60,
     maxZoom: 12,
+    map: (props): ClusterProps => ({
+      worst_alert: props.alert_level as AlertLevel,
+      max_conf: props.conf_score,
+    }),
+    reduce: (acc, props) => {
+      if (ALERT_RANK[props.worst_alert] > ALERT_RANK[acc.worst_alert]) {
+        acc.worst_alert = props.worst_alert;
+      }
+      if (props.max_conf > acc.max_conf) acc.max_conf = props.max_conf;
+    },
   });
 
   const features: Supercluster.PointFeature<HotspotProps>[] = hotspots.map((h) => ({
@@ -102,13 +127,15 @@ export function getClusterData(
   const leaves: Hotspot[] = [];
 
   for (const feature of rawFeatures) {
-    const props = feature.properties as Record<string, unknown>;
+    const props = feature.properties as unknown as Record<string, unknown>;
     if (props.cluster) {
       clusters.push({
         lon: feature.geometry.coordinates[0],
         lat: feature.geometry.coordinates[1],
         point_count: props.point_count as number,
         cluster_id: props.cluster_id as number,
+        worst_alert: (props.worst_alert as AlertLevel) ?? "Medium",
+        max_conf: (props.max_conf as number) ?? 0,
       });
     } else {
       leaves.push(fromProps(

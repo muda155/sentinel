@@ -19,6 +19,15 @@ const MAX_CLUSTER_ZOOM = 10; // beyond this, cell-level context is lost
 
 const COUNT_COLOR: [number, number, number, number] = [120, 180, 255, 200];
 const COUNT_TEXT_COLOR: [number, number, number, number] = [255, 255, 255, 255];
+const CLUSTER_LINE_DEFAULT: [number, number, number, number] = [80, 140, 220, 255];
+
+// FR-13 ring semantics, borrowed for clusters: a cluster hiding a Critical
+// hotspot must not look like one holding three Medium ones. Medium has no ring
+// in FR-13, so it keeps the neutral outline instead of disappearing.
+function clusterLineColor(worst: string): [number, number, number, number] {
+  const ring = ringColor(worst);
+  return ring[3] === 0 ? CLUSTER_LINE_DEFAULT : ring;
+}
 
 export default function MapView({
   hotspots, onSelect, extraLayers = [], focus, newHotspots = [],
@@ -89,8 +98,9 @@ export default function MapView({
         getFillColor: COUNT_COLOR,
         stroked: true,
         lineWidthUnits: "pixels",
-        getLineWidth: 1,
-        getLineColor: [80, 140, 220, 255],
+        getLineWidth: (d) => (d.worst_alert === "Medium" ? 1 : 3),
+        getLineColor: (d) => clusterLineColor(d.worst_alert),
+        updateTriggers: { getLineColor: clusters, getLineWidth: clusters },
         onClick: handleClusterClick,
       })
     : null;
