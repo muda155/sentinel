@@ -74,6 +74,36 @@ describe("TriageRail", () => {
     expect(onSelect).toHaveBeenCalledTimes(2);
   });
 
+  it("navigates rows with ArrowDown/ArrowUp from the listbox", () => {
+    // ARIA listbox: the container is the single tab stop; arrows move focus.
+    renderRail();
+    listbox().focus();
+    fireEvent.keyDown(listbox(), { key: "ArrowDown" });
+    expect(document.activeElement).toBe(options()[0]);
+    fireEvent.keyDown(listbox(), { key: "ArrowDown" });
+    expect(document.activeElement).toBe(options()[1]);
+    fireEvent.keyDown(listbox(), { key: "ArrowUp" });
+    expect(document.activeElement).toBe(options()[0]);
+  });
+
+  it("jumps to the first and last rows with Home/End", () => {
+    renderRail();
+    options()[1].focus();
+    fireEvent.keyDown(options()[1], { key: "Home" });
+    expect(document.activeElement).toBe(options()[0]);
+    fireEvent.keyDown(options()[0], { key: "End" });
+    expect(document.activeElement).toBe(options()[1]);
+  });
+
+  it("selects the focused row on Enter after arrow navigation", () => {
+    const { onSelect } = renderRail();
+    listbox().focus();
+    fireEvent.keyDown(listbox(), { key: "ArrowDown" });
+    fireEvent.keyDown(listbox(), { key: "ArrowDown" });   // focus row 1
+    fireEvent.keyDown(listbox(), { key: "Enter" });
+    expect(onSelect).toHaveBeenCalledWith(data[1]);
+  });
+
   it("reports sort changes", () => {
     const { onSortChange } = renderRail();
     fireEvent.change(screen.getByLabelText(viLocale["triage.sortBy"]), { target: { value: "conf" } });

@@ -1,4 +1,5 @@
 "use client";
+import { useRef } from "react";
 import type { Hotspot } from "@/lib/api";
 import { fillColor, ringColor } from "@/lib/colors";
 import { useT } from "@/lib/i18n";
@@ -24,6 +25,52 @@ export default function TriageRail(
   { hotspots, sort, onSortChange, selectedId, onSelect, open, onToggle }: Props,
 ) {
   const { t } = useT();
+  const optionRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  const focusOption = (i: number) => {
+    optionRefs.current[i]?.focus();
+    // jsdom does not implement scrollIntoView; guard the method itself.
+    optionRefs.current[i]?.scrollIntoView?.({ block: "nearest" });
+  };
+
+  // ARIA listbox navigation lives on the container, the single tab stop. With
+  // up to 200 rows, Tab-walking every option is unusable. `e.target` tells us
+  // which row the keypress is about even though the handler is on the listbox.
+  const handleListboxKeyDown = (e: React.KeyboardEvent) => {
+    const n = hotspots.length;
+    if (n === 0) return;
+    const targetIdx = optionRefs.current.indexOf(e.target as HTMLDivElement);
+    const activeIdx = document.activeElement
+      ? optionRefs.current.indexOf(document.activeElement as HTMLDivElement)
+      : -1;
+    const from = Math.max(targetIdx, activeIdx);   // -1 → nothing focused yet
+
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        focusOption(from < 0 ? 0 : Math.min(from + 1, n - 1));
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        focusOption(from < 0 ? 0 : Math.max(from - 1, 0));
+        break;
+      case "Home":
+        e.preventDefault();
+        focusOption(0);
+        break;
+      case "End":
+        e.preventDefault();
+        focusOption(n - 1);
+        break;
+      case "Enter":
+      case " ":
+        e.preventDefault();
+        if (from >= 0) onSelect(hotspots[from]);
+        break;
+      default:
+        break;
+    }
+  };
 
   if (!open) {
     return (
@@ -76,20 +123,24 @@ export default function TriageRail(
       {hotspots.length === 0 ? (
         <p style={{ color: "#6b7280", fontSize: 12, padding: "8px 12px", margin: 0 }}>{t("triage.empty")}</p>
       ) : (
-        <div role="listbox" aria-label={t("triage.title")} style={{ overflowY: "auto", flex: 1, minHeight: 0 }}>
-          {hotspots.map((h) => {
+        <div
+          role="listbox"
+          aria-label={t("triage.title")}
+          tabIndex={0}
+          onKeyDown={handleListboxKeyDown}
+          style={{ overflowY: "auto", flex: 1, minHeight: 0 }}
+        >
+          {hotspots.map((h, i) => {
             const isSel = h.hotspot_id === selectedId;
             const ring = ringColor(h.alert_level);
             return (
               <div
                 key={h.hotspot_id}
                 role="option"
-                tabIndex={0}
+                tabIndex={-1}
+                ref={(el) => { optionRefs.current[i] = el; }}
                 aria-selected={isSel}
                 onClick={() => onSelect(h)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(h); }
-                }}
                 style={{
                   display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
                   padding: "8px 12px", borderBottom: "1px solid #131820",
