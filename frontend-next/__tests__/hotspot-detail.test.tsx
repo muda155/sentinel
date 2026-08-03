@@ -230,11 +230,25 @@ describe("HotspotDetail data loading", () => {
     );
   });
 
-  it("omits the collapsed-reports badge when duplicate_count is absent", async () => {
+  it("omits the collapsed-reports badge when duplicate_count is 1", async () => {
     summaryMock.mockResolvedValue(summaryFixture);
     claimsMock.mockResolvedValue(claimsFixture);
 
     eventsMock.mockResolvedValue([eventFixture]);
+    renderPanel();
+    await screen.findByText(eventFixture.title!);
+    const row = screen.getByText(eventFixture.title!).closest("li")!;
+    expect(within(row).queryByText(new RegExp(viLocale["detail.reports"]))).toBeNull();
+  });
+
+  it("omits the collapsed-reports badge when duplicate_count is absent", async () => {
+    summaryMock.mockResolvedValue(summaryFixture);
+    claimsMock.mockResolvedValue(claimsFixture);
+
+    // An API build predating the collapse omits the field entirely; the guard
+    // must read undefined as "not collapsed" rather than throwing.
+    const { duplicate_count: _omitted, ...withoutCount } = eventFixture;
+    eventsMock.mockResolvedValue([withoutCount as HotspotEvent]);
     renderPanel();
     await screen.findByText(eventFixture.title!);
     const row = screen.getByText(eventFixture.title!).closest("li")!;
