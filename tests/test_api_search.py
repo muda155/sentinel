@@ -160,3 +160,47 @@ def test_search_collapses_one_article_into_one_result(live_conn):
     assert len(matching) == 1, "one article must produce one search result"
     assert matching[0]["report_count"] == 3
     assert matching[0]["hotspot"]["hotspot_id"] == hid
+
+
+@pytest_live
+def test_search_does_not_collapse_null_or_empty_urls(live_conn):
+    """A missing URL is not an identity: SQL treats NULLs as equal, so
+    PARTITION BY e.url alone would merge every url-less event in a hotspot
+    into one result with an inflated report_count. The search dedupe keys on
+    COALESCE(NULLIF(url,''), 'evt:'||event_id) to mirror
+    collapse_duplicate_urls, which refuses to collapse blank-URL rows."""
+    from api.queries import fetch_search
+
+    with live_conn.cursor() as cur:
+        cur.execute("SELECT register_source(%s, %s)", ("https://nourl.example/none", None))
+        source_id = cur.fetchone()[0]
+        cur.execute(
+            """INSERT INTO hotspots (centroid_geom, radius_km, start_window,
+                   end_window, event_count, unique_sources, name)
+               VALUES (ST_SetSRID(ST_MakePoint(30.0, 30.0), 4326), 5.0,
+                       now(), now(), 4, 1, 'NoUrlSearchHotspot')
+               RETURNING hotspot_id"""
+        )
+        hid = cur.fetchone()[0]
+        # two rows with url NULL and two with url '' in the same hotspot
+        urls = [None, None, "", ""]
+        for i, u in enumerate(urls):
+            cur.execute(
+                """INSERT INTO events (source_system, external_event_id,
+                       event_date, title, url, source_id, point_geom)
+                   VALUES ('GDELT', %s, NOW(),
+                           'NoUrl dedupe drill headline', %s, %s,
+                           ST_SetSRID(ST_MakePoint(30.0, 30.0), 4326))
+                   RETURNING event_id""",
+                (f"NOURL-{i}", u, source_id),
+            )
+            event_id = cur.fetchone()[0]
+            cur.execute(
+                "INSERT INTO event_hotspot (event_id, hotspot_id) VALUES (%s, %s)",
+                (event_id, hid),
+            )
+
+    events = fetch_search(live_conn, "NoUrl dedupe drill")["events"]
+    matching = [e for e in events if e["title"] == "NoUrl dedupe drill headline"]
+    assert len(matching) == 4, "every url-less row must keep its own result"
+    assert all(e["report_count"] == 1 for e in matching), "no url-less rows may share a report_count"

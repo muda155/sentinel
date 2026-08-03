@@ -171,9 +171,13 @@ def fetch_search(conn, q: str) -> dict[str, list]:
                        h.event_count h_event_count,
                        COALESCE(g.convergence_score,h.convergence_score,0) h_convergence,
                        COALESCE(h.alert_level,'Medium') h_alert,
-                       count(*) OVER (PARTITION BY e.url, h.hotspot_id) report_count,
+                       count(*) OVER (
+                           PARTITION BY COALESCE(NULLIF(e.url, ''), 'evt:' || e.event_id),
+                                        h.hotspot_id
+                       ) report_count,
                        row_number() OVER (
-                           PARTITION BY e.url, h.hotspot_id
+                           PARTITION BY COALESCE(NULLIF(e.url, ''), 'evt:' || e.event_id),
+                                        h.hotspot_id
                            ORDER BY e.event_date DESC, e.event_id DESC
                        ) rn
                 FROM events e
