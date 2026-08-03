@@ -19,6 +19,12 @@ export function useHotspots(token: string | null): {
   const [settled, setSettled] = useState(false);
 
   useEffect(() => {
+    // Same guard as the SSE effect below: auth hydrates in an effect, so the
+    // hook's first pass is tokenless — an unauthenticated GET /hotspots 401s
+    // and would trip the `settled` latch (opening the page's ?h= restore gate
+    // against an empty list) while burning a rate-limit token for a request
+    // that always fails.
+    if (!token) return;
     api.hotspots(token)
       .then((hs) => { setHotspots(hs); setSettled(true); })
       .catch(() => { setHotspots([]); setSettled(true); });
