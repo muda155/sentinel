@@ -52,6 +52,18 @@ export type Claim = {
 };
 export type HotspotClaims = { claims: Claim[]; insufficient_sources: boolean };
 
+export type EventFeature = {
+  type: "Feature";
+  geometry: { type: "Point"; coordinates: [number, number] };
+  properties: {
+    event_id: number; event_date: string; cameo_code: string | null;
+    country_code: string | null; url: string | null; title: string | null;
+  };
+};
+export type EventFeatureCollection = {
+  type: "FeatureCollection"; features: EventFeature[]; next_cursor: number | null;
+};
+
 const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 
 export function authHeaders(token?: string | null): HeadersInit {
@@ -91,6 +103,17 @@ export const api = {
     ),
   hotspotEvents: (id: number, token?: string | null) =>
     getJson<HotspotEvent[]>(`/hotspots/${id}/events`, token),
+  events: (
+    p: { sw_lat: number; sw_lon: number; ne_lat: number; ne_lon: number;
+         start: string; end: string; pageSize?: number },
+    token?: string | null,
+  ) =>
+    getJson<EventFeatureCollection>(
+      `/events?sw_lat=${p.sw_lat}&sw_lon=${p.sw_lon}&ne_lat=${p.ne_lat}&ne_lon=${p.ne_lon}` +
+      `&start=${encodeURIComponent(p.start)}&end=${encodeURIComponent(p.end)}` +
+      `&page_size=${p.pageSize ?? 1000}`,
+      token,
+    ),
   search: (q: string, token?: string | null) =>
     getJson<SearchResults>(`/search?q=${encodeURIComponent(q)}`, token),
   hotspotClaims: (id: number, token?: string | null) =>
