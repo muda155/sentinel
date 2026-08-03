@@ -12,6 +12,17 @@ interface ClusterProps {
   max_conf: number;
 }
 
+// getClusters() returns a discriminated union: cluster features carry
+// supercluster's ClusterProperties merged with our ClusterProps, leaves carry
+// only HotspotProps. The `cluster: true` flag distinguishes them.
+type ClusterOrLeafProps = (Supercluster.ClusterProperties & ClusterProps) | HotspotProps;
+
+function isClusterProps(
+  p: ClusterOrLeafProps,
+): p is Supercluster.ClusterProperties & ClusterProps {
+  return (p as Supercluster.ClusterProperties).cluster === true;
+}
+
 export interface ClusterFeature {
   /** Cluster centroid longitude */
   lon: number;
@@ -127,19 +138,19 @@ export function getClusterData(
   const leaves: Hotspot[] = [];
 
   for (const feature of rawFeatures) {
-    const props = feature.properties as unknown as Record<string, unknown>;
-    if (props.cluster) {
+    const props: ClusterOrLeafProps = feature.properties;
+    if (isClusterProps(props)) {
       clusters.push({
         lon: feature.geometry.coordinates[0],
         lat: feature.geometry.coordinates[1],
-        point_count: props.point_count as number,
-        cluster_id: props.cluster_id as number,
-        worst_alert: (props.worst_alert as AlertLevel) ?? "Medium",
-        max_conf: (props.max_conf as number) ?? 0,
+        point_count: props.point_count,
+        cluster_id: props.cluster_id,
+        worst_alert: props.worst_alert ?? "Medium",
+        max_conf: props.max_conf ?? 0,
       });
     } else {
       leaves.push(fromProps(
-        props as unknown as HotspotProps,
+        props,
         feature.geometry.coordinates[0],
         feature.geometry.coordinates[1],
       ));

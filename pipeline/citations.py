@@ -23,6 +23,11 @@ def collapse_duplicate_urls(
 
     Rows whose URL is missing or blank are never collapsed together: a missing
     URL is not an identity, and those rows carry no citation index anyway.
+
+    MUTATION: when ``count_key`` is set, the input row dicts are modified in
+    place (``row[count_key] = 1``), and the kept first row's ``count_key`` is
+    incremented as duplicates fold into it. Callers must pass freshly
+    materialised rows, not dicts that are reused or shared elsewhere.
     """
     kept: list[dict] = []
     first_by_url: dict[str, dict] = {}
