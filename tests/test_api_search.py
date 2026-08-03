@@ -118,3 +118,45 @@ def test_search_common_domain_returns_200():
         assert s["trust_tier"] is None or (
             isinstance(s["trust_tier"], int) and 1 <= s["trust_tier"] <= 4
         )
+
+
+@pytest_live
+def test_search_collapses_one_article_into_one_result(live_conn):
+    """One article ingested as several GDELT actor-pair rows filled the
+    10-row dropdown with the same headline, and each copy was cited
+    separately in the detail panel it opened."""
+    from api.queries import fetch_search
+
+    shared_url = "https://dedupe.example/solihull"
+    with live_conn.cursor() as cur:
+        cur.execute("SELECT register_source(%s, %s)", (shared_url, None))
+        source_id = cur.fetchone()[0]
+        cur.execute(
+            """INSERT INTO hotspots (centroid_geom, radius_km, start_window,
+                   end_window, event_count, unique_sources, name)
+               VALUES (ST_SetSRID(ST_MakePoint(34.45, 31.5), 4326), 5.0,
+                       now(), now(), 3, 1, 'DedupeSearchHotspot')
+               RETURNING hotspot_id"""
+        )
+        hid = cur.fetchone()[0]
+        for i in range(3):
+            cur.execute(
+                """INSERT INTO events (source_system, external_event_id,
+                       event_date, title, url, source_id, point_geom)
+                   VALUES ('GDELT', %s, NOW(),
+                           'Solihull dedupe drill headline', %s, %s,
+                           ST_SetSRID(ST_MakePoint(34.45, 31.5), 4326))
+                   RETURNING event_id""",
+                (f"DEDUPE-{i}", shared_url, source_id),
+            )
+            event_id = cur.fetchone()[0]
+            cur.execute(
+                "INSERT INTO event_hotspot (event_id, hotspot_id) VALUES (%s, %s)",
+                (event_id, hid),
+            )
+
+    events = fetch_search(live_conn, "Solihull dedupe drill")["events"]
+    matching = [e for e in events if e["url"] == shared_url]
+    assert len(matching) == 1, "one article must produce one search result"
+    assert matching[0]["report_count"] == 3
+    assert matching[0]["hotspot"]["hotspot_id"] == hid

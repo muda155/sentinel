@@ -67,6 +67,7 @@ class SearchEvent(BaseModel):
     url: str | None = None
     domain: str
     event_date: datetime
+    report_count: int = 1
     hotspot: Hotspot
 
 
