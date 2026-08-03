@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, ValidationError
 
+from pipeline.citations import collapse_duplicate_urls
 from pipeline.llm_verifier import _extract_json, call_llm_raw
 from pipeline.relevance import (
     evidence_homogeneity,
@@ -105,7 +106,9 @@ def fetch_hotspot_evidence(conn, hotspot_id: int) -> list[dict]:
             (hotspot_id,),
         )
         cols = [c[0] for c in cursor.description]
-        rows = [dict(zip(cols, r)) for r in cursor.fetchall()]
+        rows = collapse_duplicate_urls(
+            [dict(zip(cols, r)) for r in cursor.fetchall()], count_key=None
+        )
 
     evidence: list[dict] = []
     seen_domains: set[str] = set()

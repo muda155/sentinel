@@ -55,6 +55,7 @@ class HotspotEvent(BaseModel):
     avg_tone: float | None = None
     num_sources: int | None = None
     fatalities: int | None = None
+    duplicate_count: int = 1
     trust_tier: int | None = None
     trust_score: float
     citation_index: int | None = None

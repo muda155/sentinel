@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlparse
 
+from pipeline.citations import collapse_duplicate_urls
+
 
 def fetch_grid_cells(conn, *, min_convergence=1.0, max_age_hours=720) -> list[dict]:
     q = """
@@ -275,7 +277,7 @@ def fetch_hotspot_events(conn, hotspot_id: int) -> list[dict] | None:
         )
         cols = [c[0] for c in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
-    return assign_citation_indices(rows)
+    return assign_citation_indices(collapse_duplicate_urls(rows))
 
 
 def fetch_hotspot_claims(conn, hotspot_id: int) -> dict | None:

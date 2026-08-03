@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 import requests
 from pydantic import BaseModel, field_validator
 
+from pipeline.citations import collapse_duplicate_urls
 from pipeline.db import get_pooled_connection
 
 logger = logging.getLogger("sentinel.llm_verifier")
@@ -314,11 +315,13 @@ class LLMRepository:
                 (hotspot_id,),
             )
             rows = cursor.fetchall()
-        return [
+        articles = [
             {"title": row[0] or "", "url": row[1] or "", "domain": _domain(row[1])}
             for row in rows
             if row[1]
         ]
+        # count_key=None: these dicts are serialized into the prompt verbatim.
+        return collapse_duplicate_urls(articles, count_key=None)
 
     def candidate_hotspots(self, threshold: float) -> list[int]:
         with self._conn.cursor() as cursor:
