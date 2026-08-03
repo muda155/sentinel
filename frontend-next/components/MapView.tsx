@@ -8,6 +8,8 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { Hotspot } from "@/lib/api";
 import { fillColor, ringColor } from "@/lib/colors";
 import { radiusForConvergence } from "@/lib/marker-size";
+import { useT } from "@/lib/i18n";
+import { gridCellTooltip, type PickInfo } from "@/lib/map-tooltip";
 import { useCluster } from "@/lib/useCluster";
 import type { ClusterFeature } from "@/lib/clustering";
 
@@ -36,6 +38,7 @@ export default function MapView({
      extraLayers?: unknown[]; focus?: { lat: number; lon: number } | null;
      newHotspots?: Hotspot[] }) {
   const [viewState, setViewState] = useState<Record<string, unknown>>(INITIAL_VIEW);
+  const { t } = useT();
 
   const zoom = Number(viewState.zoom ?? 2);
 
@@ -143,6 +146,7 @@ export default function MapView({
     <DeckGL
       viewState={viewState}
       onViewStateChange={({ viewState: vs }) => setViewState(vs as Record<string, unknown>)}
+      getTooltip={(info: PickInfo) => gridCellTooltip(info, t)}
       controller
       layers={[
         ...(extraLayers as never[]),

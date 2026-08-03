@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
+import { ScatterplotLayer } from "@deck.gl/layers";
+import { CELL_PICK_LAYER_ID } from "@/lib/map-tooltip";
 import { api, GridCell, Hotspot } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import HotspotDetail from "@/components/HotspotDetail";
@@ -73,11 +75,22 @@ export default function Page() {
   if (!token || !user) return null; // redirecting
 
   const heatLayer = showHeat
-    ? [new HeatmapLayer<GridCell>({
-        id: "convergence-heat", data: cells,
-        getPosition: (d) => [d.lon, d.lat],
-        getWeight: (d) => d.convergence_score, radiusPixels: 60,
-      })]
+    ? [
+        new HeatmapLayer<GridCell>({
+          id: "convergence-heat", data: cells,
+          getPosition: (d) => [d.lon, d.lat],
+          getWeight: (d) => d.convergence_score, radiusPixels: 60,
+        }),
+        // Invisible but pickable: the heatmap texture cannot report which cell
+        // the cursor is over. Sits above the heatmap so it wins the pick.
+        new ScatterplotLayer<GridCell>({
+          id: CELL_PICK_LAYER_ID, data: cells,
+          pickable: true, radiusUnits: "pixels",
+          getPosition: (d) => [d.lon, d.lat],
+          getRadius: 30,
+          getFillColor: [0, 0, 0, 0],
+        }),
+      ]
     : [];
 
   return (
