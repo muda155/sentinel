@@ -67,7 +67,10 @@ describe("connectHotspotStream status", () => {
     const afterFirst = StubEventSource.instances.length;
     StubEventSource.instances.at(-1)!.onopen?.();
     StubEventSource.instances.at(-1)!.onerror?.();
-    vi.advanceTimersByTime(1600);   // under the ~2s attempt-1 backoff
+    // attempt-1 backoff is 2000ms +/- 500ms jitter (floor 1500ms), so a
+    // 1400ms advance is deterministically under it; the plan's original
+    // 1600ms raced the jitter and flaked ~10% of the time.
+    vi.advanceTimersByTime(1400);
     expect(StubEventSource.instances.length).toBe(afterFirst);
     stop();
   });
