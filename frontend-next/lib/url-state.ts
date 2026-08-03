@@ -5,12 +5,15 @@ import {
   type HotspotFilters,
   type TimeWindow,
 } from "@/lib/filters";
+import { TRIAGE_SORTS, type TriageSort } from "@/lib/triage";
 
 export type UrlState = {
   hotspotId: number | null;
   filters: HotspotFilters;
   heat: boolean;
   globe: boolean;
+  rail: boolean;
+  sort: TriageSort;
 };
 
 const ALL_LEVELS: AlertLevel[] = ["Critical", "High", "Medium"];
@@ -20,6 +23,8 @@ export const DEFAULT_URL_STATE: UrlState = {
   filters: DEFAULT_FILTERS,
   heat: false,
   globe: false,
+  rail: false,
+  sort: "alert",
 };
 
 /** Query string for the current state. Defaults are omitted so a shared link
@@ -34,6 +39,8 @@ export function serializeState(s: UrlState): string {
   }
   if (s.heat) p.set("heat", "1");
   if (s.globe) p.set("globe", "1");
+  if (s.rail) p.set("rail", "1");
+  if (s.sort !== DEFAULT_URL_STATE.sort) p.set("sort", s.sort);
   return p.toString();
 }
 
@@ -64,10 +71,17 @@ export function parseState(search: string): UrlState {
         rawAlert.split(",").filter((l): l is AlertLevel => (ALL_LEVELS as string[]).includes(l)),
       );
 
+  const rawSort = p.get("sort");
+  const sort = (TRIAGE_SORTS as string[]).includes(rawSort ?? "")
+    ? (rawSort as TriageSort)
+    : DEFAULT_URL_STATE.sort;
+
   return {
     hotspotId,
     filters: { minConf, timeWindow, alertLevels },
     heat: p.get("heat") === "1",
     globe: p.get("globe") === "1",
+    rail: p.get("rail") === "1",
+    sort,
   };
 }

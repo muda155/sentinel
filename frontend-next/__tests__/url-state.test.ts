@@ -24,6 +24,11 @@ describe("serializeState", () => {
     expect(serializeState(withFilters({ alertLevels: new Set(["Critical", "High"]) }))).toBe("alert=Critical%2CHigh");
     expect(serializeState(withFilters({ alertLevels: new Set() }))).toBe("alert=");
   });
+  it("emits the rail fields only when non-default", () => {
+    expect(serializeState({ ...DEFAULT_URL_STATE, rail: true })).toBe("rail=1");
+    expect(serializeState({ ...DEFAULT_URL_STATE, sort: "events" })).toBe("sort=events");
+    expect(serializeState({ ...DEFAULT_URL_STATE, sort: "alert" })).toBe("");
+  });
 });
 
 describe("parseState", () => {
@@ -64,6 +69,12 @@ describe("parseState", () => {
   it("distinguishes an absent alert param from an empty one", () => {
     expect(parseState("").filters.alertLevels.size).toBe(3);
     expect(parseState("alert=").filters.alertLevels.size).toBe(0);
+  });
+  it("parses the rail fields and rejects an unknown sort", () => {
+    expect(parseState("rail=1").rail).toBe(true);
+    expect(parseState("").rail).toBe(false);
+    expect(parseState("sort=recent").sort).toBe("recent");
+    expect(parseState("sort=bogus").sort).toBe("alert");
   });
   it("returns a fresh Set each call", () => {
     // Sharing DEFAULT_FILTERS.alertLevels by reference would let a checkbox

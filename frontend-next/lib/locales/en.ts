@@ -77,5 +77,15 @@ export const en = {
   "stream.reconnecting": "Reconnecting…",
   "stream.updated": "updated {t} ago",
   "stream.noEvents": "no events yet",
+  "triage.title": "Triage",
+  "triage.expand": "Open triage list",
+  "triage.collapse": "Close triage list",
+  "triage.empty": "No hotspots match the current filters.",
+  "triage.sortBy": "Sort by",
+  "triage.sort.alert": "Alert level",
+  "triage.sort.conf": "Confidence",
+  "triage.sort.convergence": "Convergence",
+  "triage.sort.events": "Event count",
+  "triage.sort.recent": "Most recent",
 } as const;
 export type MessageKey = keyof typeof en;

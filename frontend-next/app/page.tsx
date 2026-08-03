@@ -15,6 +15,7 @@ import { useHotspots } from "@/lib/useHotspots";
 import { applyFilters, DEFAULT_FILTERS, HotspotFilters } from "@/lib/filters";
 import { countNew, getLastSeen, isNew } from "@/lib/whatsnew";
 import { parseState, serializeState } from "@/lib/url-state";
+import { sortHotspots, type TriageSort } from "@/lib/triage";
 
 // SearchBar is centred on THIS container (420px + padding/border = 446 wide),
 // and the container shrinks by HotspotDetail's 340px when a hotspot opens. A
@@ -29,6 +30,7 @@ const GlobeView = dynamic(() => import("@/components/GlobeToggle"), { ssr: false
 const SearchBar = dynamic(() => import("@/components/SearchBar"), { ssr: false });
 const FilterPanel = dynamic(() => import("@/components/FilterPanel"), { ssr: false });
 const Legend = dynamic(() => import("@/components/Legend"), { ssr: false });
+const TriageRail = dynamic(() => import("@/components/TriageRail"), { ssr: false });
 
 export default function Page() {
   const { token, user, hydrated, logout } = useAuth();
@@ -46,6 +48,8 @@ export default function Page() {
   const [cells, setCells] = useState<GridCell[]>([]);
   const [globe, setGlobe] = useState(initial.globe);
   const [filters, setFilters] = useState<HotspotFilters>(initial.filters);
+  const [railOpen, setRailOpen] = useState(initial.rail);
+  const [sort, setSort] = useState<TriageSort>(initial.sort);
   const { hotspots, status, lastEventAt } = useHotspots(token);
   // Memoize so filteredHotspots keeps a stable reference across unrelated
   // re-renders (e.g. selecting a hotspot), which keeps the cluster index from
@@ -63,6 +67,8 @@ export default function Page() {
     );
     return filteredHotspots.filter((h) => newIds.has(h.hotspot_id));
   }, [hotspots, filteredHotspots, lastSeen]);
+
+  const railHotspots = useMemo(() => sortHotspots(filteredHotspots, sort), [filteredHotspots, sort]);
 
   const handleSearchSelect = (h: Hotspot) => {
     setFocus({ lat: h.lat, lon: h.lon });
@@ -97,12 +103,13 @@ export default function Page() {
     if (typeof window === "undefined") return;
     const qs = serializeState({
       hotspotId: selected?.hotspot_id ?? null, filters, heat: showHeat, globe,
+      rail: railOpen, sort,
     });
     // replaceState, not router.replace: a Next navigation would re-run the
     // route and remount MapView, throwing away the deck.gl view state on
     // every slider tick.
     window.history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
-  }, [selected, filters, showHeat, globe]);
+  }, [selected, filters, showHeat, globe, railOpen, sort]);
 
   if (!hydrated) {
     return (
@@ -134,6 +141,15 @@ export default function Page() {
 
   return (
     <main style={{ position: "absolute", inset: 0, display: "flex" }}>
+      <TriageRail
+        hotspots={railHotspots}
+        sort={sort}
+        onSortChange={setSort}
+        selectedId={selected?.hotspot_id ?? null}
+        onSelect={handleSearchSelect}
+        open={railOpen}
+        onToggle={() => setRailOpen((o) => !o)}
+      />
       <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
         <SearchBar token={token} onSelectHotspot={handleSearchSelect} />
         {globe ? <GlobeView hotspots={filteredHotspots} onSelect={handleSelectHotspot} /> : <MapView onSelect={handleSelectHotspot} extraLayers={heatLayer} hotspots={filteredHotspots} focus={focus} newHotspots={newHotspots} />}
