@@ -23,6 +23,7 @@ export const vi: Record<MessageKey, string> = {
   "detail.tone": "sắc thái",
   "detail.intensity": "cường độ",
   "detail.numSources": "bài báo",
+  "detail.reports": "bản tin",
   "detail.activeSince": "Hoạt động từ",
   "detail.lastSeen": "lần cuối",
   "detail.activity": "Diễn biến",

@@ -21,6 +21,7 @@ export const en = {
   "detail.tone": "tone",
   "detail.intensity": "intensity",
   "detail.numSources": "articles",
+  "detail.reports": "reports",
   "detail.activeSince": "Active since",
   "detail.lastSeen": "last seen",
   "detail.activity": "Activity",

@@ -227,6 +227,12 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
               {" · "}{new Date(e.event_date).toLocaleDateString()}
             </div>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 3 }}>
+              {e.duplicate_count > 1 && (
+                <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "#1f2937", color: "#9ca3af" }}
+                      title={`${e.duplicate_count} GDELT event rows share this article`}>
+                  {e.duplicate_count} {t("detail.reports")}
+                </span>
+              )}
               {distinctSystems && (
                 <span style={{ fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "#1f2937", color: "#9ca3af" }}>
                   {e.source_system}

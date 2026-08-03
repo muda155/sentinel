@@ -25,12 +25,13 @@ export type HotspotEvent = {
   source_system: string; event_type_label: string; event_date: string;
   goldstein_scale: number | null; avg_tone: number | null;
   num_sources: number | null; fatalities: number | null;
+  duplicate_count: number;
   trust_tier: number | null; trust_score: number; citation_index: number | null;
 };
 
 export type SearchEvent = {
   event_id: number; title: string | null; url: string | null; domain: string;
-  event_date: string; hotspot: Hotspot;
+  event_date: string; report_count: number; hotspot: Hotspot;
 };
 export type SearchSource = {
   source_id: number; domain: string; trust_tier: number | null; hotspots: Hotspot[];

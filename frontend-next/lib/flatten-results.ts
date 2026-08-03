@@ -18,9 +18,11 @@ export function flattenResults(res: SearchResults): FlatResult[] {
                 hotspot: h });
   }
   for (const e of res.events) {
+    const dest = e.hotspot.name ?? `#${e.hotspot.hotspot_id}`;
+    const reports = e.report_count > 1 ? ` · ${e.report_count} reports` : "";
     flat.push({ group: "events", key: `e${e.event_id}`,
                 label: e.title || e.domain,
-                sublabel: `${e.domain} · ${e.hotspot.name ?? `#${e.hotspot.hotspot_id}`}`,
+                sublabel: `${e.domain} · ${dest}${reports}`,
                 hotspot: e.hotspot });
   }
   for (const s of res.sources) {
