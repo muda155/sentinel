@@ -7,6 +7,7 @@ import { Map } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Hotspot } from "@/lib/api";
 import { fillColor, ringColor } from "@/lib/colors";
+import { radiusForConvergence } from "@/lib/marker-size";
 import { useCluster } from "@/lib/useCluster";
 import type { ClusterFeature } from "@/lib/clustering";
 
@@ -125,14 +126,17 @@ export default function MapView({
     pickable: true,
     radiusUnits: "pixels",
     getPosition: (d) => [d.lon, d.lat],
-    getRadius: 8,
+    getRadius: (d) => radiusForConvergence(d.convergence_score),
     getFillColor: (d) => fillColor(d.conf_score),
     stroked: true,
     lineWidthUnits: "pixels",
     getLineWidth: (d) => (d.alert_level === "Medium" ? 0 : 3),
     getLineColor: (d) => ringColor(d.alert_level),
     onClick: (info) => info.object && onSelect?.(info.object as Hotspot),
-    updateTriggers: { getFillColor: orderedLeaves, getLineColor: orderedLeaves },
+    updateTriggers: {
+      getFillColor: orderedLeaves, getLineColor: orderedLeaves,
+      getRadius: orderedLeaves,
+    },
   });
 
   return (
