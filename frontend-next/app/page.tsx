@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
+import { ScatterplotLayer } from "@deck.gl/layers";
+import { CELL_PICK_LAYER_ID } from "@/lib/map-tooltip";
 import { api, GridCell, Hotspot } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import HotspotDetail from "@/components/HotspotDetail";
@@ -73,11 +75,22 @@ export default function Page() {
   if (!token || !user) return null; // redirecting
 
   const heatLayer = showHeat
-    ? [new HeatmapLayer<GridCell>({
-        id: "convergence-heat", data: cells,
-        getPosition: (d) => [d.lon, d.lat],
-        getWeight: (d) => d.convergence_score, radiusPixels: 60,
-      })]
+    ? [
+        new HeatmapLayer<GridCell>({
+          id: "convergence-heat", data: cells,
+          getPosition: (d) => [d.lon, d.lat],
+          getWeight: (d) => d.convergence_score, radiusPixels: 60,
+        }),
+        // Invisible but pickable: the heatmap texture cannot report which cell
+        // the cursor is over. Sits above the heatmap so it wins the pick.
+        new ScatterplotLayer<GridCell>({
+          id: CELL_PICK_LAYER_ID, data: cells,
+          pickable: true, radiusUnits: "pixels",
+          getPosition: (d) => [d.lon, d.lat],
+          getRadius: 30,
+          getFillColor: [0, 0, 0, 0],
+        }),
+      ]
     : [];
 
   return (
@@ -85,7 +98,7 @@ export default function Page() {
       <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
         <SearchBar token={token} onSelectHotspot={handleSearchSelect} />
         {globe ? <GlobeView hotspots={filteredHotspots} onSelect={handleSelectHotspot} /> : <MapView onSelect={handleSelectHotspot} extraLayers={heatLayer} hotspots={filteredHotspots} focus={focus} newHotspots={newHotspots} />}
-        <div style={{ position: "absolute", top: 12, left: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ position: "absolute", top: 12, left: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-start", maxWidth: 480 }}>
           <label style={{ background: "#111", color: "#eee", padding: "8px 12px", borderRadius: 6, cursor: "pointer" }}>
             <input type="checkbox" checked={showHeat} onChange={(e) => setShowHeat(e.target.checked)} /> {t("header.heatmap")}
           </label>
@@ -94,8 +107,6 @@ export default function Page() {
           </button>
           <LanguageToggle />
           <Legend />
-        </div>
-        <div style={{ position: "absolute", top: 12, right: 12 }}>
           <FilterPanel filters={filters} onChange={setFilters} visible={filteredHotspots.length} total={total} newCount={newCount} />
         </div>
         <div style={{ position: "absolute", bottom: 12, right: 12, display: "flex", gap: 8, alignItems: "center" }}>

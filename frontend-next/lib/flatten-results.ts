@@ -1,4 +1,5 @@
 import type { Hotspot, SearchResults } from "@/lib/api";
+import type { MessageKey } from "@/lib/locales/en";
 
 export type FlatResult = {
   group: "hotspots" | "events" | "sources";
@@ -9,7 +10,7 @@ export type FlatResult = {
   sourceHotspots?: Hotspot[];
 };
 
-export function flattenResults(res: SearchResults): FlatResult[] {
+export function flattenResults(res: SearchResults, t: (key: MessageKey) => string): FlatResult[] {
   const flat: FlatResult[] = [];
   for (const h of res.hotspots) {
     flat.push({ group: "hotspots", key: `h${h.hotspot_id}`,
@@ -18,9 +19,11 @@ export function flattenResults(res: SearchResults): FlatResult[] {
                 hotspot: h });
   }
   for (const e of res.events) {
+    const dest = e.hotspot.name ?? `#${e.hotspot.hotspot_id}`;
+    const reports = e.report_count > 1 ? ` · ${e.report_count} ${t("detail.reports")}` : "";
     flat.push({ group: "events", key: `e${e.event_id}`,
                 label: e.title || e.domain,
-                sublabel: `${e.domain} · ${e.hotspot.name ?? `#${e.hotspot.hotspot_id}`}`,
+                sublabel: `${e.domain} · ${dest}${reports}`,
                 hotspot: e.hotspot });
   }
   for (const s of res.sources) {

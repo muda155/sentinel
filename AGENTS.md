@@ -80,7 +80,7 @@ Remove stale or contradictory text immediately.
 ## Root-Owned Directories
 
 Directories with no child AGENTS.md are owned directly by this root doc:
-- `scripts/` — ops scripts: partition create/cleanup (`create_partitions.py`, `cleanup_old_partitions.py`), polygon loader (`load_country_polygons.py`)
+- `scripts/` — ops scripts: partition create/cleanup (`create_partitions.py`, `cleanup_old_partitions.py`), polygon loader (`load_country_polygons.py`), stale-SITREP invalidation (`invalidate_stale_sitreps.py`, one-shot for the Phase-3 duplicate-URL collapse — runbook in `docs/ops/phase3-duplicate-collapse.md`)
 - `load/` — load testing (`sse_locust.py` Locust suite against the SSE/API layer)
 - `docker/` — container build (`Dockerfile`)
 - `docs/` — ops runbooks (`ops/`), implementation plans (`superpowers/`), analyses, World Monitor reference archive (`world_monitor_archive/`)

@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 from urllib.parse import urlparse
 
+from pipeline.citations import collapse_duplicate_urls
+
 
 def fetch_grid_cells(conn, *, min_convergence=1.0, max_age_hours=720) -> list[dict]:
     q = """
@@ -159,21 +161,33 @@ def fetch_search(conn, q: str) -> dict[str, list]:
 
         cur.execute(
             """
-            SELECT e.event_id, e.title, e.url, e.event_date,
-                   h.hotspot_id, h.name, h.start_window h_start_window,
-                   h.end_window h_end_window, h.created_at h_created_at,
-                   h.consistency_score h_consistency,
-                   ST_Y(h.centroid_geom) h_lat,
-                   ST_X(h.centroid_geom) h_lon, COALESCE(h.conf_score,0) h_conf,
-                   h.event_count h_event_count,
-                   COALESCE(g.convergence_score,h.convergence_score,0) h_convergence,
-                   COALESCE(h.alert_level,'Medium') h_alert
-            FROM events e
-            JOIN event_hotspot eh ON eh.event_id = e.event_id
-            JOIN hotspots h ON h.hotspot_id = eh.hotspot_id
-            LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
-            WHERE e.title_tsv @@ websearch_to_tsquery('english', %s)
-            ORDER BY e.event_date DESC, e.event_id DESC
+            SELECT * FROM (
+                SELECT e.event_id, e.title, e.url, e.event_date,
+                       h.hotspot_id, h.name, h.start_window h_start_window,
+                       h.end_window h_end_window, h.created_at h_created_at,
+                       h.consistency_score h_consistency,
+                       ST_Y(h.centroid_geom) h_lat,
+                       ST_X(h.centroid_geom) h_lon, COALESCE(h.conf_score,0) h_conf,
+                       h.event_count h_event_count,
+                       COALESCE(g.convergence_score,h.convergence_score,0) h_convergence,
+                       COALESCE(h.alert_level,'Medium') h_alert,
+                       count(*) OVER (
+                           PARTITION BY COALESCE(NULLIF(e.url, ''), 'evt:' || e.event_id),
+                                        h.hotspot_id
+                       ) report_count,
+                       row_number() OVER (
+                           PARTITION BY COALESCE(NULLIF(e.url, ''), 'evt:' || e.event_id),
+                                        h.hotspot_id
+                           ORDER BY e.event_date DESC, e.event_id DESC
+                       ) rn
+                FROM events e
+                JOIN event_hotspot eh ON eh.event_id = e.event_id
+                JOIN hotspots h ON h.hotspot_id = eh.hotspot_id
+                LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
+                WHERE e.title_tsv @@ websearch_to_tsquery('english', %s)
+            ) t
+            WHERE rn = 1
+            ORDER BY event_date DESC, event_id DESC
             LIMIT 10
             """,
             (q,),
@@ -182,6 +196,7 @@ def fetch_search(conn, q: str) -> dict[str, list]:
             {
                 "event_id": r["event_id"], "title": r["title"], "url": r["url"],
                 "domain": _domain(r["url"]), "event_date": r["event_date"],
+                "report_count": int(r["report_count"]),
                 "hotspot": {
                     "hotspot_id": r["hotspot_id"], "name": r["name"],
                     "start_window": r["h_start_window"],
@@ -275,7 +290,7 @@ def fetch_hotspot_events(conn, hotspot_id: int) -> list[dict] | None:
         )
         cols = [c[0] for c in cur.description]
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
-    return assign_citation_indices(rows)
+    return assign_citation_indices(collapse_duplicate_urls(rows))
 
 
 def fetch_hotspot_claims(conn, hotspot_id: int) -> dict | None:

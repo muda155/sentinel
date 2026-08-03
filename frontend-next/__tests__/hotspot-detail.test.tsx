@@ -44,7 +44,7 @@ const eventFixture: HotspotEvent = {
   event_id: 1, title: "Clashes reported", url: "https://example.com/1", domain: "example.com",
   source_system: "GDELT", event_type_label: "military_conflict", event_date: "2026-08-01T00:00:00Z",
   goldstein_scale: -8, avg_tone: -5.25, num_sources: 12, fatalities: 3,
-  trust_tier: 3, trust_score: 0.8, citation_index: 1,
+  trust_tier: 3, trust_score: 0.8, citation_index: 1, duplicate_count: 1,
 };
 
 const claimsFixture: HotspotClaims = { claims: [], insufficient_sources: true };
@@ -212,6 +212,47 @@ describe("HotspotDetail data loading", () => {
     expect(within(acledRow).getByText("armed_conflict")).toBeTruthy();
     expect(within(acledRow).queryByText(new RegExp(viLocale["detail.numSources"]))).toBeNull();
     expect(within(acledRow).queryByText(new RegExp(viLocale["detail.fatalities"]))).toBeNull();
+  });
+
+  it("renders the collapsed-reports badge when duplicate_count > 1", async () => {
+    summaryMock.mockResolvedValue(summaryFixture);
+    claimsMock.mockResolvedValue(claimsFixture);
+
+    // GDELT emits one row per actor pair, so duplicate_count > 1 surfaces the
+    // collapse as a leading badge with a localized tooltip
+    eventsMock.mockResolvedValue([{ ...eventFixture, duplicate_count: 16 }]);
+    renderPanel();
+    await screen.findByText(eventFixture.title!);
+    const row = screen.getByText(eventFixture.title!).closest("li")!;
+    const badge = within(row).getByText(`16 ${viLocale["detail.reports"]}`);
+    expect(badge.getAttribute("title")).toBe(
+      viLocale["detail.reportsTooltip"].replace("{n}", "16"),
+    );
+  });
+
+  it("omits the collapsed-reports badge when duplicate_count is 1", async () => {
+    summaryMock.mockResolvedValue(summaryFixture);
+    claimsMock.mockResolvedValue(claimsFixture);
+
+    eventsMock.mockResolvedValue([eventFixture]);
+    renderPanel();
+    await screen.findByText(eventFixture.title!);
+    const row = screen.getByText(eventFixture.title!).closest("li")!;
+    expect(within(row).queryByText(new RegExp(viLocale["detail.reports"]))).toBeNull();
+  });
+
+  it("omits the collapsed-reports badge when duplicate_count is absent", async () => {
+    summaryMock.mockResolvedValue(summaryFixture);
+    claimsMock.mockResolvedValue(claimsFixture);
+
+    // An API build predating the collapse omits the field entirely; the guard
+    // must read undefined as "not collapsed" rather than throwing.
+    const { duplicate_count: _omitted, ...withoutCount } = eventFixture;
+    eventsMock.mockResolvedValue([withoutCount as HotspotEvent]);
+    renderPanel();
+    await screen.findByText(eventFixture.title!);
+    const row = screen.getByText(eventFixture.title!).closest("li")!;
+    expect(within(row).queryByText(new RegExp(viLocale["detail.reports"]))).toBeNull();
   });
 
   it("shows the severity aggregate and lifespan in the header", async () => {

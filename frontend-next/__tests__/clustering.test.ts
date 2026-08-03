@@ -83,6 +83,22 @@ describe("getClusterData", () => {
   });
 });
 
+describe("cluster aggregate properties", () => {
+  it("carries the worst alert level and max confidence up to the cluster", () => {
+    const hotspots = [
+      makeHotspot({ hotspot_id: 1, lat: 10, lon: 10, alert_level: "Medium", conf_score: 20 }),
+      makeHotspot({ hotspot_id: 2, lat: 10.01, lon: 10.01, alert_level: "Critical", conf_score: 80 }),
+      makeHotspot({ hotspot_id: 3, lat: 10.02, lon: 10.02, alert_level: "High", conf_score: 50 }),
+    ];
+    const index = createClusterIndex(hotspots);
+    const { clusters } = getClusterData(index, [-180, -90, 180, 90], 1);
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].point_count).toBe(3);
+    expect(clusters[0].worst_alert).toBe("Critical");
+    expect(clusters[0].max_conf).toBe(80);
+  });
+});
+
 describe("getExpansionZoom", () => {
   it("returns a finite zoom deeper than the clustered view", () => {
     const hotspots = Array.from({ length: 5 }, (_, i) =>

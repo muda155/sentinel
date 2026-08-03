@@ -47,7 +47,7 @@ export default function SearchBar({ token, onSelectHotspot }: {
         label: h.name ?? `Hotspot #${h.hotspot_id}`,
         sublabel: `${h.alert_level} · conf ${h.conf_score.toFixed(0)}`, hotspot: h,
       }))
-    : flattenResults(results);
+    : flattenResults(results, t);
 
   const pick = (item: FlatResult) => {
     if (item.hotspot) {

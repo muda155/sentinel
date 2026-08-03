@@ -7,6 +7,9 @@ import { Map } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Hotspot } from "@/lib/api";
 import { fillColor, ringColor } from "@/lib/colors";
+import { radiusForConvergence } from "@/lib/marker-size";
+import { useT } from "@/lib/i18n";
+import { gridCellTooltip, type PickInfo } from "@/lib/map-tooltip";
 import { useCluster } from "@/lib/useCluster";
 import type { ClusterFeature } from "@/lib/clustering";
 
@@ -19,6 +22,15 @@ const MAX_CLUSTER_ZOOM = 10; // beyond this, cell-level context is lost
 
 const COUNT_COLOR: [number, number, number, number] = [120, 180, 255, 200];
 const COUNT_TEXT_COLOR: [number, number, number, number] = [255, 255, 255, 255];
+const CLUSTER_LINE_DEFAULT: [number, number, number, number] = [80, 140, 220, 255];
+
+// FR-13 ring semantics, borrowed for clusters: a cluster hiding a Critical
+// hotspot must not look like one holding three Medium ones. Medium has no ring
+// in FR-13, so it keeps the neutral outline instead of disappearing.
+function clusterLineColor(worst: string): [number, number, number, number] {
+  const ring = ringColor(worst);
+  return ring[3] === 0 ? CLUSTER_LINE_DEFAULT : ring;
+}
 
 export default function MapView({
   hotspots, onSelect, extraLayers = [], focus, newHotspots = [],
@@ -26,6 +38,7 @@ export default function MapView({
      extraLayers?: unknown[]; focus?: { lat: number; lon: number } | null;
      newHotspots?: Hotspot[] }) {
   const [viewState, setViewState] = useState<Record<string, unknown>>(INITIAL_VIEW);
+  const { t } = useT();
 
   const zoom = Number(viewState.zoom ?? 2);
 
@@ -89,8 +102,9 @@ export default function MapView({
         getFillColor: COUNT_COLOR,
         stroked: true,
         lineWidthUnits: "pixels",
-        getLineWidth: 1,
-        getLineColor: [80, 140, 220, 255],
+        getLineWidth: (d) => (d.worst_alert === "Medium" ? 1 : 3),
+        getLineColor: (d) => clusterLineColor(d.worst_alert),
+        updateTriggers: { getLineColor: clusters, getLineWidth: clusters },
         onClick: handleClusterClick,
       })
     : null;
@@ -115,20 +129,24 @@ export default function MapView({
     pickable: true,
     radiusUnits: "pixels",
     getPosition: (d) => [d.lon, d.lat],
-    getRadius: 8,
+    getRadius: (d) => radiusForConvergence(d.convergence_score),
     getFillColor: (d) => fillColor(d.conf_score),
     stroked: true,
     lineWidthUnits: "pixels",
     getLineWidth: (d) => (d.alert_level === "Medium" ? 0 : 3),
     getLineColor: (d) => ringColor(d.alert_level),
     onClick: (info) => info.object && onSelect?.(info.object as Hotspot),
-    updateTriggers: { getFillColor: orderedLeaves, getLineColor: orderedLeaves },
+    updateTriggers: {
+      getFillColor: orderedLeaves, getLineColor: orderedLeaves,
+      getRadius: orderedLeaves,
+    },
   });
 
   return (
     <DeckGL
       viewState={viewState}
       onViewStateChange={({ viewState: vs }) => setViewState(vs as Record<string, unknown>)}
+      getTooltip={(info: PickInfo) => gridCellTooltip(info, t)}
       controller
       layers={[
         ...(extraLayers as never[]),
