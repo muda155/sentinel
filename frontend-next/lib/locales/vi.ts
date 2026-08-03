@@ -47,6 +47,8 @@ export const vi: Record<MessageKey, string> = {
   "filter.timeWindow": "Khung thời gian",
   "filter.showing": "Hiển thị {n} / {m}",
   "filter.reset": "Đặt lại bộ lọc",
+  "filter.title": "Bộ lọc",
+  "filter.close": "Đóng bộ lọc",
   "filter.all": "Tất cả",
   "filter.hours": "{h}giờ",
   "filter.window.24h": "24 giờ qua",

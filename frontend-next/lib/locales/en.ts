@@ -45,6 +45,8 @@ export const en = {
   "filter.timeWindow": "Time window",
   "filter.showing": "Showing {n} of {m}",
   "filter.reset": "Reset filters",
+  "filter.title": "Filters",
+  "filter.close": "Close filters",
   "filter.all": "All time",
   "filter.hours": "{h}h",
   "filter.window.24h": "Last 24 hours",

@@ -98,7 +98,7 @@ export default function Page() {
       <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
         <SearchBar token={token} onSelectHotspot={handleSearchSelect} />
         {globe ? <GlobeView hotspots={filteredHotspots} onSelect={handleSelectHotspot} /> : <MapView onSelect={handleSelectHotspot} extraLayers={heatLayer} hotspots={filteredHotspots} focus={focus} newHotspots={newHotspots} />}
-        <div style={{ position: "absolute", top: 12, left: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ position: "absolute", top: 12, left: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-start" }}>
           <label style={{ background: "#111", color: "#eee", padding: "8px 12px", borderRadius: 6, cursor: "pointer" }}>
             <input type="checkbox" checked={showHeat} onChange={(e) => setShowHeat(e.target.checked)} /> {t("header.heatmap")}
           </label>
@@ -107,8 +107,6 @@ export default function Page() {
           </button>
           <LanguageToggle />
           <Legend />
-        </div>
-        <div style={{ position: "absolute", top: 12, right: 12 }}>
           <FilterPanel filters={filters} onChange={setFilters} visible={filteredHotspots.length} total={total} newCount={newCount} />
         </div>
         <div style={{ position: "absolute", bottom: 12, right: 12, display: "flex", gap: 8, alignItems: "center" }}>
