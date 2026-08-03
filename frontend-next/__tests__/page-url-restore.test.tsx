@@ -18,16 +18,22 @@ vi.mock("@/components/HotspotDetail", () => ({ default: () => null }));
 vi.mock("@/components/LanguageToggle", () => ({ default: () => null }));
 vi.mock("@/components/StreamStatus", () => ({ default: () => null }));
 
-// Controllable useHotspots: the page mounts with no hotspots, then the test
-// resolves them with act(), exactly like the first /hotspots response.
-const hs = vi.hoisted(() => ({ setList: null as null | ((h: Hotspot[]) => void) }));
+// Controllable useHotspots: the page mounts with no hotspots and nothing
+// settled, then the test resolves both with act(), exactly like the first
+// /hotspots response (rows on success, [] + settled on failure).
+const hs = vi.hoisted(() => ({
+  setList: null as null | ((h: Hotspot[]) => void),
+  setSettled: null as null | ((b: boolean) => void),
+}));
 vi.mock("@/lib/useHotspots", async () => {
   const React = await import("react");
   return {
     useHotspots: () => {
       const [list, set] = React.useState<Hotspot[]>([]);
+      const [settled, setSettled] = React.useState(false);
       hs.setList = set;
-      return { hotspots: list, status: "live", lastEventAt: null };
+      hs.setSettled = setSettled;
+      return { hotspots: list, status: "live", lastEventAt: null, settled };
     },
   };
 });
@@ -57,7 +63,7 @@ describe("Page URL restoration", () => {
     // silently lose the hotspot).
     expect(spy).not.toHaveBeenCalled();
 
-    await act(async () => { hs.setList!([MATCH]); });
+    await act(async () => { hs.setList!([MATCH]); hs.setSettled!(true); });
 
     const calls = spy.mock.calls.map((c) => String(c[2]));
     expect(calls[calls.length - 1]).toContain("h=3546");
@@ -69,11 +75,28 @@ describe("Page URL restoration", () => {
     render(<Page />);
     expect(spy).not.toHaveBeenCalled();
 
-    await act(async () => { hs.setList!([MATCH]); });   // no hotspot 999
+    await act(async () => { hs.setList!([MATCH]); hs.setSettled!(true); });   // no hotspot 999
 
     // Resolution concluded there is no match — only now is the id dropped.
     const last = String(spy.mock.calls.at(-1)?.[2]);
     expect(last).not.toContain("h=999");
+  });
+
+  it("releases the gate when /hotspots settles empty, so URL sharing stays live", async () => {
+    // A failed first fetch (caught to an empty list) must still open the gate —
+    // otherwise filter/rail/sort edits stop being shareable for the session.
+    setUrl("?h=3546");
+    const spy = vi.spyOn(window.history, "replaceState");
+    render(<Page />);
+    expect(spy).not.toHaveBeenCalled();
+
+    await act(async () => { hs.setList!([]); hs.setSettled!(true); });   // fetch failed
+
+    // The gate released and the write-back is live again; the id drops because
+    // there was nothing to restore, but the URL stops being frozen.
+    expect(spy).toHaveBeenCalled();
+    const last = String(spy.mock.calls.at(-1)?.[2]);
+    expect(last).not.toContain("h=3546");
   });
 
   it("still writes URL state immediately on a plain load", async () => {

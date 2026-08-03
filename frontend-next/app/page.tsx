@@ -51,7 +51,7 @@ export default function Page() {
   const [railOpen, setRailOpen] = useState(initial.rail);
   const [sort, setSort] = useState<TriageSort>(initial.sort);
   const [showEvents, setShowEvents] = useState(false);
-  const { hotspots, status, lastEventAt } = useHotspots(token);
+  const { hotspots, status, lastEventAt, settled } = useHotspots(token);
   // Memoize so filteredHotspots keeps a stable reference across unrelated
   // re-renders (e.g. selecting a hotspot), which keeps the cluster index from
   // rebuilding; it recomputes only when hotspots or filters actually change.
@@ -93,18 +93,20 @@ export default function Page() {
   // in that gap would silently lose the hotspot). State, not a ref, on purpose:
   // the write-back has to fire only AFTER the restore commit, which a ref flip
   // inside the same commit would not guarantee. Plain loads start true so the
-  // common case is never blocked.
+  // common case is never blocked. The gate waits on `settled` — the first
+  // fetch's completion, success or failure — not on rows, so a failed /hotspots
+  // cannot disable URL sharing for the whole session.
   const [restored, setRestored] = useState(initial.hotspotId == null);
   useEffect(() => {
     // One-shot: without this guard, closing the restored panel would
     // immediately re-open it on the next render.
-    if (restored || initial.hotspotId == null || hotspots.length === 0) return;
+    if (restored || initial.hotspotId == null || !settled) return;
     setRestored(true);
     const match = hotspots.find((h) => h.hotspot_id === initial.hotspotId);
-    if (!match) return;   // stale link — leave the map alone rather than erroring
+    if (!match) return;   // stale or unavailable id — leave the map alone rather than erroring
     setSelected(match);
     setFocus({ lat: match.lat, lon: match.lon });
-  }, [restored, hotspots, initial.hotspotId]);
+  }, [restored, hotspots, settled, initial.hotspotId]);
 
   useEffect(() => {
     if (!restored) return;   // wait for the hotspot restore before touching the URL

@@ -7,13 +7,21 @@ import type { StreamStatus } from "@/lib/stream-status";
 
 export function useHotspots(token: string | null): {
   hotspots: Hotspot[]; status: StreamStatus; lastEventAt: number | null;
+  settled: boolean;
 } {
   const [hotspots, setHotspots] = useState<Hotspot[]>([]);
   const [status, setStatus] = useState<StreamStatus>("connecting");
   const [lastEventAt, setLastEventAt] = useState<number | null>(null);
+  // One-way latch, set on the first fetch's completion — success or failure.
+  // The page's URL-restore gate waits on it, so a failed /hotspots cannot hold
+  // the write-back closed for the whole session. Not reset on token change:
+  // the latch exists for the first load, and the login redirect remounts.
+  const [settled, setSettled] = useState(false);
 
   useEffect(() => {
-    api.hotspots(token).then(setHotspots).catch(() => setHotspots([]));
+    api.hotspots(token)
+      .then((hs) => { setHotspots(hs); setSettled(true); })
+      .catch(() => { setHotspots([]); setSettled(true); });
   }, [token]);
 
   useEffect(() => {
@@ -37,5 +45,5 @@ export function useHotspots(token: string | null): {
     };
   }, [token]);
 
-  return { hotspots, status, lastEventAt };
+  return { hotspots, status, lastEventAt, settled };
 }
