@@ -9,11 +9,11 @@ import type { EventFeature, Hotspot } from "@/lib/api";
 import { fillColor, ringColor } from "@/lib/colors";
 import { radiusForConvergence } from "@/lib/marker-size";
 import { useT } from "@/lib/i18n";
-import { mapTooltip, CELL_PICK_LAYER_ID, RAW_EVENT_LAYER_ID, type PickInfo } from "@/lib/map-tooltip";
+import { mapTooltip, RAW_EVENT_LAYER_ID, type PickInfo } from "@/lib/map-tooltip";
 import { useCluster } from "@/lib/useCluster";
 import type { ClusterFeature } from "@/lib/clustering";
 import { useRawEvents } from "@/lib/useRawEvents";
-import { bboxFromBounds, quantizeBbox, bboxKey, type Bbox } from "@/lib/events-layer";
+import { bboxFromBounds, quantizeBbox, bboxKey, RAW_PAGE_SIZE, type Bbox } from "@/lib/events-layer";
 import type { TimeWindow } from "@/lib/filters";
 
 const INITIAL_VIEW = { longitude: 30, latitude: 30, zoom: 2, pitch: 0, bearing: 0 };
@@ -66,7 +66,17 @@ export default function MapView({
     setBbox((prev) => (prev && bboxKey(prev) === bboxKey(next) ? prev : next));
   }, [showEvents, viewState]);
 
-  const rawEvents = useRawEvents(token, showEvents, bbox, timeWindow);
+  const { features: rawEvents, failed } = useRawEvents(token, showEvents, bbox, timeWindow);
+
+  // A full /events page-1 is the oldest-ingested slice of the bbox, not the
+  // whole set — the chip is honest about the truncation. `failed` tells an
+  // error apart from a genuinely empty viewport. Bottom-left corner, clear of
+  // MapLibre's bottom-right attribution.
+  const rawHint = showEvents && (failed || rawEvents.length === RAW_PAGE_SIZE) ? (
+    <div style={{ position: "absolute", bottom: 12, left: 12, background: "#111", color: failed ? "#f87171" : "#9ca3af", padding: "4px 8px", borderRadius: 4, fontSize: 11, border: "1px solid #262d3a" }}>
+      {failed ? t("events.failed") : t("events.truncated")}
+    </div>
+  ) : null;
 
   const { clusters, leaves, getExpansionZoom } = useCluster(hotspots, WORLD_BBOX, zoom);
 
@@ -200,6 +210,7 @@ export default function MapView({
       >
         <Map mapStyle={MAP_STYLE} />
       </DeckGL>
+      {rawHint}
     </div>
   );
 }

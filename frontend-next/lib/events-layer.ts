@@ -2,6 +2,10 @@ import { TIME_WINDOW_HOURS, type TimeWindow } from "@/lib/filters";
 
 export type Bbox = { sw_lat: number; sw_lon: number; ne_lat: number; ne_lon: number };
 
+/** /events page-1 cap — mirrors the server's page_size ceiling of 1000. A
+ *  full page means the oldest-ingested slice may be hiding more. */
+export const RAW_PAGE_SIZE = 1000;
+
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
 
 /** Normalize WebMercatorViewport.getBounds(), which has returned both
@@ -9,15 +13,21 @@ const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFin
  *  anything unexpected so a bad read skips the fetch rather than sending NaN. */
 export function bboxFromBounds(bounds: unknown): Bbox | null {
   if (!Array.isArray(bounds)) return null;
+  let w: number, s: number, e: number, n: number;
   if (bounds.length === 4 && bounds.every(isNum)) {
-    const [w, s, e, n] = bounds as number[];
-    return { sw_lat: s, sw_lon: w, ne_lat: n, ne_lon: e };
+    [w, s, e, n] = bounds as number[];
+  } else if (bounds.length === 2 && Array.isArray(bounds[0]) && Array.isArray(bounds[1])) {
+    const [[aw, as], [ae, an]] = bounds as number[][];
+    if (![aw, as, ae, an].every(isNum)) return null;
+    [w, s, e, n] = [aw, as, ae, an];
+  } else {
+    return null;
   }
-  if (bounds.length === 2 && Array.isArray(bounds[0]) && Array.isArray(bounds[1])) {
-    const [[w, s], [e, n]] = bounds as number[][];
-    if ([w, s, e, n].every(isNum)) return { sw_lat: s, sw_lon: w, ne_lat: n, ne_lon: e };
-  }
-  return null;
+  // An inverted envelope means getBounds() wrapped across the antimeridian (or
+  // the poles); ST_MakeEnvelope(170,-10,-170,10) would cover the complement of
+  // the viewport. Skip rather than send a box full of the wrong events.
+  if (w > e || s > n) return null;
+  return { sw_lat: s, sw_lon: w, ne_lat: n, ne_lon: e };
 }
 
 /** Snap outward to a whole-degree grid.

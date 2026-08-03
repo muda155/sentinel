@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bboxFromBounds, quantizeBbox, bboxKey, windowRange, type Bbox } from "@/lib/events-layer";
+import { bboxFromBounds, quantizeBbox, bboxKey, windowRange } from "@/lib/events-layer";
 
 describe("bboxFromBounds", () => {
   it("accepts the flat [w, s, e, n] shape", () => {
@@ -16,6 +16,16 @@ describe("bboxFromBounds", () => {
     expect(bboxFromBounds(null)).toBeNull();
     expect(bboxFromBounds([1, 2, 3])).toBeNull();
     expect(bboxFromBounds([1, 2, "x", 4])).toBeNull();
+  });
+  it("rejects an inverted envelope (wrapped dateline) instead of a wrong box", () => {
+    // getBounds() returning [170, -10, -170, 10] means the viewport wrapped
+    // across the antimeridian; ST_MakeEnvelope(170,-10,-170,10) would cover
+    // the complement of the viewport. Skip the fetch.
+    expect(bboxFromBounds([170, -10, -170, 10])).toBeNull();
+    expect(bboxFromBounds([[170, -10], [-170, 10]])).toBeNull();
+  });
+  it("rejects an inverted latitude envelope", () => {
+    expect(bboxFromBounds([10, 30, 20, -30])).toBeNull();
   });
 });
 

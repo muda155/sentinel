@@ -4,6 +4,8 @@ export const vi: Record<MessageKey, string> = {
   "header.heatmap": "Bản đồ nhiệt hội tụ",
   "header.globe": "Chế độ quả cầu",
   "header.rawEvents": "Sự kiện thô",
+  "events.truncated": "Hiển thị 1000 sự kiện đầu tiên",
+  "events.failed": "Không tải được sự kiện thô",
   "globe.unavailable": "Trình duyệt không hỗ trợ WebGL",
   "header.logout": "Đăng xuất",
   "app.loading": "Đang tải…",
