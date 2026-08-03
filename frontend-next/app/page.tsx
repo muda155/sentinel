@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
@@ -14,6 +14,7 @@ import { useT } from "@/lib/i18n";
 import { useHotspots } from "@/lib/useHotspots";
 import { applyFilters, DEFAULT_FILTERS, HotspotFilters } from "@/lib/filters";
 import { countNew, getLastSeen, isNew } from "@/lib/whatsnew";
+import { parseState, serializeState } from "@/lib/url-state";
 
 // SearchBar is centred on THIS container (420px + padding/border = 446 wide),
 // and the container shrinks by HotspotDetail's 340px when a hotspot opens. A
@@ -33,12 +34,18 @@ export default function Page() {
   const { token, user, hydrated, logout } = useAuth();
   const { t } = useT();
   const router = useRouter();
+  // Read once, synchronously, so the first paint already reflects the link —
+  // initialising to defaults and correcting in an effect would flash the
+  // world view before flying to the shared hotspot. Lazy initialiser, so
+  // parseState runs on mount only, not on every render.
+  const [initial] = useState(() =>
+    parseState(typeof window === "undefined" ? "" : window.location.search));
   const [selected, setSelected] = useState<Hotspot | null>(null);
   const [focus, setFocus] = useState<{ lat: number; lon: number } | null>(null);
-  const [showHeat, setShowHeat] = useState(false);
+  const [showHeat, setShowHeat] = useState(initial.heat);
   const [cells, setCells] = useState<GridCell[]>([]);
-  const [globe, setGlobe] = useState(false);
-  const [filters, setFilters] = useState<HotspotFilters>(DEFAULT_FILTERS);
+  const [globe, setGlobe] = useState(initial.globe);
+  const [filters, setFilters] = useState<HotspotFilters>(initial.filters);
   const { hotspots, status, lastEventAt } = useHotspots(token);
   // Memoize so filteredHotspots keeps a stable reference across unrelated
   // re-renders (e.g. selecting a hotspot), which keeps the cluster index from
@@ -73,6 +80,29 @@ export default function Page() {
   useEffect(() => {
     if (showHeat && cells.length === 0 && token) api.gridCells(token).then(setCells).catch(() => {});
   }, [showHeat, cells.length, token]);
+
+  const restored = useRef(false);
+  useEffect(() => {
+    // One-shot: without this guard, closing the restored panel would
+    // immediately re-open it on the next render.
+    if (restored.current || initial.hotspotId == null || hotspots.length === 0) return;
+    restored.current = true;
+    const match = hotspots.find((h) => h.hotspot_id === initial.hotspotId);
+    if (!match) return;   // stale link — leave the map alone rather than erroring
+    setSelected(match);
+    setFocus({ lat: match.lat, lon: match.lon });
+  }, [hotspots, initial.hotspotId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const qs = serializeState({
+      hotspotId: selected?.hotspot_id ?? null, filters, heat: showHeat, globe,
+    });
+    // replaceState, not router.replace: a Next navigation would re-run the
+    // route and remount MapView, throwing away the deck.gl view state on
+    // every slider tick.
+    window.history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
+  }, [selected, filters, showHeat, globe]);
 
   if (!hydrated) {
     return (
