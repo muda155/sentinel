@@ -14,6 +14,14 @@ import { useHotspots } from "@/lib/useHotspots";
 import { applyFilters, DEFAULT_FILTERS, HotspotFilters } from "@/lib/filters";
 import { countNew, getLastSeen, isNew } from "@/lib/whatsnew";
 
+// SearchBar is centred on THIS container (420px + padding/border = 446 wide),
+// and the container shrinks by HotspotDetail's 340px when a hotspot opens. A
+// fixed pixel cap cannot track that — a 480px cap cleared the search bar at
+// full width but buried the language toggle and legend behind it once the
+// panel was open. Capping relative to the container keeps a 12px gutter at
+// every width, with or without the panel.
+const SIDE_MAX = "calc(50% - 235px)";
+
 const MapView = dynamic(() => import("@/components/MapView"), { ssr: false });
 const GlobeView = dynamic(() => import("@/components/GlobeToggle"), { ssr: false });
 const SearchBar = dynamic(() => import("@/components/SearchBar"), { ssr: false });
@@ -98,7 +106,7 @@ export default function Page() {
       <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
         <SearchBar token={token} onSelectHotspot={handleSearchSelect} />
         {globe ? <GlobeView hotspots={filteredHotspots} onSelect={handleSelectHotspot} /> : <MapView onSelect={handleSelectHotspot} extraLayers={heatLayer} hotspots={filteredHotspots} focus={focus} newHotspots={newHotspots} />}
-        <div style={{ position: "absolute", top: 12, left: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-start", maxWidth: 480 }}>
+        <div style={{ position: "absolute", top: 12, left: 12, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-start", maxWidth: SIDE_MAX }}>
           <label style={{ background: "#111", color: "#eee", padding: "8px 12px", borderRadius: 6, cursor: "pointer" }}>
             <input type="checkbox" checked={showHeat} onChange={(e) => setShowHeat(e.target.checked)} /> {t("header.heatmap")}
           </label>
@@ -109,9 +117,9 @@ export default function Page() {
           <Legend />
           <FilterPanel filters={filters} onChange={setFilters} visible={filteredHotspots.length} total={total} newCount={newCount} />
         </div>
-        <div style={{ position: "absolute", bottom: 12, right: 12, display: "flex", gap: 8, alignItems: "center" }}>
-          <span style={{ color: "#aaa", fontSize: 12 }}>{user.username} ({user.role})</span>
-          <button onClick={logout} style={{ background: "#333", color: "#eee", padding: "6px 12px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 12 }}>
+        <div style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: 8, alignItems: "center", maxWidth: SIDE_MAX, background: "#111", padding: "6px 10px", borderRadius: 6 }}>
+          <span style={{ color: "#aaa", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{user.username} ({user.role})</span>
+          <button onClick={logout} style={{ background: "#333", color: "#eee", padding: "6px 12px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 12, flexShrink: 0 }}>
             {t("header.logout")}
           </button>
         </div>
