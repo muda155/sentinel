@@ -72,5 +72,10 @@ export const en = {
   "claims.disputed": "disputed",
   "claims.supportedBy": "supported by",
   "claims.contradictedBy": "contradicted by",
+  "stream.live": "Live",
+  "stream.connecting": "Connecting…",
+  "stream.reconnecting": "Reconnecting…",
+  "stream.updated": "updated {t} ago",
+  "stream.noEvents": "no events yet",
 } as const;
 export type MessageKey = keyof typeof en;

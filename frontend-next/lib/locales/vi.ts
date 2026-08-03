@@ -74,4 +74,9 @@ export const vi: Record<MessageKey, string> = {
   "claims.disputed": "mâu thuẫn",
   "claims.supportedBy": "được xác nhận bởi",
   "claims.contradictedBy": "bị phản bác bởi",
+  "stream.live": "Trực tiếp",
+  "stream.connecting": "Đang kết nối…",
+  "stream.reconnecting": "Đang kết nối lại…",
+  "stream.updated": "cập nhật {t} trước",
+  "stream.noEvents": "chưa có sự kiện",
 };

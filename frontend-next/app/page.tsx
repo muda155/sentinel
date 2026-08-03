@@ -9,6 +9,7 @@ import { api, GridCell, Hotspot } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import HotspotDetail from "@/components/HotspotDetail";
 import LanguageToggle from "@/components/LanguageToggle";
+import StreamStatusDot from "@/components/StreamStatus";
 import { useT } from "@/lib/i18n";
 import { useHotspots } from "@/lib/useHotspots";
 import { applyFilters, DEFAULT_FILTERS, HotspotFilters } from "@/lib/filters";
@@ -38,7 +39,7 @@ export default function Page() {
   const [cells, setCells] = useState<GridCell[]>([]);
   const [globe, setGlobe] = useState(false);
   const [filters, setFilters] = useState<HotspotFilters>(DEFAULT_FILTERS);
-  const { hotspots } = useHotspots(token);
+  const { hotspots, status, lastEventAt } = useHotspots(token);
   // Memoize so filteredHotspots keeps a stable reference across unrelated
   // re-renders (e.g. selecting a hotspot), which keeps the cluster index from
   // rebuilding; it recomputes only when hotspots or filters actually change.
@@ -118,6 +119,8 @@ export default function Page() {
           <FilterPanel filters={filters} onChange={setFilters} visible={filteredHotspots.length} total={total} newCount={newCount} />
         </div>
         <div style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: 8, alignItems: "center", maxWidth: SIDE_MAX, background: "#111", padding: "6px 10px", borderRadius: 6 }}>
+          <StreamStatusDot status={status} lastEventAt={lastEventAt} />
+          <span style={{ color: "#374151" }}>|</span>
           <span style={{ color: "#aaa", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{user.username} ({user.role})</span>
           <button onClick={logout} style={{ background: "#333", color: "#eee", padding: "6px 12px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 12, flexShrink: 0 }}>
             {t("header.logout")}
