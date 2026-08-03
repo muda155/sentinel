@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
@@ -12,7 +12,7 @@ import LanguageToggle from "@/components/LanguageToggle";
 import StreamStatusDot from "@/components/StreamStatus";
 import { useT } from "@/lib/i18n";
 import { useHotspots } from "@/lib/useHotspots";
-import { applyFilters, DEFAULT_FILTERS, HotspotFilters } from "@/lib/filters";
+import { applyFilters, HotspotFilters } from "@/lib/filters";
 import { countNew, getLastSeen, isNew } from "@/lib/whatsnew";
 import { parseState, serializeState } from "@/lib/url-state";
 import { sortHotspots, type TriageSort } from "@/lib/triage";
@@ -88,19 +88,26 @@ export default function Page() {
     if (showHeat && cells.length === 0 && token) api.gridCells(token).then(setCells).catch(() => {});
   }, [showHeat, cells.length, token]);
 
-  const restored = useRef(false);
+  // A shared ?h= link carries only an id; until /hotspots resolves there is no
+  // hotspot object to restore, so the URL write-back must not run (a copy made
+  // in that gap would silently lose the hotspot). State, not a ref, on purpose:
+  // the write-back has to fire only AFTER the restore commit, which a ref flip
+  // inside the same commit would not guarantee. Plain loads start true so the
+  // common case is never blocked.
+  const [restored, setRestored] = useState(initial.hotspotId == null);
   useEffect(() => {
     // One-shot: without this guard, closing the restored panel would
     // immediately re-open it on the next render.
-    if (restored.current || initial.hotspotId == null || hotspots.length === 0) return;
-    restored.current = true;
+    if (restored || initial.hotspotId == null || hotspots.length === 0) return;
+    setRestored(true);
     const match = hotspots.find((h) => h.hotspot_id === initial.hotspotId);
     if (!match) return;   // stale link — leave the map alone rather than erroring
     setSelected(match);
     setFocus({ lat: match.lat, lon: match.lon });
-  }, [hotspots, initial.hotspotId]);
+  }, [restored, hotspots, initial.hotspotId]);
 
   useEffect(() => {
+    if (!restored) return;   // wait for the hotspot restore before touching the URL
     if (typeof window === "undefined") return;
     const qs = serializeState({
       hotspotId: selected?.hotspot_id ?? null, filters, heat: showHeat, globe,
@@ -110,7 +117,7 @@ export default function Page() {
     // route and remount MapView, throwing away the deck.gl view state on
     // every slider tick.
     window.history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
-  }, [selected, filters, showHeat, globe, railOpen, sort]);
+  }, [restored, selected, filters, showHeat, globe, railOpen, sort]);
 
   if (!hydrated) {
     return (
@@ -159,7 +166,7 @@ export default function Page() {
             <input type="checkbox" checked={showHeat} onChange={(e) => setShowHeat(e.target.checked)} /> {t("header.heatmap")}
           </label>
           <label style={{ background: "#111", color: "#eee", padding: "8px 12px", borderRadius: 6, cursor: "pointer" }}>
-            <input type="checkbox" checked={showEvents} onChange={(e) => setShowEvents(e.target.checked)} /> {t("header.rawEvents")}
+            <input type="checkbox" checked={showEvents} disabled={globe} onChange={(e) => setShowEvents(e.target.checked)} /> {t("header.rawEvents")}
           </label>
           <button onClick={() => setGlobe((g) => !g)} style={{ background: "#111", color: "#eee", padding: "8px 12px", borderRadius: 6, border: "none", cursor: "pointer" }}>
             {globe ? "2D Map" : t("header.globe")}
