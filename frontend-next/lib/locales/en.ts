@@ -90,5 +90,11 @@ export const en = {
   "triage.sort.convergence": "Convergence",
   "triage.sort.events": "Event count",
   "triage.sort.recent": "Most recent",
+  "detail.section.brief": "AI Intelligence Brief",
+  "detail.section.scores": "Score breakdown",
+  "detail.section.evidence": "Evidence & Consistency",
+  "detail.section.sourceMix": "Source composition",
+  "detail.section.sources": "Sources",
+  "detail.section.activity": "Activity",
 } as const;
 export type MessageKey = keyof typeof en;

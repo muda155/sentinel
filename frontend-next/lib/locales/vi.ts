@@ -92,4 +92,10 @@ export const vi: Record<MessageKey, string> = {
   "triage.sort.convergence": "Độ hội tụ",
   "triage.sort.events": "Số sự kiện",
   "triage.sort.recent": "Mới nhất",
+  "detail.section.brief": "Bản tin tình báo AI",
+  "detail.section.scores": "Phân tích điểm số",
+  "detail.section.evidence": "Bằng chứng & Nhất quán",
+  "detail.section.sourceMix": "Thành phần nguồn tin",
+  "detail.section.sources": "Nguồn tin",
+  "detail.section.activity": "Hoạt động",
 };

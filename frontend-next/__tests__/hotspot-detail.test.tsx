@@ -76,7 +76,7 @@ describe("HotspotDetail data loading", () => {
     // last synchronous caller, leaving the brief on loading forever
     await screen.findByText(summaryFixture.summary);
     await screen.findByText(eventFixture.title!);
-    expect(screen.getByText(`${viLocale["detail.sources"]} (1)`)).toBeTruthy();
+    expect(screen.getByRole("button", { name: `${viLocale["detail.sources"]} (1)` })).toBeTruthy();
     expect(screen.queryByText(viLocale["detail.loading"])).toBeNull();
   });
 
@@ -119,12 +119,12 @@ describe("HotspotDetail data loading", () => {
     expect(screen.getByText(viLocale["detail.retry"])).toBeTruthy();
     await screen.findByText(summaryFixture.summary);
     // per-resource isolation: the brief renders while the sources header hides its count
-    expect(screen.queryByText(`${viLocale["detail.sources"]} (1)`)).toBeNull();
+    expect(screen.queryByRole("button", { name: `${viLocale["detail.sources"]} (1)` })).toBeNull();
 
     fireEvent.click(screen.getByText(viLocale["detail.retry"]));
 
     await screen.findByText(eventFixture.title!);
-    expect(screen.getByText(`${viLocale["detail.sources"]} (1)`)).toBeTruthy();
+    expect(screen.getByRole("button", { name: `${viLocale["detail.sources"]} (1)` })).toBeTruthy();
     expect(eventsMock).toHaveBeenCalledTimes(2);
     expect(summaryMock).toHaveBeenCalledTimes(1);
     expect(claimsMock).toHaveBeenCalledTimes(1);
@@ -291,7 +291,7 @@ describe("HotspotDetail data loading", () => {
     eventsMock.mockResolvedValue([eventFixture]);
     renderPanel();
     await screen.findByText(eventFixture.title!);
-    expect(screen.queryByText(viLocale["detail.activity"])).toBeNull();
+    expect(screen.queryByText(viLocale["detail.section.activity"])).toBeNull();
 
     // events on two days -> sparkline renders with the translated aria-label
     eventsMock.mockResolvedValue([
@@ -302,7 +302,7 @@ describe("HotspotDetail data loading", () => {
     // wait for the second panel's events to resolve before asserting the sparkline
     const imgs = await screen.findAllByRole("img", { name: viLocale["detail.activity"] });
     expect(imgs.length).toBe(1);
-    expect(screen.getAllByText(viLocale["detail.activity"]).length).toBe(1);
+    expect(screen.getAllByText(viLocale["detail.section.activity"]).length).toBe(1);
   });
 
   it("shows NLI probability next to a contradicting citation", async () => {
