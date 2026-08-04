@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { confBreakdown, convergenceBreakdown } from "@/lib/score-breakdown";
-import type { Hotspot } from "@/lib/api";
+import { confBreakdown, consistencyMix, convergenceBreakdown, sourceMix } from "@/lib/score-breakdown";
+import type { Claim, Hotspot, HotspotEvent } from "@/lib/api";
 
 const base: Hotspot = {
   hotspot_id: 1, lat: 0, lon: 0,
@@ -69,5 +69,70 @@ describe("convergenceBreakdown", () => {
 
   it("reports unavailable when the inputs are absent", () => {
     expect(convergenceBreakdown({ ...base, convergence_score: 50 }).mode).toBe("unavailable");
+  });
+});
+
+const claim = (claim_id: number, status: Claim["status"]): Claim =>
+  ({ claim_id, claim_text: "x", status, evidence: [] });
+
+describe("consistencyMix", () => {
+  it("counts by status with disputed first", () => {
+    const mix = consistencyMix([
+      claim(1, "corroborated"), claim(2, "disputed"), claim(3, "corroborated"),
+    ]);
+    expect(mix).toEqual([
+      { label: "disputed", count: 1 },
+      { label: "corroborated", count: 2 },
+    ]);
+  });
+
+  it("drops empty buckets so the legend has no zero rows", () => {
+    expect(consistencyMix([claim(1, "disputed")])).toEqual([{ label: "disputed", count: 1 }]);
+  });
+
+  it("returns nothing for no claims", () => {
+    expect(consistencyMix([])).toEqual([]);
+  });
+});
+
+const ev = (over: Partial<HotspotEvent>): HotspotEvent => ({
+  event_id: 1, title: null, url: null, domain: "a.com",
+  source_system: "GDELT", event_type_label: "military_conflict",
+  event_date: "2026-08-01T00:00:00Z",
+  goldstein_scale: null, avg_tone: null, num_sources: null, fatalities: null,
+  duplicate_count: 1, trust_tier: 2, trust_score: 0.8, citation_index: 1,
+  country_code: "US", ...over,
+});
+
+describe("sourceMix", () => {
+  it("counts unique domains, not events", () => {
+    // scoring.py sums trust over UNIQUE DOMAINS; counting events would let one
+    // prolific outlet dominate a chart that claims to explain source_density.
+    const mix = sourceMix([
+      ev({ event_id: 1, domain: "a.com", trust_tier: 1, country_code: "US" }),
+      ev({ event_id: 2, domain: "a.com", trust_tier: 1, country_code: "US" }),
+      ev({ event_id: 3, domain: "b.com", trust_tier: 3, country_code: "FR" }),
+    ]);
+    expect(mix.uniqueDomains).toBe(2);
+    expect(mix.tiers).toEqual([{ label: "1", count: 1 }, { label: "3", count: 1 }]);
+  });
+
+  it("sorts countries by frequency then alphabetically", () => {
+    const mix = sourceMix([
+      ev({ event_id: 1, domain: "a.com", country_code: "FR" }),
+      ev({ event_id: 2, domain: "b.com", country_code: "US" }),
+      ev({ event_id: 3, domain: "c.com", country_code: "US" }),
+    ]);
+    expect(mix.countries.map((c) => c.label)).toEqual(["US", "FR"]);
+  });
+
+  it("buckets a null trust_tier as the lowest tier and a null country as ??", () => {
+    const mix = sourceMix([ev({ domain: "z.com", trust_tier: null, country_code: null })]);
+    expect(mix.tiers).toEqual([{ label: "4", count: 1 }]);
+    expect(mix.countries).toEqual([{ label: "??", count: 1 }]);
+  });
+
+  it("returns empty structures for no events", () => {
+    expect(sourceMix([])).toEqual({ tiers: [], countries: [], uniqueDomains: 0 });
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, ClaimEvidence, Hotspot, HotspotClaims, HotspotEvent, HotspotSummary } from "@/lib/api";
+import { api, Claim, ClaimEvidence, Hotspot, HotspotClaims, HotspotEvent, HotspotSummary } from "@/lib/api";
 import { orderClaims, splitEvidence, statusColor, statusLabelKey } from "@/lib/claims";
 import type { MessageKey } from "@/lib/i18n-core";
 import { useAuth } from "@/lib/auth";
@@ -14,7 +14,8 @@ import TrustTierEditor from "@/components/TrustTierEditor";
 import Sparkline from "@/components/Sparkline";
 import Section from "@/components/Section";
 import StackedBar from "@/components/StackedBar";
-import { confBreakdown, convergenceBreakdown } from "@/lib/score-breakdown";
+import MixBars from "@/components/MixBars";
+import { confBreakdown, consistencyMix, convergenceBreakdown, sourceMix } from "@/lib/score-breakdown";
 import { COLOR, FONT, SPACE, chipStyle } from "@/lib/theme";
 
 export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; onClose: () => void }) {
@@ -212,6 +213,23 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
               )}
             </p>
           )}
+          {(() => {
+            const mix = consistencyMix(claims?.claims ?? []);
+            if (mix.length === 0) return null;
+            return (
+              <div style={{ marginBottom: SPACE.md }}>
+                <StackedBar
+                  label={t("detail.consistency")}
+                  max={mix.reduce((a, m) => a + m.count, 0)}
+                  segments={mix.map((m) => ({
+                    label: t(`claims.${m.label}` as MessageKey),
+                    value: m.count,
+                    color: statusColor(m.label as Claim["status"]),
+                  }))}
+                />
+              </div>
+            );
+          })()}
           <ul style={{ paddingLeft: 0, listStyle: "none", fontSize: 13 }}>
             {orderClaims(claims?.claims ?? []).map((c) => (
               <li key={c.claim_id} style={{ marginBottom: 6 }}>
@@ -270,6 +288,27 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
         return (
           <Section title={t("detail.section.activity")}>
             <Sparkline counts={buckets.map((b) => b.count)} label={t("detail.activity")} />
+          </Section>
+        );
+      })()}
+      {events.length > 0 && (() => {
+        const mix = sourceMix(events);
+        return (
+          <Section title={t("detail.section.sourceMix")} defaultOpen={false}>
+            <p style={{ fontSize: FONT.sm, color: COLOR.textMuted, marginTop: 0 }}>
+              {t("breakdown.uniqueDomains").replace("{n}", String(mix.uniqueDomains))}
+            </p>
+            <MixBars
+              title={t("breakdown.trustTiers")}
+              entries={mix.tiers.map((e) => ({ ...e, label: t("breakdown.tier").replace("{n}", e.label) }))}
+            />
+            <MixBars
+              title={t("breakdown.countries")}
+              entries={mix.countries.map((e) => ({
+                ...e,
+                label: e.label === "??" ? t("breakdown.unknownCountry") : e.label,
+              }))}
+            />
           </Section>
         );
       })()}
