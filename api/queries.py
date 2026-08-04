@@ -84,6 +84,9 @@ def fetch_hotspot_by_id(conn, hotspot_id: int) -> dict | None:
                h.name, h.start_window, h.end_window, h.created_at,
                COALESCE(h.conf_score,0) conf_score, h.event_count,
                h.consistency_score,
+               h.source_density, h.geopolitical_diversity,
+               COALESCE(g.event_type_count, h.unique_event_types, 0) convergence_types,
+               COALESCE(g.total_events, h.event_count, 0) convergence_events,
                COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
                COALESCE(h.alert_level,'Medium') alert_level
         FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
