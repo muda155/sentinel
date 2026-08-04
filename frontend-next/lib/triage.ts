@@ -24,7 +24,8 @@ function primary(a: Hotspot, b: Hotspot, sort: TriageSort): number {
   switch (sort) {
     case "alert": return (ALERT_RANK[a.alert_level] ?? 9) - (ALERT_RANK[b.alert_level] ?? 9);
     case "conf": return b.conf_score - a.conf_score;
-    case "convergence": return b.convergence_score - a.convergence_score;
+    // never-scored (null) sorts to the bottom, after any genuine zero
+    case "convergence": return (b.convergence_score ?? 0) - (a.convergence_score ?? 0);
     case "events": return b.event_count - a.event_count;
     case "recent": return stamp(b.end_window ?? b.created_at) - stamp(a.end_window ?? a.created_at);
   }

@@ -342,8 +342,23 @@ describe("HotspotDetail data loading", () => {
   });
 
   it("says not-yet-scored instead of drawing a bar when the inputs are null", async () => {
+    // This fixture has neither conf inputs nor convergence inputs, so BOTH
+    // score sections report not-yet-scored.
     render(<HotspotDetail hotspot={{ ...hotspotFixture, source_density: null, geopolitical_diversity: null }} onClose={() => {}} />);
+    expect((await screen.findAllByText(viLocale["breakdown.unavailable"])).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("says not-yet-scored for a null convergence_score instead of a hollow bar", async () => {
+    // conf is scored (bar) so the single "not-yet-scored" is the convergence
+    // block's; a NULL convergence_score must not render a split bar or crash.
+    render(<HotspotDetail hotspot={{ ...hotspotFixture, source_density: 0.8, geopolitical_diversity: 0.5, conf_score: 71, convergence_score: null, convergence_types: 3, convergence_events: 6 }} onClose={() => {}} />);
     expect(await screen.findByText(viLocale["breakdown.unavailable"])).toBeTruthy();
+    expect(screen.getAllByText(viLocale["breakdown.unavailable"]).length).toBe(1);
+    // the score line shows a dash rather than calling toFixed on null
+    expect(screen.getByText(/convergence_score:/).textContent).toContain("—");
+    // and no convergence bar is drawn (the vi label contains regex metachars)
+    const escapedConv = viLocale["detail.convergence"].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    expect(screen.queryByRole("img", { name: new RegExp(escapedConv) })).toBeNull();
   });
 
   it("renders a single definition list whose dl elements carry dd definitions", async () => {

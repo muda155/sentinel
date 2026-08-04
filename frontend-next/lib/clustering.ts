@@ -52,7 +52,7 @@ interface HotspotProps {
   hotspot_id: number;
   conf_score: number;
   consistency_score: number | null;
-  convergence_score: number;
+  convergence_score: number | null;
   alert_level: string;
   event_count: number;
   name: string | null;

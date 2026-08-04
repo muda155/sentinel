@@ -11,7 +11,10 @@ class Hotspot(BaseModel):
     lat: float
     lon: float
     conf_score: float
-    convergence_score: float
+    # NULL means "never scored" (never went through grid-cell convergence);
+    # a COALESCE to 0 here would be indistinguishable from a genuine zero and
+    # the detail panel would draw a hollow bar instead of "not yet scored".
+    convergence_score: float | None = None
     alert_level: str
     event_count: int
     consistency_score: float | None = None

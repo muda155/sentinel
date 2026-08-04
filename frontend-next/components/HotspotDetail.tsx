@@ -142,29 +142,32 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
         </dd>
         <dt style={{ fontSize: FONT.sm, color: COLOR.textMuted }}>{t("detail.convergence")}</dt>
         <dd style={{ margin: 0 }}>
-          <b>convergence_score: {hotspot.convergence_score.toFixed(1)}</b> — {hotspot.alert_level}
+          <b>convergence_score: {hotspot.convergence_score == null ? "—" : hotspot.convergence_score.toFixed(1)}</b> — {hotspot.alert_level}
           {(() => {
             const b = convergenceBreakdown(hotspot);
-            if (b.mode === "unavailable") return null;
+            if (b.mode === "unavailable") {
+              // NULL convergence_score = never went through grid-cell
+              // convergence, not a genuine zero — the honest answer is
+              // "not scored", not a hollow bar.
+              return <p style={{ fontSize: FONT.sm, color: COLOR.textDim, margin: `${SPACE.xs}px 0 0` }}>
+                {t("breakdown.unavailable")}
+              </p>;
+            }
             if (b.mode === "raw") {
-              // A reconstruction miss prints bare inputs; without a caveat the
-              // "0 loại sự kiện trên 9 sự kiện" caption reads like the real
-              // explanation rather than a fallback. The × shorthand for a zero
-              // type count avoids the self-contradictory "0 event types".
-              const caption = b.types === 0
-                ? `${b.types} × ${b.events}`
-                : t("breakdown.typesEvents")
-                    .replace("{types}", String(b.types))
-                    .replace("{events}", String(b.events));
+              // The convergence formula is hardcoded (types*25 + min(25,
+              // events*2)), unlike conf_score's env-overridable weights, so a
+              // reconstruction miss can only mean inconsistent inputs. The
+              // caveat is the whole story — bare inputs under the printed
+              // score would read as an explanation.
               return <p style={{ fontSize: FONT.sm, color: COLOR.textMuted, margin: `${SPACE.xs}px 0 0` }}>
-                {t("breakdown.rawConvergence")}<br />
-                {caption}
+                {t("breakdown.rawConvergence")}
               </p>;
             }
             return (
               <div style={{ marginTop: SPACE.sm }}>
                 <StackedBar
                   label={t("detail.convergence")}
+                  clampNote={t("breakdown.clamped")}
                   segments={[
                     { label: t("breakdown.typeScore"), value: b.typeScore, color: COLOR.accent },
                     { label: t("breakdown.countBoost"), value: b.countBoost, color: COLOR.accentAlt },

@@ -16,6 +16,10 @@ describe("radiusForConvergence", () => {
     expect(radiusForConvergence(NaN)).toBe(MIN_RADIUS);
   });
 
+  it("treats a null (never-scored) score as the minimum radius, not NaN", () => {
+    expect(radiusForConvergence(null)).toBe(MIN_RADIUS);
+  });
+
   it("grows monotonically", () => {
     expect(radiusForConvergence(25)).toBeLessThan(radiusForConvergence(50));
     expect(radiusForConvergence(50)).toBeLessThan(radiusForConvergence(75));

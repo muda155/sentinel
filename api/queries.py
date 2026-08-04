@@ -43,7 +43,7 @@ def fetch_hotspots(conn, *, limit=50, min_conf=0.0, min_convergence=0.0,
                     ELSE h.unique_event_types END AS convergence_types,
                CASE WHEN g.convergence_score IS NOT NULL THEN g.total_events
                     ELSE h.event_count END AS convergence_events,
-               COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
+               COALESCE(g.convergence_score,h.convergence_score) convergence_score,
                COALESCE(h.alert_level,'Medium') alert_level
         FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
         WHERE COALESCE(h.conf_score,0) >= %s
@@ -91,7 +91,7 @@ def fetch_hotspot_by_id(conn, hotspot_id: int) -> dict | None:
                     ELSE h.unique_event_types END AS convergence_types,
                CASE WHEN g.convergence_score IS NOT NULL THEN g.total_events
                     ELSE h.event_count END AS convergence_events,
-               COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
+               COALESCE(g.convergence_score,h.convergence_score) convergence_score,
                COALESCE(h.alert_level,'Medium') alert_level
         FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
         WHERE h.hotspot_id = %s
@@ -146,7 +146,7 @@ _HOTSPOT_SELECT = """
                 ELSE h.unique_event_types END AS convergence_types,
            CASE WHEN g.convergence_score IS NOT NULL THEN g.total_events
                 ELSE h.event_count END AS convergence_events,
-           COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
+           COALESCE(g.convergence_score,h.convergence_score) convergence_score,
            COALESCE(h.alert_level,'Medium') alert_level
     FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
 """
@@ -184,7 +184,7 @@ def fetch_search(conn, q: str) -> dict[str, list]:
                        ST_Y(h.centroid_geom) h_lat,
                        ST_X(h.centroid_geom) h_lon, COALESCE(h.conf_score,0) h_conf,
                        h.event_count h_event_count,
-                       COALESCE(g.convergence_score,h.convergence_score,0) h_convergence,
+                       COALESCE(g.convergence_score,h.convergence_score) h_convergence,
                        COALESCE(h.alert_level,'Medium') h_alert,
                        count(*) OVER (
                            PARTITION BY COALESCE(NULLIF(e.url, ''), 'evt:' || e.event_id),
@@ -392,29 +392,34 @@ def fetch_user_by_id(conn, user_id: int) -> dict | None:
     return dict(zip(cols, row)) if row else None
 
 
-def count_admins(conn) -> int:
-    with conn.cursor() as cur:
-        cur.execute("SELECT count(*) FROM users WHERE role = 'admin'")
-        return int(cur.fetchone()[0])
+# Exposed for the concurrency test, which drives raw psycopg2 connections
+# against the exact shipped predicate. The count subquery takes row locks
+# (FOR UPDATE) so a concurrent delete of a *different* admin row blocks and
+# re-counts after the first commits — a plain `SELECT count(*)` evaluates
+# against its own READ COMMITTED snapshot and both deletes succeed (write skew).
+DELETE_USER_SQL = """
+    DELETE FROM users
+    WHERE user_id = %s
+      AND (role <> 'admin'
+           OR (SELECT count(*) FROM (
+                 SELECT 1 FROM users WHERE role = 'admin' FOR UPDATE
+               ) locked) > 1)
+"""
 
 
 def delete_user(conn, user_id: int) -> bool:
     """Atomic delete guarded by the last-admin rule.
 
-    The self-delete check is left in the route (it is not racy), but the
-    last-admin check MUST happen in the same statement as the delete or two
-    concurrent admins deleting each other can both observe count=1 and both
-    succeed, leaving zero admins.
+    The self-delete check is left in the route (it is not racy). The last-admin
+    check lives in the DELETE statement itself — a separate `count_admins`
+    SELECT is TOCTOU. The count subquery must lock the admin rows (FOR UPDATE)
+    or two concurrent deletes of *different* admins each evaluate the count
+    against their own pre-commit snapshot and both succeed (write skew),
+    leaving zero admins. The blocked delete returns rowcount 0 -> the route
+    maps that to 400.
     """
     with conn.cursor() as cur:
-        cur.execute(
-            """
-            DELETE FROM users
-            WHERE user_id = %s
-              AND (role <> 'admin' OR (SELECT count(*) FROM users WHERE role = 'admin') > 1)
-            """,
-            (user_id,),
-        )
+        cur.execute(DELETE_USER_SQL, (user_id,))
         deleted = cur.rowcount
     conn.commit()
     return deleted > 0

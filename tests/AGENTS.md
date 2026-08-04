@@ -17,6 +17,7 @@ All files in `tests/`.
 - `tests/conftest.py` owns all shared fixtures; add new fixtures there, not in individual test files
 - Test files are named `test_<module>.py` matching their target module
 - **Two DSN sources for live tests:** the `live_conn` fixture uses `SENTINEL_TEST_DB`, but worker-driven tests (`IngestionWorker().tick()` → `get_pooled_connection`) read the pool env vars (`PGHOST`/`PGPORT`/`PGDATABASE`/`PGUSER`/`PGPASSWORD`). Point BOTH at the same throwaway DB when running the suite — with only `SENTINEL_TEST_DB` set, the pool defaults to the dev stack (`PGDATABASE=sentinel` via pgbouncer 6432) and `tick()` mutates live data.
+- Tests that delete real admin rows (`test_cannot_delete_the_last_admin`, `test_last_admin_guard_holds_under_concurrent_deletes`) MUST snapshot and restore the admins they remove via `_snapshot_admins`/`_restore_admins` in `test_api_users.py`. A last-admin test that deletes the seeded `admin` and never restores it locks everyone out of the user-management screen with no recovery short of a psql session (the seeded login is what incident 2 in the PR #31 follow-up destroyed). The restore re-inserts the original `password_hash` so credentials keep working. The A1 concurrency test also reduces the admin set to exactly two rows mid-test, so both tests depend on the restore.
 
 ## Work Guidance
 

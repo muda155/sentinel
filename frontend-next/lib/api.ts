@@ -1,6 +1,6 @@
 export type Hotspot = {
   hotspot_id: number; lat: number; lon: number;
-  conf_score: number; convergence_score: number;
+  conf_score: number; convergence_score: number | null;
   alert_level: "Critical" | "High" | "Medium"; event_count: number;
   consistency_score?: number | null;
   source_density?: number | null;

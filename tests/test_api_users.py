@@ -1,11 +1,14 @@
 import os
+import threading
 import uuid
 
+import psycopg2
 import pytest
 from fastapi.testclient import TestClient
 
 from api.app import create_app
-from api.auth import create_token
+from api.auth import create_token, hash_password
+from pipeline.db import get_pooled_connection
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("SENTINEL_TEST_DB"), reason="needs live DB"
@@ -17,8 +20,6 @@ def _auth(role="admin", username="admin"):
 
 
 def _cleanup(username):
-    from pipeline.db import get_pooled_connection
-
     conn, pool = get_pooled_connection()
     try:
         with conn.cursor() as cur:
@@ -26,6 +27,62 @@ def _cleanup(username):
         conn.commit()
     finally:
         pool.return_connection(conn)
+
+
+def _count_admins() -> int:
+    conn, pool = get_pooled_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM users WHERE role = 'admin'")
+            return int(cur.fetchone()[0])
+    finally:
+        pool.return_connection(conn)
+
+
+def _snapshot_admins() -> list[tuple]:
+    """(username, role, password_hash) for every admin — used to restore rows a
+    last-admin test deletes, so the seeded `admin` login survives the run."""
+    conn, pool = get_pooled_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT username, role, password_hash FROM users WHERE role = 'admin'")
+            return cur.fetchall()
+    finally:
+        pool.return_connection(conn)
+
+
+def _restore_admins(snapshot) -> None:
+    """Re-insert any snapshot admins missing from the current table, with their
+    original password_hash so credentials keep working."""
+    conn, pool = get_pooled_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT username FROM users WHERE role = 'admin'")
+            existing = {r[0] for r in cur.fetchall()}
+            for username, role, pw_hash in snapshot:
+                if username not in existing:
+                    cur.execute(
+                        "INSERT INTO users (username, role, password_hash) VALUES (%s, %s, %s) "
+                        "ON CONFLICT (username) DO NOTHING",
+                        (username, role, pw_hash),
+                    )
+        conn.commit()
+    finally:
+        pool.return_connection(conn)
+
+
+def _raw_dsn() -> str:
+    """A libpq DSN from SENTINEL_TEST_DB when it is a DSN, else the pool env."""
+    dsn = os.getenv("SENTINEL_TEST_DB", "")
+    if "=" in dsn:
+        return dsn
+    return (
+        f"host={os.getenv('PGHOST', '127.0.0.1')} "
+        f"port={os.getenv('PGPORT', '6432')} "
+        f"dbname={os.getenv('PGDATABASE', 'sentinel')} "
+        f"user={os.getenv('PGUSER', 'sentinel_user')} "
+        f"password={os.getenv('PGPASSWORD', 'sentinel_pass')}"
+    )
 
 
 def test_analyst_cannot_list_users():
@@ -124,9 +181,13 @@ def test_cannot_delete_yourself():
 
 
 def test_cannot_delete_the_last_admin():
-    """Deleting the only admin would lock everyone out of this very screen."""
+    """Deleting the only admin would lock everyone out of this very screen.
+
+    Restores every admin the test deletes (this test removes all but one),
+    so the seeded `admin` login survives the run."""
     name = f"pytest_{uuid.uuid4().hex[:8]}"
     c = TestClient(create_app())
+    snapshot = _snapshot_admins()
     try:
         created = c.post("/auth/users",
                          json={"username": name, "password": "password123", "role": "admin"},
@@ -146,36 +207,76 @@ def test_cannot_delete_the_last_admin():
         assert r.status_code == 400
     finally:
         _cleanup(name)
+        _restore_admins(snapshot)
 
 
-def test_last_admin_guard_survives_concurrent_deletes():
-    """Two admins deleting each other concurrently must not both succeed."""
-    import concurrent.futures
+def test_last_admin_guard_holds_under_concurrent_deletes():
+    """The last-admin guard must hold under true write skew.
+
+    Two deletes of *different* admin rows whose count subqueries both evaluate
+    before either commits. Starlette's TestClient serializes every request
+    through one portal, so the old ThreadPoolExecutor test could never fail:
+    each DELETE committed before the next began. This drives two raw psycopg2
+    connections synchronized on a barrier so the statements genuinely overlap.
+    """
+    from api import queries
 
     name_a = f"pytest_{uuid.uuid4().hex[:8]}"
     name_b = f"pytest_{uuid.uuid4().hex[:8]}"
-    c = TestClient(create_app())
+    snapshot = _snapshot_admins()
+    conn, pool = get_pooled_connection()
+    id_a = id_b = None
     try:
-        a = c.post("/auth/users",
-                   json={"username": name_a, "password": "password123", "role": "admin"},
-                   headers=_auth()).json()
-        b = c.post("/auth/users",
-                   json={"username": name_b, "password": "password123", "role": "admin"},
-                   headers=_auth()).json()
+        with conn.cursor() as cur:
+            for nm in (name_a, name_b):
+                cur.execute(
+                    "INSERT INTO users (username, role, password_hash) VALUES (%s, 'admin', %s)",
+                    (nm, hash_password("pytest-race")),
+                )
+            # Reduce the admin set to exactly {a, b} so the race is about the
+            # last admin; _restore_admins re-adds everything deleted here.
+            cur.execute(
+                "DELETE FROM users WHERE role = 'admin' AND username NOT IN (%s, %s)",
+                (name_a, name_b),
+            )
+            cur.execute("SELECT user_id FROM users WHERE username IN (%s, %s) ORDER BY 1",
+                        (name_a, name_b))
+            id_a, id_b = [r[0] for r in cur.fetchall()]
+        conn.commit()
+    finally:
+        pool.return_connection(conn)
 
-        def try_delete(target_id, as_username):
-            return c.delete(f"/auth/users/{target_id}",
-                            headers=_auth(username=as_username, role="admin"))
+    try:
+        barrier = threading.Barrier(2)
+        rowcounts: dict[str, int] = {}
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-            f_a = ex.submit(try_delete, b["user_id"], name_a)
-            f_b = ex.submit(try_delete, a["user_id"], name_b)
-            statuses = [f_a.result().status_code, f_b.result().status_code]
+        def run(label: str, target_id: int) -> None:
+            c2 = psycopg2.connect(_raw_dsn())
+            try:
+                with c2.cursor() as cur:
+                    barrier.wait(timeout=15)  # both threads issue together
+                    cur.execute(queries.DELETE_USER_SQL, (target_id,))
+                    rowcounts[label] = cur.rowcount
+                    # Hold the transaction open so the other thread's count
+                    # subquery evaluates against the same 2-admin snapshot —
+                    # this is what makes the write skew reproducible.
+                    cur.execute("SELECT pg_sleep(0.2)")
+                    c2.commit()
+            finally:
+                c2.close()
 
-        # Both cannot succeed; at least one must be blocked by the guard.
-        assert 400 in statuses, statuses
-        admins = [u for u in c.get("/auth/users", headers=_auth()).json() if u["role"] == "admin"]
-        assert len(admins) >= 1
+        t_a = threading.Thread(target=run, args=("a", id_b))
+        t_b = threading.Thread(target=run, args=("b", id_a))
+        t_a.start()
+        t_b.start()
+        t_a.join()
+        t_b.join()
+
+        assert 0 in rowcounts.values(), (
+            f"write skew: both deletes succeeded {rowcounts} — guard did not hold"
+        )
+        assert _count_admins() == 1, f"expected 1 admin to remain, got {_count_admins()}"
     finally:
         _cleanup(name_a)
         _cleanup(name_b)
+        _restore_admins(snapshot)

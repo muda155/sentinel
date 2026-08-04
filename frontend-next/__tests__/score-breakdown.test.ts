@@ -77,6 +77,13 @@ describe("convergenceBreakdown", () => {
     expect(convergenceBreakdown({ ...base, convergence_types: 0, convergence_events: 0, convergence_score: 0 }).mode)
       .toBe("unavailable");
   });
+
+  it("reports unavailable when convergence_score is null (never scored)", () => {
+    // A NULL score means the hotspot never went through grid-cell convergence.
+    // Coalescing it to 0 would render a hollow split bar under "0.0".
+    expect(convergenceBreakdown({ ...base, convergence_types: 3, convergence_events: 6, convergence_score: null }).mode)
+      .toBe("unavailable");
+  });
 });
 
 const claim = (claim_id: number, status: Claim["status"]): Claim =>

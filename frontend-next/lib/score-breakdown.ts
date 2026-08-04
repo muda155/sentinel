@@ -37,6 +37,10 @@ export type ConvergenceBreakdown =
 export function convergenceBreakdown(h: Hotspot): ConvergenceBreakdown {
   const types = h.convergence_types;
   const events = h.convergence_events;
+  // NULL convergence_score = "never went through grid-cell convergence", NOT a
+  // genuine zero. Coalescing it to 0 upstream would make a never-scored
+  // hotspot look scored (hollow bar under "convergence 0.0").
+  if (h.convergence_score == null) return { mode: "unavailable" };
   if (types == null || events == null) return { mode: "unavailable" };
   // Zero inputs are indistinguishable from "not scored" — drawing an empty
   // split bar under "convergence 0.0" would render a hollow track.

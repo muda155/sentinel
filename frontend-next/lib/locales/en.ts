@@ -102,7 +102,7 @@ export const en = {
   "breakdown.countBoost": "Event volume",
   "breakdown.unavailable": "Not yet scored",
   "breakdown.rawInputs": "Weights differ from defaults — showing raw inputs",
-  "breakdown.rawConvergence": "Score formula differs from the default — showing raw inputs",
+  "breakdown.rawConvergence": "Score inputs don't match the published score — showing raw values",
   "breakdown.clamped": "Capped at 100",
   "breakdown.typesEvents": "{types} event types over {events} events",
   "breakdown.uniqueDomains": "{n} unique domains",

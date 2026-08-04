@@ -53,6 +53,8 @@ def test_convergence_inputs_reconstruct_the_published_score():
     rows = r.json()
     checked = 0
     for h in rows:
+        if h["convergence_score"] is None:
+            continue  # never scored — nothing to reconstruct
         expected = min(100, h["convergence_types"] * 25
                        + min(25, h["convergence_events"] * 2))
         if h["convergence_score"] == 0 and expected == 0:
