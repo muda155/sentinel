@@ -35,3 +35,15 @@ military_events.csv
 # Local-only dev implementation plans (not shared)
 docs/superpowers/plans/
 .playwright-mcp/
+
+# Agent tool scratch state
+.superpowers/
+.kimi-code/
+
+# Local verification evidence — kept on disk, not shared.
+# backups/ holds pre-milestone DB dumps (e.g. pre-m8-remeasure); root PNGs are
+# dashboard screenshots taken to verify a phase rendered. Both are records, not
+# artifacts the build needs — delete only when the milestone they document is
+# no longer being cited.
+backups/
+/*.png
