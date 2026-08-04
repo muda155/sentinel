@@ -3,6 +3,10 @@ export type Hotspot = {
   conf_score: number; convergence_score: number;
   alert_level: "Critical" | "High" | "Medium"; event_count: number;
   consistency_score?: number | null;
+  source_density?: number | null;
+  geopolitical_diversity?: number | null;
+  convergence_types?: number;
+  convergence_events?: number;
   name: string | null;
   start_window: string | null;
   end_window: string | null; created_at: string | null;
@@ -26,7 +30,8 @@ export type HotspotEvent = {
   goldstein_scale: number | null; avg_tone: number | null;
   num_sources: number | null; fatalities: number | null;
   duplicate_count: number;
-  trust_tier: number | null; trust_score: number; citation_index: number | null;
+  trust_tier: number | null; trust_score: number;
+  country_code?: string | null; citation_index: number | null;
 };
 
 export type SearchEvent = {

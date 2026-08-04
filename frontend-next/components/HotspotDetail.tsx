@@ -13,7 +13,9 @@ import { bucketByDay } from "@/lib/sparkline";
 import TrustTierEditor from "@/components/TrustTierEditor";
 import Sparkline from "@/components/Sparkline";
 import Section from "@/components/Section";
-import { COLOR, FONT, chipStyle } from "@/lib/theme";
+import StackedBar from "@/components/StackedBar";
+import { confBreakdown, convergenceBreakdown } from "@/lib/score-breakdown";
+import { COLOR, FONT, SPACE, chipStyle } from "@/lib/theme";
 
 export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; onClose: () => void }) {
   const { token } = useAuth();
@@ -101,12 +103,74 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
           </p>
         );
       })()}
-      <dl>
-        <dt>{t("detail.confidence")}</dt>
-        <dd><b>conf_score: {hotspot.conf_score.toFixed(1)}</b></dd>
-        <dt>{t("detail.convergence")}</dt>
-        <dd><b>convergence_score: {hotspot.convergence_score.toFixed(1)}</b> — {hotspot.alert_level}</dd>
-      </dl>
+      <Section title={t("detail.section.scores")}>
+        <dl>
+        <dt style={{ fontSize: FONT.sm, color: COLOR.textMuted }}>{t("detail.confidence")}</dt>
+        <div style={{ marginBottom: SPACE.lg }}>
+          <b>conf_score: {hotspot.conf_score.toFixed(1)}</b>
+          {(() => {
+            const b = confBreakdown(hotspot);
+            if (b.mode === "unavailable") {
+              return <p style={{ fontSize: FONT.sm, color: COLOR.textDim, margin: `${SPACE.xs}px 0 0` }}>
+                {t("breakdown.unavailable")}
+              </p>;
+            }
+            if (b.mode === "raw") {
+              return <p style={{ fontSize: FONT.sm, color: COLOR.textMuted, margin: `${SPACE.xs}px 0 0` }}>
+                {t("breakdown.rawInputs")}<br />
+                {t("breakdown.sourceDensity")} {b.sourceDensity.toFixed(2)} ·{" "}
+                {t("breakdown.diversity")} {b.diversity.toFixed(2)}
+              </p>;
+            }
+            return (
+              <div style={{ marginTop: SPACE.sm }}>
+                <StackedBar
+                  label={t("detail.confidence")}
+                  segments={[
+                    { label: t("breakdown.sourceDensity"), value: b.density, color: COLOR.accent },
+                    { label: t("breakdown.diversity"), value: b.diversity, color: COLOR.accentAlt },
+                  ]}
+                />
+              </div>
+            );
+          })()}
+        </div>
+        </dl>
+        <dl>
+        <dt style={{ fontSize: FONT.sm, color: COLOR.textMuted }}>{t("detail.convergence")}</dt>
+        <div>
+          <b>convergence_score: {hotspot.convergence_score.toFixed(1)}</b> — {hotspot.alert_level}
+          {(() => {
+            const b = convergenceBreakdown(hotspot);
+            if (b.mode === "unavailable") return null;
+            if (b.mode === "raw") {
+              return <p style={{ fontSize: FONT.sm, color: COLOR.textMuted, margin: `${SPACE.xs}px 0 0` }}>
+                {t("breakdown.typesEvents")
+                  .replace("{types}", String(b.types))
+                  .replace("{events}", String(b.events))}
+              </p>;
+            }
+            return (
+              <div style={{ marginTop: SPACE.sm }}>
+                <StackedBar
+                  label={t("detail.convergence")}
+                  segments={[
+                    { label: t("breakdown.typeScore"), value: b.typeScore, color: COLOR.accent },
+                    { label: t("breakdown.countBoost"), value: b.countBoost, color: COLOR.accentAlt },
+                  ]}
+                />
+                <p style={{ fontSize: FONT.sm, color: COLOR.textDim, margin: `${SPACE.xs}px 0 0` }}>
+                  {t("breakdown.typesEvents")
+                    .replace("{types}", String(b.types))
+                    .replace("{events}", String(b.events))}
+                  {b.clamped && ` · ${t("breakdown.clamped")}`}
+                </p>
+              </div>
+            );
+          })()}
+        </div>
+        </dl>
+      </Section>
       <Section title={t("detail.section.brief")}>
         {summary ? (
           <>

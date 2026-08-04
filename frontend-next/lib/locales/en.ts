@@ -96,5 +96,18 @@ export const en = {
   "detail.section.sourceMix": "Source composition",
   "detail.section.sources": "Sources",
   "detail.section.activity": "Activity",
+  "breakdown.sourceDensity": "Source density",
+  "breakdown.diversity": "Geopolitical diversity",
+  "breakdown.typeScore": "Event types",
+  "breakdown.countBoost": "Event volume",
+  "breakdown.unavailable": "Not yet scored",
+  "breakdown.rawInputs": "Weights differ from defaults — showing raw inputs",
+  "breakdown.clamped": "Capped at 100",
+  "breakdown.typesEvents": "{types} event types over {events} events",
+  "breakdown.uniqueDomains": "{n} unique domains",
+  "breakdown.trustTiers": "Trust tiers",
+  "breakdown.countries": "Source countries",
+  "breakdown.tier": "Tier {n}",
+  "breakdown.unknownCountry": "Unknown",
 } as const;
 export type MessageKey = keyof typeof en;

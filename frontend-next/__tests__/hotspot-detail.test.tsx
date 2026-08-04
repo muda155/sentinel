@@ -329,4 +329,20 @@ describe("HotspotDetail data loading", () => {
     expect(screen.getByText(/p=0\.91/)).toBeTruthy();
     expect(screen.queryByText(/p=0\.5/)).toBeNull();
   });
+
+  it("draws the conf_score split when the inputs are present", async () => {
+    // hotspot fixture with source_density 0.8, geopolitical_diversity 0.5,
+    // conf_score 71 — see the existing renderPanel helper in this file.
+    render(<HotspotDetail hotspot={{ ...hotspotFixture, source_density: 0.8, geopolitical_diversity: 0.5, conf_score: 71 }} onClose={() => {}} />);
+    // the vi label contains literal parens, which are regex metacharacters —
+    // escape them so the name regex matches the literal aria-label prefix
+    const escaped = viLocale["detail.confidence"].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const bar = await screen.findByRole("img", { name: new RegExp(escaped) });
+    expect(bar.getAttribute("aria-label")).toContain("56.0");
+  });
+
+  it("says not-yet-scored instead of drawing a bar when the inputs are null", async () => {
+    render(<HotspotDetail hotspot={{ ...hotspotFixture, source_density: null, geopolitical_diversity: null }} onClose={() => {}} />);
+    expect(await screen.findByText(viLocale["breakdown.unavailable"])).toBeTruthy();
+  });
 });
