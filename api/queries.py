@@ -347,3 +347,54 @@ def fetch_hotspot_claims(conn, hotspot_id: int) -> dict | None:
         "claims": list(claims.values()),
         "insufficient_sources": len(cited_domains) < 2,
     }
+
+
+def fetch_users(conn) -> list[dict[str, Any]]:
+    """Never selects password_hash — it must not be reachable through the API."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT user_id, username, role, created_at FROM users ORDER BY username"
+        )
+        return _rows_to_dicts(cur)
+
+
+def insert_user(conn, *, username: str, password_hash: str, role: str) -> dict | None:
+    """Returns the new row, or None if the username is taken."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO users (username, password_hash, role)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (username) DO NOTHING
+            RETURNING user_id, username, role, created_at
+            """,
+            (username, password_hash, role),
+        )
+        row = cur.fetchone()
+        cols = [c[0] for c in cur.description] if row else []
+    conn.commit()
+    return dict(zip(cols, row)) if row else None
+
+
+def fetch_user_by_id(conn, user_id: int) -> dict | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT user_id, username, role FROM users WHERE user_id = %s", (user_id,)
+        )
+        row = cur.fetchone()
+        cols = [c[0] for c in cur.description]
+    return dict(zip(cols, row)) if row else None
+
+
+def count_admins(conn) -> int:
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM users WHERE role = 'admin'")
+        return int(cur.fetchone()[0])
+
+
+def delete_user(conn, user_id: int) -> bool:
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
+        deleted = cur.rowcount
+    conn.commit()
+    return deleted > 0

@@ -39,6 +39,13 @@ class LoginResponse(BaseModel):
     role: str
 
 
+class UserRow(BaseModel):
+    user_id: int
+    username: str
+    role: str
+    created_at: datetime | None = None
+
+
 class Source(BaseModel):
     source_id: int
     domain: str
