@@ -109,5 +109,13 @@ export const en = {
   "breakdown.countries": "Source countries",
   "breakdown.tier": "Tier {n}",
   "breakdown.unknownCountry": "Unknown",
+  "login.title": "Sentinel",
+  "login.subtitle": "Geopolitical OSINT monitoring",
+  "login.username": "Username",
+  "login.password": "Password",
+  "login.submit": "Sign in",
+  "login.submitting": "Signing in…",
+  "login.error.credentials": "Incorrect username or password.",
+  "login.error.network": "Cannot reach the service. Check that the API is running.",
 } as const;
 export type MessageKey = keyof typeof en;

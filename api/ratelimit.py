@@ -62,3 +62,19 @@ def _rate_limit_client(request: Request) -> None:
 
 limit_events = _rate_limit_client
 limit_hotspots = _rate_limit_client
+
+
+# Auth gets its own, much smaller bucket. Putting login on the shared bucket
+# would let a login attempt spend the budget the dashboard needs, and 60/min of
+# password guesses per IP is not a throttle.
+AUTH_RATE_PER_MIN = 10
+
+_auth_bucket = TokenBucket(rate_per_min=AUTH_RATE_PER_MIN)
+
+
+def limit_auth(request: Request) -> None:
+    """Stricter per-IP limit for credential endpoints."""
+    client_key = request.client.host if request.client else "unknown"
+    if not _auth_bucket.allow(client_key):
+        raise HTTPException(status_code=HTTP_429_TOO_MANY_REQUESTS,
+                            detail="Too many attempts. Try again later.")

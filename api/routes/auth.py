@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from api.auth import create_token, verify_password
+from api.ratelimit import limit_auth
 from api.schemas import LoginResponse
 from pipeline.db import get_pooled_connection
 
@@ -16,7 +17,7 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/auth/login", response_model=LoginResponse)
-def login(body: LoginRequest):
+def login(body: LoginRequest, _rate_limit: None = Depends(limit_auth)):
     conn, pool = get_pooled_connection()
     try:
         with conn.cursor() as cur:

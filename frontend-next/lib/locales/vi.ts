@@ -111,4 +111,12 @@ export const vi: Record<MessageKey, string> = {
   "breakdown.countries": "Quốc gia nguồn tin",
   "breakdown.tier": "Mức {n}",
   "breakdown.unknownCountry": "Không rõ",
+  "login.title": "Sentinel",
+  "login.subtitle": "Giám sát OSINT địa chính trị",
+  "login.username": "Tên đăng nhập",
+  "login.password": "Mật khẩu",
+  "login.submit": "Đăng nhập",
+  "login.submitting": "Đang đăng nhập…",
+  "login.error.credentials": "Tên đăng nhập hoặc mật khẩu không đúng.",
+  "login.error.network": "Không kết nối được dịch vụ. Kiểm tra API có đang chạy không.",
 };
