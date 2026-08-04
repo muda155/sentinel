@@ -15,6 +15,10 @@ class Hotspot(BaseModel):
     alert_level: str
     event_count: int
     consistency_score: float | None = None
+    source_density: float | None = None
+    geopolitical_diversity: float | None = None
+    convergence_types: int = 0
+    convergence_events: int = 0
     name: str | None = None
     start_window: datetime | None = None
     end_window: datetime | None = None
@@ -58,6 +62,7 @@ class HotspotEvent(BaseModel):
     duplicate_count: int = 1
     trust_tier: int | None = None
     trust_score: float
+    country_code: str | None = None
     citation_index: int | None = None
 
 

@@ -38,6 +38,9 @@ def fetch_hotspots(conn, *, limit=50, min_conf=0.0, min_convergence=0.0,
                h.name, h.start_window, h.end_window, h.created_at,
                COALESCE(h.conf_score,0) conf_score, h.event_count,
                h.consistency_score,
+               h.source_density, h.geopolitical_diversity,
+               COALESCE(g.event_type_count, h.unique_event_types, 0) convergence_types,
+               COALESCE(g.total_events, h.event_count, 0) convergence_events,
                COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
                COALESCE(h.alert_level,'Medium') alert_level
         FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
@@ -131,6 +134,9 @@ _HOTSPOT_SELECT = """
            h.end_window, h.created_at,
            COALESCE(h.conf_score,0) conf_score, h.event_count,
            h.consistency_score,
+           h.source_density, h.geopolitical_diversity,
+           COALESCE(g.event_type_count, h.unique_event_types, 0) convergence_types,
+           COALESCE(g.total_events, h.event_count, 0) convergence_events,
            COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
            COALESCE(h.alert_level,'Medium') alert_level
     FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
@@ -277,7 +283,8 @@ def fetch_hotspot_events(conn, hotspot_id: int) -> list[dict] | None:
                      ELSE 'unknown'
                    END AS event_type_label,
                    e.goldstein_scale, e.avg_tone, e.num_sources, e.fatalities,
-                   s.trust_tier, COALESCE(s.trust_score, 0.4) AS trust_score
+                   s.trust_tier, COALESCE(s.trust_score, 0.4) AS trust_score,
+                   s.country_code
             FROM event_hotspot eh
             JOIN events e ON e.event_id = eh.event_id
             LEFT JOIN sources s ON e.source_id = s.source_id
