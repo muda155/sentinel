@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { ScatterplotLayer } from "@deck.gl/layers";
@@ -16,6 +17,7 @@ import { applyFilters, HotspotFilters } from "@/lib/filters";
 import { countNew, getLastSeen, isNew } from "@/lib/whatsnew";
 import { parseState, serializeState } from "@/lib/url-state";
 import { sortHotspots, type TriageSort } from "@/lib/triage";
+import { COLOR } from "@/lib/theme";
 
 // SearchBar is centred on THIS container (420px + padding/border = 446 wide),
 // and the container shrinks by HotspotDetail's 340px when a hotspot opens. A
@@ -181,6 +183,11 @@ export default function Page() {
           <StreamStatusDot status={status} lastEventAt={lastEventAt} />
           <span style={{ color: "#374151" }}>|</span>
           <span style={{ color: "#aaa", fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{user.username} ({user.role})</span>
+          {user.role === "admin" && (
+            <Link href="/admin/users" style={{ color: COLOR.link, fontSize: 12, whiteSpace: "nowrap" }}>
+              {t("admin.users.short")}
+            </Link>
+          )}
           <button onClick={logout} style={{ background: "#333", color: "#eee", padding: "6px 12px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 12, flexShrink: 0 }}>
             {t("header.logout")}
           </button>

@@ -57,6 +57,10 @@ export type Claim = {
 };
 export type HotspotClaims = { claims: Claim[]; insufficient_sources: boolean };
 
+export type UserRow = {
+  user_id: number; username: string; role: "analyst" | "admin"; created_at: string | null;
+};
+
 export type EventFeature = {
   type: "Feature";
   geometry: { type: "Point"; coordinates: [number, number] };
@@ -93,6 +97,23 @@ async function patchJson<T>(path: string, body: unknown, token?: string | null):
   return res.json() as Promise<T>;
 }
 
+async function postJson<T>(path: string, body: unknown, token?: string | null): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { ...authHeaders(token), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401) throw new Error("unauthorized");
+  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+  return res.json() as Promise<T>;
+}
+
+async function del(path: string, token?: string | null): Promise<void> {
+  const res = await fetch(`${BASE}${path}`, { method: "DELETE", headers: authHeaders(token) });
+  if (res.status === 401) throw new Error("unauthorized");
+  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+}
+
 export const api = {
   hotspots: (token?: string | null, limit = 200) =>
     getJson<Hotspot[]>(`/hotspots?limit=${limit}`, token),
@@ -123,4 +144,8 @@ export const api = {
     getJson<SearchResults>(`/search?q=${encodeURIComponent(q)}`, token),
   hotspotClaims: (id: number, token?: string | null) =>
     getJson<HotspotClaims>(`/hotspots/${id}/claims`, token),
+  users: (token?: string | null) => getJson<UserRow[]>("/auth/users", token),
+  createUser: (body: { username: string; password: string; role: "analyst" | "admin" },
+               token?: string | null) => postJson<UserRow>("/auth/users", body, token),
+  deleteUser: (userId: number, token?: string | null) => del(`/auth/users/${userId}`, token),
 };
