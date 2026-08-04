@@ -4,4 +4,12 @@ html, body {
   height: 100%;
   overflow: hidden;
   background: #0d1117;
+  /* layout.tsx puts --font-geist-sans on <html>; without this rule nothing
+     ever consumed it and every screen fell back to the browser default. */
+  font-family: var(--font-geist-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input, select, textarea {
+  font-family: inherit;
 }

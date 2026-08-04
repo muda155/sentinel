@@ -19,6 +19,9 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
     const saved = window.localStorage.getItem(STORAGE_KEY);
     if (saved === "en" || saved === "vi") setLocaleState(saved);
   }, []);
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
   const setLocale = (l: Locale) => {
     setLocaleState(l);
     window.localStorage.setItem(STORAGE_KEY, l);
