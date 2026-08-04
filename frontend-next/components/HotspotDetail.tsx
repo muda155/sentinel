@@ -25,6 +25,9 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   const [events, setEvents] = useState<HotspotEvent[]>([]);
   const [claims, setClaims] = useState<HotspotClaims | null>(null);
   const [flash, setFlash] = useState<number | null>(null);
+  // Sources must stay reachable by citation jumps: a collapsed Section unmounts
+  // its <ol>, so jumpTo forces it open before scrolling (FR-16).
+  const [sourcesOpen, setSourcesOpen] = useState(true);
   const listRef = useRef<HTMLOListElement>(null);
   const [summaryError, setSummaryError] = useState(false);
   const [eventsError, setEventsError] = useState(false);
@@ -65,6 +68,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   const retryButtonStyle = { background: COLOR.surfaceRaised, color: COLOR.text, padding: "2px 10px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 12, marginLeft: 8 };
 
   const jumpTo = (n: number) => {
+    setSourcesOpen(true);
     const row = listRef.current?.querySelector<HTMLElement>(`[data-cite="${n}"]`);
     row?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     setFlash(n);
@@ -105,9 +109,9 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
         );
       })()}
       <Section title={t("detail.section.scores")}>
-        <dl>
+        <dl style={{ margin: 0 }}>
         <dt style={{ fontSize: FONT.sm, color: COLOR.textMuted }}>{t("detail.confidence")}</dt>
-        <div style={{ marginBottom: SPACE.lg }}>
+        <dd style={{ margin: 0, marginBottom: SPACE.lg }}>
           <b>conf_score: {hotspot.conf_score.toFixed(1)}</b>
           {(() => {
             const b = confBreakdown(hotspot);
@@ -135,20 +139,26 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
               </div>
             );
           })()}
-        </div>
-        </dl>
-        <dl>
+        </dd>
         <dt style={{ fontSize: FONT.sm, color: COLOR.textMuted }}>{t("detail.convergence")}</dt>
-        <div>
+        <dd style={{ margin: 0 }}>
           <b>convergence_score: {hotspot.convergence_score.toFixed(1)}</b> — {hotspot.alert_level}
           {(() => {
             const b = convergenceBreakdown(hotspot);
             if (b.mode === "unavailable") return null;
             if (b.mode === "raw") {
+              // A reconstruction miss prints bare inputs; without a caveat the
+              // "0 loại sự kiện trên 9 sự kiện" caption reads like the real
+              // explanation rather than a fallback. The × shorthand for a zero
+              // type count avoids the self-contradictory "0 event types".
+              const caption = b.types === 0
+                ? `${b.types} × ${b.events}`
+                : t("breakdown.typesEvents")
+                    .replace("{types}", String(b.types))
+                    .replace("{events}", String(b.events));
               return <p style={{ fontSize: FONT.sm, color: COLOR.textMuted, margin: `${SPACE.xs}px 0 0` }}>
-                {t("breakdown.typesEvents")
-                  .replace("{types}", String(b.types))
-                  .replace("{events}", String(b.events))}
+                {t("breakdown.rawConvergence")}<br />
+                {caption}
               </p>;
             }
             return (
@@ -169,7 +179,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
               </div>
             );
           })()}
-        </div>
+        </dd>
         </dl>
       </Section>
       <Section title={t("detail.section.brief")}>
@@ -312,7 +322,8 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
           </Section>
         );
       })()}
-      <Section title={t("detail.section.sources")} count={eventsError ? undefined : cited.length}>
+      <Section title={t("detail.section.sources")} count={eventsError ? undefined : cited.length}
+               open={sourcesOpen} onOpenChange={setSourcesOpen}>
         {eventsError ? (
           <p>{t("detail.error")} <button onClick={retryEvents} style={retryButtonStyle}>{t("detail.retry")}</button></p>
         ) : (

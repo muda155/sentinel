@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "@/lib/api";
 import { vi as viLocale } from "@/lib/locales/vi";
 
 const mocks = vi.hoisted(() => ({
@@ -7,9 +8,13 @@ const mocks = vi.hoisted(() => ({
   auth: { token: "t", user: { username: "admin", role: "admin" }, hydrated: true, isAdmin: true },
 }));
 
-vi.mock("@/lib/api", () => ({
-  api: { users: mocks.users, createUser: mocks.createUser, deleteUser: mocks.deleteUser },
-}));
+vi.mock("@/lib/api", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/api")>("@/lib/api");
+  return {
+    api: { users: mocks.users, createUser: mocks.createUser, deleteUser: mocks.deleteUser },
+    ApiError: actual.ApiError,
+  };
+});
 vi.mock("@/lib/auth", () => ({ useAuth: () => mocks.auth }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
@@ -24,6 +29,16 @@ describe("AdminUsersPage", () => {
     mocks.users.mockReset(); mocks.createUser.mockReset(); mocks.deleteUser.mockReset();
     mocks.auth.isAdmin = true;
     mocks.auth.user = { username: "admin", role: "admin" };
+    mocks.auth.hydrated = true;
+    mocks.auth.token = "t";
+  });
+
+  it("renders nothing before auth hydrates (no forbidden-screen flash on SSR)", () => {
+    mocks.auth.hydrated = false;
+    mocks.auth.token = null;
+    const { container } = render(<AdminUsersPage />);
+    expect(container.innerHTML).toBe("");
+    expect(mocks.users).not.toHaveBeenCalled();
   });
 
   it("refuses to render for a non-admin", () => {
@@ -60,7 +75,7 @@ describe("AdminUsersPage", () => {
 
   it("names the duplicate case rather than showing a generic failure", async () => {
     mocks.users.mockResolvedValue([row()]);
-    mocks.createUser.mockRejectedValue(new Error("/auth/users -> 409"));
+    mocks.createUser.mockRejectedValue(new ApiError(409, "/auth/users -> 409"));
     render(<AdminUsersPage />);
     await screen.findByText("admin");
     fireEvent.change(screen.getByLabelText(viLocale["login.username"]), { target: { value: "admin" } });
@@ -85,5 +100,19 @@ describe("AdminUsersPage", () => {
     await screen.findByText("analyst");
     fireEvent.click(screen.getByRole("button", { name: viLocale["admin.users.delete"] }));
     await waitFor(() => expect(screen.queryByText("analyst")).toBeNull());
+  });
+
+  it("ignores a second delete click while the first is in flight", async () => {
+    mocks.users.mockResolvedValue([row(), row({ user_id: 2, username: "analyst", role: "analyst" })]);
+    let resolveDelete!: () => void;
+    mocks.deleteUser.mockReturnValue(new Promise((res) => { resolveDelete = () => res(undefined); }));
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<AdminUsersPage />);
+    await screen.findByText("analyst");
+    const button = screen.getByRole("button", { name: viLocale["admin.users.delete"] });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    resolveDelete();
+    await waitFor(() => expect(mocks.deleteUser).toHaveBeenCalledTimes(1));
   });
 });

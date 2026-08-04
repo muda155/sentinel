@@ -70,6 +70,13 @@ describe("convergenceBreakdown", () => {
   it("reports unavailable when the inputs are absent", () => {
     expect(convergenceBreakdown({ ...base, convergence_score: 50 }).mode).toBe("unavailable");
   });
+
+  it("treats a zero-input hotspot as not scored, not an empty split", () => {
+    // types=0, events=0, score=0 must not fall into split (an empty track) —
+    // zero inputs are indistinguishable from "never scored".
+    expect(convergenceBreakdown({ ...base, convergence_types: 0, convergence_events: 0, convergence_score: 0 }).mode)
+      .toBe("unavailable");
+  });
 });
 
 const claim = (claim_id: number, status: Claim["status"]): Claim =>

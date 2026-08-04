@@ -61,4 +61,9 @@ export const inputStyle: CSSProperties = {
   background: COLOR.surfaceSunken,
   color: COLOR.text,
   fontSize: FONT.md,
+  // <input> defaults to content-box and <select> to border-box, so two 37px
+  // siblings (admin form) stagger by 2px — an explicit border-box height makes
+  // every form control the same size.
+  boxSizing: "border-box",
+  height: 37,
 };

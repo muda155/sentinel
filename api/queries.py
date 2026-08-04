@@ -39,8 +39,10 @@ def fetch_hotspots(conn, *, limit=50, min_conf=0.0, min_convergence=0.0,
                COALESCE(h.conf_score,0) conf_score, h.event_count,
                h.consistency_score,
                h.source_density, h.geopolitical_diversity,
-               COALESCE(g.event_type_count, h.unique_event_types, 0) convergence_types,
-               COALESCE(g.total_events, h.event_count, 0) convergence_events,
+               CASE WHEN g.convergence_score IS NOT NULL THEN g.event_type_count
+                    ELSE h.unique_event_types END AS convergence_types,
+               CASE WHEN g.convergence_score IS NOT NULL THEN g.total_events
+                    ELSE h.event_count END AS convergence_events,
                COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
                COALESCE(h.alert_level,'Medium') alert_level
         FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
@@ -85,8 +87,10 @@ def fetch_hotspot_by_id(conn, hotspot_id: int) -> dict | None:
                COALESCE(h.conf_score,0) conf_score, h.event_count,
                h.consistency_score,
                h.source_density, h.geopolitical_diversity,
-               COALESCE(g.event_type_count, h.unique_event_types, 0) convergence_types,
-               COALESCE(g.total_events, h.event_count, 0) convergence_events,
+               CASE WHEN g.convergence_score IS NOT NULL THEN g.event_type_count
+                    ELSE h.unique_event_types END AS convergence_types,
+               CASE WHEN g.convergence_score IS NOT NULL THEN g.total_events
+                    ELSE h.event_count END AS convergence_events,
                COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
                COALESCE(h.alert_level,'Medium') alert_level
         FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
@@ -138,8 +142,10 @@ _HOTSPOT_SELECT = """
            COALESCE(h.conf_score,0) conf_score, h.event_count,
            h.consistency_score,
            h.source_density, h.geopolitical_diversity,
-           COALESCE(g.event_type_count, h.unique_event_types, 0) convergence_types,
-           COALESCE(g.total_events, h.event_count, 0) convergence_events,
+           CASE WHEN g.convergence_score IS NOT NULL THEN g.event_type_count
+                ELSE h.unique_event_types END AS convergence_types,
+           CASE WHEN g.convergence_score IS NOT NULL THEN g.total_events
+                ELSE h.event_count END AS convergence_events,
            COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
            COALESCE(h.alert_level,'Medium') alert_level
     FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
@@ -393,8 +399,22 @@ def count_admins(conn) -> int:
 
 
 def delete_user(conn, user_id: int) -> bool:
+    """Atomic delete guarded by the last-admin rule.
+
+    The self-delete check is left in the route (it is not racy), but the
+    last-admin check MUST happen in the same statement as the delete or two
+    concurrent admins deleting each other can both observe count=1 and both
+    succeed, leaving zero admins.
+    """
     with conn.cursor() as cur:
-        cur.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
+        cur.execute(
+            """
+            DELETE FROM users
+            WHERE user_id = %s
+              AND (role <> 'admin' OR (SELECT count(*) FROM users WHERE role = 'admin') > 1)
+            """,
+            (user_id,),
+        )
         deleted = cur.rowcount
     conn.commit()
     return deleted > 0

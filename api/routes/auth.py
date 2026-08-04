@@ -91,11 +91,10 @@ def remove_user(user_id: int, admin: dict = Depends(require_role("admin"))):
             raise HTTPException(status_code=404, detail="user not found")
         if target["username"] == admin.get("sub"):
             raise HTTPException(status_code=400, detail="cannot delete your own account")
-        if target["role"] == "admin" and queries.count_admins(conn) <= 1:
-            # Removing the last admin locks everyone out of this screen, and
-            # there is no recovery path short of a psql session.
+        if not queries.delete_user(conn, user_id):
+            # The row still exists and we already ruled out self-delete, so the
+            # single-statement guard blocked the last admin deletion.
             raise HTTPException(status_code=400, detail="cannot delete the last admin")
-        queries.delete_user(conn, user_id)
     finally:
         pool.return_connection(conn)
     return Response(status_code=204)

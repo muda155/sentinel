@@ -345,4 +345,34 @@ describe("HotspotDetail data loading", () => {
     render(<HotspotDetail hotspot={{ ...hotspotFixture, source_density: null, geopolitical_diversity: null }} onClose={() => {}} />);
     expect(await screen.findByText(viLocale["breakdown.unavailable"])).toBeTruthy();
   });
+
+  it("renders a single definition list whose dl elements carry dd definitions", async () => {
+    summaryMock.mockResolvedValue(summaryFixture);
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue(claimsFixture);
+    render(<HotspotDetail hotspot={{ ...hotspotFixture, source_density: 0.8, geopolitical_diversity: 0.5, conf_score: 71 }} onClose={() => {}} />);
+    // wait for the panel to render its score section
+    await screen.findByText(/conf_score:/);
+    const dls = document.querySelectorAll("aside dl");
+    expect(dls.length).toBeGreaterThan(0);
+    dls.forEach((dl) => {
+      expect(dl.querySelectorAll("dd").length).toBeGreaterThan(0);
+    });
+  });
+
+  it("opens a collapsed Sources section when a citation jump targets it", async () => {
+    summaryMock.mockResolvedValue({ ...summaryFixture, summary: "Report claims escalation [1]." });
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue(claimsFixture);
+    renderPanel();
+    await screen.findByText(eventFixture.title!);
+
+    // Collapse Sources, then the SITREP [1] jump must reopen it (a collapsed
+    // Section unmounts the <ol>, so the scroll would otherwise no-op).
+    fireEvent.click(screen.getByRole("button", { name: `${viLocale["detail.sources"]} (1)` }));
+    expect(screen.queryByText(eventFixture.title!)).toBeNull();
+
+    fireEvent.click(screen.getByText("[1]"));
+    await screen.findByText(eventFixture.title!);
+  });
 });

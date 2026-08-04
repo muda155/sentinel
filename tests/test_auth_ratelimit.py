@@ -1,3 +1,6 @@
+import os
+
+import pytest
 from fastapi.testclient import TestClient
 
 from api.app import create_app
@@ -20,6 +23,9 @@ def test_auth_bucket_exhausts_and_rejects():
     assert allowed == AUTH_RATE_PER_MIN
 
 
+@pytest.mark.skipif(
+    not os.getenv("SENTINEL_TEST_DB"), reason="needs live DB"
+)
 def test_login_429s_after_the_auth_budget(monkeypatch):
     from api import ratelimit
 

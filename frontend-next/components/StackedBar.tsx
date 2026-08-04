@@ -19,15 +19,19 @@ export default function StackedBar({
   // Scale down rather than overflow the track when the parts exceed the cap
   // (convergence clamps at 100 but 4 types alone already reach it).
   const scale = sum > max ? max / sum : 1;
+  // The aria-label reports the SCALED values: with clamping, the raw numbers
+  // add up beyond the track and would read as a bar wider than the 100-wide
+  // track the non-visual user is told to picture.
+  const scaledSegments = segments.map((s) => ({ ...s, value: s.value * scale }));
   let x = 0;
 
   return (
     <div>
       <svg width={width} height={height} role="img"
-           aria-label={`${label}: ${segments.map((s) => `${s.label} ${s.value.toFixed(1)}`).join(", ")}`}>
+           aria-label={`${label}: ${scaledSegments.map((s) => `${s.label} ${s.value.toFixed(1)}`).join(", ")}`}>
         <rect x={0} y={0} width={width} height={height} rx={RADIUS.sm} fill={COLOR.surfaceRaised} />
-        {segments.map((s) => {
-          const w = (s.value * scale / max) * width;
+        {scaledSegments.map((s) => {
+          const w = (s.value / max) * width;
           const seg = <rect key={s.label} x={x} y={0} width={Math.max(0, w)} height={height} fill={s.color} />;
           x += w;
           return seg;

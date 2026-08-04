@@ -75,14 +75,25 @@ export type EventFeatureCollection = {
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 
+export class ApiError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 export function authHeaders(token?: string | null): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+async function throwForStatus(res: Response, path: string): Promise<void> {
+  if (res.status === 401) throw new ApiError(401, "unauthorized");
+  if (!res.ok) throw new ApiError(res.status, `${path} -> ${res.status}`);
+}
+
 async function getJson<T>(path: string, token?: string | null): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { headers: authHeaders(token) });
-  if (res.status === 401) throw new Error("unauthorized");
-  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+  await throwForStatus(res, path);
   return res.json() as Promise<T>;
 }
 
@@ -92,8 +103,7 @@ async function patchJson<T>(path: string, body: unknown, token?: string | null):
     headers: { ...authHeaders(token), "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (res.status === 401) throw new Error("unauthorized");
-  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+  await throwForStatus(res, path);
   return res.json() as Promise<T>;
 }
 
@@ -103,15 +113,13 @@ async function postJson<T>(path: string, body: unknown, token?: string | null): 
     headers: { ...authHeaders(token), "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (res.status === 401) throw new Error("unauthorized");
-  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+  await throwForStatus(res, path);
   return res.json() as Promise<T>;
 }
 
 async function del(path: string, token?: string | null): Promise<void> {
   const res = await fetch(`${BASE}${path}`, { method: "DELETE", headers: authHeaders(token) });
-  if (res.status === 401) throw new Error("unauthorized");
-  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+  await throwForStatus(res, path);
 }
 
 export const api = {

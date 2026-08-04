@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 
@@ -51,10 +52,36 @@ class _Bucket:
 
 _bucket = TokenBucket()
 
+# Comma-separated direct peers trusted to supply a real client IP in
+# X-Forwarded-For (the Compose reverse proxy). When empty, rate limits key on
+# the direct socket peer, which collapses to a single shared bucket for every
+# user once a NAT or proxy sits in front.
+_TRUSTED_PROXIES = frozenset(
+    p.strip() for p in os.getenv("SENTINEL_TRUSTED_PROXIES", "").split(",") if p.strip()
+)
+
+
+def _client_ip(request: Request) -> str:
+    """The address to rate-limit on, honoring a trusted proxy's X-Forwarded-For.
+
+    X-Forwarded-For is appended by each hop and is spoofable by the immediate
+    client, so only the LAST entry (added by the proxy we talk to) is used, and
+    only when the direct peer is in SENTINEL_TRUSTED_PROXIES. This stops every
+    user behind the Compose proxy from sharing one bucket.
+    """
+    direct = request.client.host if request.client else "unknown"
+    if direct in _TRUSTED_PROXIES:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            # The proxy appends the original client IP; the last entry is the
+            # one it actually saw, not one the client may have forged.
+            return forwarded.strip().split(",")[-1].strip() or direct
+    return direct
+
 
 def _rate_limit_client(request: Request) -> None:
     """Dependency that raises HTTP 429 when the client has exhausted tokens."""
-    client_key = request.client.host if request.client else "unknown"
+    client_key = _client_ip(request)
     if not _bucket.allow(client_key):
         raise HTTPException(status_code=HTTP_429_TOO_MANY_REQUESTS,
                             detail="Rate limit exceeded. Try again later.")
@@ -74,7 +101,7 @@ _auth_bucket = TokenBucket(rate_per_min=AUTH_RATE_PER_MIN)
 
 def limit_auth(request: Request) -> None:
     """Stricter per-IP limit for credential endpoints."""
-    client_key = request.client.host if request.client else "unknown"
+    client_key = _client_ip(request)
     if not _auth_bucket.allow(client_key):
         raise HTTPException(status_code=HTTP_429_TOO_MANY_REQUESTS,
                             detail="Too many attempts. Try again later.")

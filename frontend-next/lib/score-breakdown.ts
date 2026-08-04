@@ -38,7 +38,9 @@ export function convergenceBreakdown(h: Hotspot): ConvergenceBreakdown {
   const types = h.convergence_types;
   const events = h.convergence_events;
   if (types == null || events == null) return { mode: "unavailable" };
-  if (types === 0 && events === 0 && h.convergence_score > 0) return { mode: "unavailable" };
+  // Zero inputs are indistinguishable from "not scored" — drawing an empty
+  // split bar under "convergence 0.0" would render a hollow track.
+  if (types === 0 && events === 0) return { mode: "unavailable" };
 
   // pipeline/clustering.py:119
   const typeScore = types * 25;

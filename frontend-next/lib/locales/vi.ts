@@ -104,6 +104,7 @@ export const vi: Record<MessageKey, string> = {
   "breakdown.countBoost": "Số lượng sự kiện",
   "breakdown.unavailable": "Chưa được chấm điểm",
   "breakdown.rawInputs": "Trọng số khác mặc định — hiển thị dữ liệu gốc",
+  "breakdown.rawConvergence": "Công thức điểm khác mặc định — hiển thị dữ liệu gốc",
   "breakdown.clamped": "Giới hạn ở 100",
   "breakdown.typesEvents": "{types} loại sự kiện trên {events} sự kiện",
   "breakdown.uniqueDomains": "{n} tên miền riêng biệt",

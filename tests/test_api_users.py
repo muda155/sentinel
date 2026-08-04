@@ -146,3 +146,36 @@ def test_cannot_delete_the_last_admin():
         assert r.status_code == 400
     finally:
         _cleanup(name)
+
+
+def test_last_admin_guard_survives_concurrent_deletes():
+    """Two admins deleting each other concurrently must not both succeed."""
+    import concurrent.futures
+
+    name_a = f"pytest_{uuid.uuid4().hex[:8]}"
+    name_b = f"pytest_{uuid.uuid4().hex[:8]}"
+    c = TestClient(create_app())
+    try:
+        a = c.post("/auth/users",
+                   json={"username": name_a, "password": "password123", "role": "admin"},
+                   headers=_auth()).json()
+        b = c.post("/auth/users",
+                   json={"username": name_b, "password": "password123", "role": "admin"},
+                   headers=_auth()).json()
+
+        def try_delete(target_id, as_username):
+            return c.delete(f"/auth/users/{target_id}",
+                            headers=_auth(username=as_username, role="admin"))
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+            f_a = ex.submit(try_delete, b["user_id"], name_a)
+            f_b = ex.submit(try_delete, a["user_id"], name_b)
+            statuses = [f_a.result().status_code, f_b.result().status_code]
+
+        # Both cannot succeed; at least one must be blocked by the guard.
+        assert 400 in statuses, statuses
+        admins = [u for u in c.get("/auth/users", headers=_auth()).json() if u["role"] == "admin"]
+        assert len(admins) >= 1
+    finally:
+        _cleanup(name_a)
+        _cleanup(name_b)
