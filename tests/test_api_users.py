@@ -282,9 +282,19 @@ def test_last_admin_guard_holds_under_concurrent_deletes():
         _restore_admins(snapshot)
 
 
-def test_delete_vanished_user_is_404():
-    """A DELETE whose target vanished before the route runs is a 404, not a
-    misleading 'cannot delete the last admin' 400."""
+def test_delete_vanished_user_is_404(monkeypatch):
+    """The route returns 404, not a misleading last-admin 400, when the target
+    vanishes *between* its fetch and its delete.
+
+    TestClient serializes requests, so a real concurrent delete cannot land in
+    that window. Instead the test intercepts `queries.delete_user`: the wrapper
+    deletes the row on a second connection and then delegates to the real
+    delete (which now sees rowcount 0). The `calls` counter asserts the wrapper
+    actually ran — a test credited with covering this branch must prove the
+    branch executed, not just that the end state looks right.
+    """
+    from api import queries
+
     name = f"pytest_{uuid.uuid4().hex[:8]}"
     c = TestClient(create_app())
     try:
@@ -292,8 +302,26 @@ def test_delete_vanished_user_is_404():
                          json={"username": name, "password": "password123", "role": "analyst"},
                          headers=_auth()).json()
         uid = created["user_id"]
-        _cleanup(name)  # a concurrent actor removes it behind the route's back
+        real_delete = queries.delete_user
+        calls = {"delete_user": 0}
+
+        def vanish_before_delete(conn, user_id):
+            calls["delete_user"] += 1
+            c2 = psycopg2.connect(_raw_dsn())
+            try:
+                with c2.cursor() as cur:
+                    cur.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
+                c2.commit()
+            finally:
+                c2.close()
+            return real_delete(conn, user_id)
+
+        monkeypatch.setattr(queries, "delete_user", vanish_before_delete)
+
         r = c.delete(f"/auth/users/{uid}", headers=_auth())
+        assert calls["delete_user"] == 1, (
+            "route never reached delete_user — the vanished-row branch did not execute"
+        )
         assert r.status_code == 404
     finally:
         _cleanup(name)
