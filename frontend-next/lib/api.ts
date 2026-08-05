@@ -1,15 +1,19 @@
 export type Hotspot = {
   hotspot_id: number; lat: number; lon: number;
-  conf_score: number; convergence_score: number;
+  conf_score: number; convergence_score: number | null;
   alert_level: "Critical" | "High" | "Medium"; event_count: number;
   consistency_score?: number | null;
+  source_density?: number | null;
+  geopolitical_diversity?: number | null;
+  convergence_types?: number;
+  convergence_events?: number;
   name: string | null;
   start_window: string | null;
   end_window: string | null; created_at: string | null;
 };
 export type HotspotSummary = {
   summary: string; conflict_detected: boolean; sources_cited: string[];
-  conf_score: number; convergence_score: number;
+  conf_score: number; convergence_score: number | null;
 };
 export type GridCell = {
   cell_id: string; lat: number; lon: number;
@@ -26,7 +30,8 @@ export type HotspotEvent = {
   goldstein_scale: number | null; avg_tone: number | null;
   num_sources: number | null; fatalities: number | null;
   duplicate_count: number;
-  trust_tier: number | null; trust_score: number; citation_index: number | null;
+  trust_tier: number | null; trust_score: number;
+  country_code?: string | null; citation_index: number | null;
 };
 
 export type SearchEvent = {
@@ -52,6 +57,10 @@ export type Claim = {
 };
 export type HotspotClaims = { claims: Claim[]; insufficient_sources: boolean };
 
+export type UserRow = {
+  user_id: number; username: string; role: "analyst" | "admin"; created_at: string | null;
+};
+
 export type EventFeature = {
   type: "Feature";
   geometry: { type: "Point"; coordinates: [number, number] };
@@ -66,14 +75,25 @@ export type EventFeatureCollection = {
 
 const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 
+export class ApiError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 export function authHeaders(token?: string | null): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+async function throwForStatus(res: Response, path: string): Promise<void> {
+  if (res.status === 401) throw new ApiError(401, "unauthorized");
+  if (!res.ok) throw new ApiError(res.status, `${path} -> ${res.status}`);
+}
+
 async function getJson<T>(path: string, token?: string | null): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { headers: authHeaders(token) });
-  if (res.status === 401) throw new Error("unauthorized");
-  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+  await throwForStatus(res, path);
   return res.json() as Promise<T>;
 }
 
@@ -83,9 +103,23 @@ async function patchJson<T>(path: string, body: unknown, token?: string | null):
     headers: { ...authHeaders(token), "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (res.status === 401) throw new Error("unauthorized");
-  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+  await throwForStatus(res, path);
   return res.json() as Promise<T>;
+}
+
+async function postJson<T>(path: string, body: unknown, token?: string | null): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: { ...authHeaders(token), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  await throwForStatus(res, path);
+  return res.json() as Promise<T>;
+}
+
+async function del(path: string, token?: string | null): Promise<void> {
+  const res = await fetch(`${BASE}${path}`, { method: "DELETE", headers: authHeaders(token) });
+  await throwForStatus(res, path);
 }
 
 export const api = {
@@ -118,4 +152,8 @@ export const api = {
     getJson<SearchResults>(`/search?q=${encodeURIComponent(q)}`, token),
   hotspotClaims: (id: number, token?: string | null) =>
     getJson<HotspotClaims>(`/hotspots/${id}/claims`, token),
+  users: (token?: string | null) => getJson<UserRow[]>("/auth/users", token),
+  createUser: (body: { username: string; password: string; role: "analyst" | "admin" },
+               token?: string | null) => postJson<UserRow>("/auth/users", body, token),
+  deleteUser: (userId: number, token?: string | null) => del(`/auth/users/${userId}`, token),
 };

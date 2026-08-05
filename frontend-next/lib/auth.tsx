@@ -19,6 +19,13 @@ const AuthContext = createContext<AuthCtx>({
   logout: () => {},
 });
 
+export class LoginError extends Error {
+  constructor(public readonly kind: "credentials" | "network") {
+    super(kind);
+    this.name = "LoginError";
+  }
+}
+
 function decodePayload(token: string): User | null {
   try {
     const body = token.split(".")[1];
@@ -41,12 +48,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const user = useMemo(() => (token ? decodePayload(token) : null), [token]);
 
   const login = useCallback(async (username: string, password: string) => {
-    const res = await fetch(`${BASE}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password }),
-    });
-    if (!res.ok) throw new Error("invalid credentials");
+    let res: Response;
+    try {
+      res = await fetch(`${BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+    } catch {
+      // fetch only rejects on a transport failure — DNS, CORS, API down.
+      // Reporting this as "wrong password" sent people hunting for a typo
+      // while the API container was simply not running.
+      throw new LoginError("network");
+    }
+    if (res.status === 401) throw new LoginError("credentials");
+    if (!res.ok) throw new LoginError("network");
     const data = await res.json();
     localStorage.setItem("sentinel_token", data.access_token);
     setToken(data.access_token);

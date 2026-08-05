@@ -76,7 +76,7 @@ describe("HotspotDetail data loading", () => {
     // last synchronous caller, leaving the brief on loading forever
     await screen.findByText(summaryFixture.summary);
     await screen.findByText(eventFixture.title!);
-    expect(screen.getByText(`${viLocale["detail.sources"]} (1)`)).toBeTruthy();
+    expect(screen.getByRole("button", { name: `${viLocale["detail.sources"]} (1)` })).toBeTruthy();
     expect(screen.queryByText(viLocale["detail.loading"])).toBeNull();
   });
 
@@ -119,12 +119,12 @@ describe("HotspotDetail data loading", () => {
     expect(screen.getByText(viLocale["detail.retry"])).toBeTruthy();
     await screen.findByText(summaryFixture.summary);
     // per-resource isolation: the brief renders while the sources header hides its count
-    expect(screen.queryByText(`${viLocale["detail.sources"]} (1)`)).toBeNull();
+    expect(screen.queryByRole("button", { name: `${viLocale["detail.sources"]} (1)` })).toBeNull();
 
     fireEvent.click(screen.getByText(viLocale["detail.retry"]));
 
     await screen.findByText(eventFixture.title!);
-    expect(screen.getByText(`${viLocale["detail.sources"]} (1)`)).toBeTruthy();
+    expect(screen.getByRole("button", { name: `${viLocale["detail.sources"]} (1)` })).toBeTruthy();
     expect(eventsMock).toHaveBeenCalledTimes(2);
     expect(summaryMock).toHaveBeenCalledTimes(1);
     expect(claimsMock).toHaveBeenCalledTimes(1);
@@ -291,7 +291,7 @@ describe("HotspotDetail data loading", () => {
     eventsMock.mockResolvedValue([eventFixture]);
     renderPanel();
     await screen.findByText(eventFixture.title!);
-    expect(screen.queryByText(viLocale["detail.activity"])).toBeNull();
+    expect(screen.queryByText(viLocale["detail.section.activity"])).toBeNull();
 
     // events on two days -> sparkline renders with the translated aria-label
     eventsMock.mockResolvedValue([
@@ -302,7 +302,7 @@ describe("HotspotDetail data loading", () => {
     // wait for the second panel's events to resolve before asserting the sparkline
     const imgs = await screen.findAllByRole("img", { name: viLocale["detail.activity"] });
     expect(imgs.length).toBe(1);
-    expect(screen.getAllByText(viLocale["detail.activity"]).length).toBe(1);
+    expect(screen.getAllByText(viLocale["detail.section.activity"]).length).toBe(1);
   });
 
   it("shows NLI probability next to a contradicting citation", async () => {
@@ -328,5 +328,66 @@ describe("HotspotDetail data loading", () => {
     // ...but the inline p= is dispute-only (supporting is near-constant p≈1.00)
     expect(screen.getByText(/p=0\.91/)).toBeTruthy();
     expect(screen.queryByText(/p=0\.5/)).toBeNull();
+  });
+
+  it("draws the conf_score split when the inputs are present", async () => {
+    // hotspot fixture with source_density 0.8, geopolitical_diversity 0.5,
+    // conf_score 71 — see the existing renderPanel helper in this file.
+    render(<HotspotDetail hotspot={{ ...hotspotFixture, source_density: 0.8, geopolitical_diversity: 0.5, conf_score: 71 }} onClose={() => {}} />);
+    // the vi label contains literal parens, which are regex metacharacters —
+    // escape them so the name regex matches the literal aria-label prefix
+    const escaped = viLocale["detail.confidence"].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const bar = await screen.findByRole("img", { name: new RegExp(escaped) });
+    expect(bar.getAttribute("aria-label")).toContain("56.0");
+  });
+
+  it("says not-yet-scored instead of drawing a bar when the inputs are null", async () => {
+    // This fixture has neither conf inputs nor convergence inputs, so BOTH
+    // score sections report not-yet-scored.
+    render(<HotspotDetail hotspot={{ ...hotspotFixture, source_density: null, geopolitical_diversity: null }} onClose={() => {}} />);
+    expect((await screen.findAllByText(viLocale["breakdown.unavailable"])).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("says not-yet-scored for a null convergence_score instead of a hollow bar", async () => {
+    // conf is scored (bar) so the single "not-yet-scored" is the convergence
+    // block's; a NULL convergence_score must not render a split bar or crash.
+    render(<HotspotDetail hotspot={{ ...hotspotFixture, source_density: 0.8, geopolitical_diversity: 0.5, conf_score: 71, convergence_score: null, convergence_types: 3, convergence_events: 6 }} onClose={() => {}} />);
+    expect(await screen.findByText(viLocale["breakdown.unavailable"])).toBeTruthy();
+    expect(screen.getAllByText(viLocale["breakdown.unavailable"]).length).toBe(1);
+    // the score line shows a dash rather than calling toFixed on null
+    expect(screen.getByText(/convergence_score:/).textContent).toContain("—");
+    // and no convergence bar is drawn (the vi label contains regex metachars)
+    const escapedConv = viLocale["detail.convergence"].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    expect(screen.queryByRole("img", { name: new RegExp(escapedConv) })).toBeNull();
+  });
+
+  it("renders a single definition list whose dl elements carry dd definitions", async () => {
+    summaryMock.mockResolvedValue(summaryFixture);
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue(claimsFixture);
+    render(<HotspotDetail hotspot={{ ...hotspotFixture, source_density: 0.8, geopolitical_diversity: 0.5, conf_score: 71 }} onClose={() => {}} />);
+    // wait for the panel to render its score section
+    await screen.findByText(/conf_score:/);
+    const dls = document.querySelectorAll("aside dl");
+    expect(dls.length).toBeGreaterThan(0);
+    dls.forEach((dl) => {
+      expect(dl.querySelectorAll("dd").length).toBeGreaterThan(0);
+    });
+  });
+
+  it("opens a collapsed Sources section when a citation jump targets it", async () => {
+    summaryMock.mockResolvedValue({ ...summaryFixture, summary: "Report claims escalation [1]." });
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue(claimsFixture);
+    renderPanel();
+    await screen.findByText(eventFixture.title!);
+
+    // Collapse Sources, then the SITREP [1] jump must reopen it (a collapsed
+    // Section unmounts the <ol>, so the scroll would otherwise no-op).
+    fireEvent.click(screen.getByRole("button", { name: `${viLocale["detail.sources"]} (1)` }));
+    expect(screen.queryByText(eventFixture.title!)).toBeNull();
+
+    fireEvent.click(screen.getByText("[1]"));
+    await screen.findByText(eventFixture.title!);
   });
 });

@@ -38,7 +38,12 @@ def fetch_hotspots(conn, *, limit=50, min_conf=0.0, min_convergence=0.0,
                h.name, h.start_window, h.end_window, h.created_at,
                COALESCE(h.conf_score,0) conf_score, h.event_count,
                h.consistency_score,
-               COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
+               h.source_density, h.geopolitical_diversity,
+               CASE WHEN g.convergence_score IS NOT NULL THEN g.event_type_count
+                    ELSE h.unique_event_types END AS convergence_types,
+               CASE WHEN g.convergence_score IS NOT NULL THEN g.total_events
+                    ELSE h.event_count END AS convergence_events,
+               COALESCE(g.convergence_score,h.convergence_score) convergence_score,
                COALESCE(h.alert_level,'Medium') alert_level
         FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
         WHERE COALESCE(h.conf_score,0) >= %s
@@ -60,7 +65,7 @@ def fetch_hotspot_summary(conn, hotspot_id: int) -> dict | None:
         SELECT COALESCE(ls.summary_text,'') summary, COALESCE(ls.conflict_detected,false) conflict_detected,
                COALESCE(ls.sources_cited,'[]'::jsonb) sources_cited,
                COALESCE(h.conf_score,0) conf_score,
-               COALESCE(g.convergence_score,h.convergence_score,0) convergence_score
+               COALESCE(g.convergence_score,h.convergence_score) convergence_score
         FROM hotspots h LEFT JOIN llm_summaries ls ON ls.hotspot_id=h.hotspot_id
                         LEFT JOIN grid_cells g ON h.cell_id=g.cell_id
         WHERE h.hotspot_id=%s
@@ -81,7 +86,12 @@ def fetch_hotspot_by_id(conn, hotspot_id: int) -> dict | None:
                h.name, h.start_window, h.end_window, h.created_at,
                COALESCE(h.conf_score,0) conf_score, h.event_count,
                h.consistency_score,
-               COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
+               h.source_density, h.geopolitical_diversity,
+               CASE WHEN g.convergence_score IS NOT NULL THEN g.event_type_count
+                    ELSE h.unique_event_types END AS convergence_types,
+               CASE WHEN g.convergence_score IS NOT NULL THEN g.total_events
+                    ELSE h.event_count END AS convergence_events,
+               COALESCE(g.convergence_score,h.convergence_score) convergence_score,
                COALESCE(h.alert_level,'Medium') alert_level
         FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
         WHERE h.hotspot_id = %s
@@ -131,7 +141,12 @@ _HOTSPOT_SELECT = """
            h.end_window, h.created_at,
            COALESCE(h.conf_score,0) conf_score, h.event_count,
            h.consistency_score,
-           COALESCE(g.convergence_score,h.convergence_score,0) convergence_score,
+           h.source_density, h.geopolitical_diversity,
+           CASE WHEN g.convergence_score IS NOT NULL THEN g.event_type_count
+                ELSE h.unique_event_types END AS convergence_types,
+           CASE WHEN g.convergence_score IS NOT NULL THEN g.total_events
+                ELSE h.event_count END AS convergence_events,
+           COALESCE(g.convergence_score,h.convergence_score) convergence_score,
            COALESCE(h.alert_level,'Medium') alert_level
     FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
 """
@@ -169,7 +184,7 @@ def fetch_search(conn, q: str) -> dict[str, list]:
                        ST_Y(h.centroid_geom) h_lat,
                        ST_X(h.centroid_geom) h_lon, COALESCE(h.conf_score,0) h_conf,
                        h.event_count h_event_count,
-                       COALESCE(g.convergence_score,h.convergence_score,0) h_convergence,
+                       COALESCE(g.convergence_score,h.convergence_score) h_convergence,
                        COALESCE(h.alert_level,'Medium') h_alert,
                        count(*) OVER (
                            PARTITION BY COALESCE(NULLIF(e.url, ''), 'evt:' || e.event_id),
@@ -277,7 +292,8 @@ def fetch_hotspot_events(conn, hotspot_id: int) -> list[dict] | None:
                      ELSE 'unknown'
                    END AS event_type_label,
                    e.goldstein_scale, e.avg_tone, e.num_sources, e.fatalities,
-                   s.trust_tier, COALESCE(s.trust_score, 0.4) AS trust_score
+                   s.trust_tier, COALESCE(s.trust_score, 0.4) AS trust_score,
+                   s.country_code
             FROM event_hotspot eh
             JOIN events e ON e.event_id = eh.event_id
             LEFT JOIN sources s ON e.source_id = s.source_id
@@ -337,3 +353,73 @@ def fetch_hotspot_claims(conn, hotspot_id: int) -> dict | None:
         "claims": list(claims.values()),
         "insufficient_sources": len(cited_domains) < 2,
     }
+
+
+def fetch_users(conn) -> list[dict[str, Any]]:
+    """Never selects password_hash — it must not be reachable through the API."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT user_id, username, role, created_at FROM users ORDER BY username"
+        )
+        return _rows_to_dicts(cur)
+
+
+def insert_user(conn, *, username: str, password_hash: str, role: str) -> dict | None:
+    """Returns the new row, or None if the username is taken."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO users (username, password_hash, role)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (username) DO NOTHING
+            RETURNING user_id, username, role, created_at
+            """,
+            (username, password_hash, role),
+        )
+        row = cur.fetchone()
+        cols = [c[0] for c in cur.description] if row else []
+    conn.commit()
+    return dict(zip(cols, row)) if row else None
+
+
+def fetch_user_by_id(conn, user_id: int) -> dict | None:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT user_id, username, role FROM users WHERE user_id = %s", (user_id,)
+        )
+        row = cur.fetchone()
+        cols = [c[0] for c in cur.description]
+    return dict(zip(cols, row)) if row else None
+
+
+# Exposed for the concurrency test, which drives raw psycopg2 connections
+# against the exact shipped predicate. The count subquery takes row locks
+# (FOR UPDATE) so a concurrent delete of a *different* admin row blocks and
+# re-counts after the first commits — a plain `SELECT count(*)` evaluates
+# against its own READ COMMITTED snapshot and both deletes succeed (write skew).
+DELETE_USER_SQL = """
+    DELETE FROM users
+    WHERE user_id = %s
+      AND (role <> 'admin'
+           OR (SELECT count(*) FROM (
+                 SELECT 1 FROM users WHERE role = 'admin' FOR UPDATE
+               ) locked) > 1)
+"""
+
+
+def delete_user(conn, user_id: int) -> bool:
+    """Atomic delete guarded by the last-admin rule.
+
+    The self-delete check is left in the route (it is not racy). The last-admin
+    check lives in the DELETE statement itself — a separate `count_admins`
+    SELECT is TOCTOU. The count subquery must lock the admin rows (FOR UPDATE)
+    or two concurrent deletes of *different* admins each evaluate the count
+    against their own pre-commit snapshot and both succeed (write skew),
+    leaving zero admins. The blocked delete returns rowcount 0 -> the route
+    maps that to 400.
+    """
+    with conn.cursor() as cur:
+        cur.execute(DELETE_USER_SQL, (user_id,))
+        deleted = cur.rowcount
+    conn.commit()
+    return deleted > 0
