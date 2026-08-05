@@ -94,31 +94,33 @@ export default function AdminUsersPage() {
       )}
 
       <form onSubmit={create} style={{ ...panelSurface, padding: SPACE.xl, maxWidth: 760,
-                                       display: "flex", gap: SPACE.lg, alignItems: "flex-start",
+                                       display: "flex", gap: SPACE.lg, alignItems: "stretch",
                                        flexWrap: "wrap", marginBottom: SPACE.xl }}>
         <label style={{ display: "flex", flexDirection: "column", gap: SPACE.xs, fontSize: FONT.sm }}>
           {t("login.username")}
+          {/* flex:1 fills the label's stretched height so every control shares
+              a bottom edge — <input> and <select> have different intrinsic
+              heights, so no fixed height on inputStyle can match them both. */}
           <input value={username} onChange={(e) => setUsername(e.target.value)}
                  required minLength={3} autoComplete="off" disabled={busy}
-                 style={{ ...inputStyle, width: 160 }} />
+                 style={{ ...inputStyle, width: 160, flex: 1 }} />
         </label>
         <label style={{ display: "flex", flexDirection: "column", gap: SPACE.xs, fontSize: FONT.sm }}>
-          {/* The hint sits on the same line as the label so the three inputs
-              share a bottom edge (flex-end staggered the password input 17px
-              because the hint stretched its label). */}
+          {/* The hint sits on the same line as the label so the three labels
+              have equal text-row heights and the controls align. */}
           <span style={{ display: "flex", gap: SPACE.xs, alignItems: "baseline" }}>
             {t("login.password")}
             <span style={{ fontSize: FONT.xs, color: COLOR.textDim }}>{t("admin.users.passwordHint")}</span>
           </span>
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
                  required minLength={8} maxLength={72} autoComplete="new-password" disabled={busy}
-                 style={{ ...inputStyle, width: 180 }} />
+                 style={{ ...inputStyle, width: 180, flex: 1 }} />
         </label>
         <label style={{ display: "flex", flexDirection: "column", gap: SPACE.xs, fontSize: FONT.sm }}>
           {t("admin.users.role")}
           {/* "Chuyên viên phân tích" needs ~180px or the arrow clips the text. */}
           <select value={role} onChange={(e) => setRole(e.target.value as "analyst" | "admin")}
-                  disabled={busy} style={{ ...inputStyle, width: 180 }}>
+                  disabled={busy} style={{ ...inputStyle, width: 180, flex: 1 }}>
             <option value="analyst">{t("admin.users.role.analyst")}</option>
             <option value="admin">{t("admin.users.role.admin")}</option>
           </select>

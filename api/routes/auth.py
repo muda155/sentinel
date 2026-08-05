@@ -92,8 +92,11 @@ def remove_user(user_id: int, admin: dict = Depends(require_role("admin"))):
         if target["username"] == admin.get("sub"):
             raise HTTPException(status_code=400, detail="cannot delete your own account")
         if not queries.delete_user(conn, user_id):
-            # The row still exists and we already ruled out self-delete, so the
-            # single-statement guard blocked the last admin deletion.
+            # rowcount 0 means either the row vanished between the fetch above
+            # and this delete, or the last-admin guard blocked it — re-fetch to
+            # tell them apart (a vanished row is a 404, not a last-admin 400).
+            if queries.fetch_user_by_id(conn, user_id) is None:
+                raise HTTPException(status_code=404, detail="user not found")
             raise HTTPException(status_code=400, detail="cannot delete the last admin")
     finally:
         pool.return_connection(conn)

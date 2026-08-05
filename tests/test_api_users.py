@@ -280,3 +280,54 @@ def test_last_admin_guard_holds_under_concurrent_deletes():
         _cleanup(name_a)
         _cleanup(name_b)
         _restore_admins(snapshot)
+
+
+def test_delete_vanished_user_is_404():
+    """A DELETE whose target vanished before the route runs is a 404, not a
+    misleading 'cannot delete the last admin' 400."""
+    name = f"pytest_{uuid.uuid4().hex[:8]}"
+    c = TestClient(create_app())
+    try:
+        created = c.post("/auth/users",
+                         json={"username": name, "password": "password123", "role": "analyst"},
+                         headers=_auth()).json()
+        uid = created["user_id"]
+        _cleanup(name)  # a concurrent actor removes it behind the route's back
+        r = c.delete(f"/auth/users/{uid}", headers=_auth())
+        assert r.status_code == 404
+    finally:
+        _cleanup(name)
+
+
+def test_delete_user_returns_false_for_a_row_that_vanished_concurrently():
+    """delete_user returns False for a target deleted between the route's fetch
+    and its delete; the route re-fetches to map that to 404, not 400."""
+    from api import queries
+
+    name = f"pytest_{uuid.uuid4().hex[:8]}"
+    c = TestClient(create_app())
+    try:
+        created = c.post("/auth/users",
+                         json={"username": name, "password": "password123", "role": "analyst"},
+                         headers=_auth()).json()
+        uid = created["user_id"]
+        conn, pool = get_pooled_connection()
+        try:
+            # the route has already fetched the row...
+            assert queries.fetch_user_by_id(conn, uid) is not None
+            # ...a concurrent actor deletes it on another connection...
+            c2 = psycopg2.connect(_raw_dsn())
+            try:
+                with c2.cursor() as cur:
+                    cur.execute("DELETE FROM users WHERE user_id = %s", (uid,))
+                c2.commit()
+            finally:
+                c2.close()
+            # ...so delete_user returns False and the re-fetch finds nothing,
+            # which is how the route decides 404 vs 400.
+            assert queries.delete_user(conn, uid) is False
+            assert queries.fetch_user_by_id(conn, uid) is None
+        finally:
+            pool.return_connection(conn)
+    finally:
+        _cleanup(name)

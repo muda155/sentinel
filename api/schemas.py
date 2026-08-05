@@ -33,7 +33,9 @@ class HotspotSummary(BaseModel):
     conflict_detected: bool
     sources_cited: list[str]
     conf_score: float
-    convergence_score: float
+    # NULL = never scored, matching the Hotspot payload — the summary endpoint
+    # must not flatten a never-scored hotspot to 0 while /hotspots reports null.
+    convergence_score: float | None = None
 
 
 class LoginResponse(BaseModel):
@@ -97,15 +99,6 @@ class SearchResults(BaseModel):
     hotspots: list[Hotspot]
     events: list[SearchEvent]
     sources: list[SearchSource]
-
-
-class StreamEvent(BaseModel):
-    hotspot_id: int
-    lat: float
-    lon: float
-    conf_score: float
-    convergence_score: float
-    alert_level: str
 
 
 class ClaimEvidence(BaseModel):

@@ -13,7 +13,7 @@ export type Hotspot = {
 };
 export type HotspotSummary = {
   summary: string; conflict_detected: boolean; sources_cited: string[];
-  conf_score: number; convergence_score: number;
+  conf_score: number; convergence_score: number | null;
 };
 export type GridCell = {
   cell_id: string; lat: number; lon: number;

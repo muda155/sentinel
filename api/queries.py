@@ -65,7 +65,7 @@ def fetch_hotspot_summary(conn, hotspot_id: int) -> dict | None:
         SELECT COALESCE(ls.summary_text,'') summary, COALESCE(ls.conflict_detected,false) conflict_detected,
                COALESCE(ls.sources_cited,'[]'::jsonb) sources_cited,
                COALESCE(h.conf_score,0) conf_score,
-               COALESCE(g.convergence_score,h.convergence_score,0) convergence_score
+               COALESCE(g.convergence_score,h.convergence_score) convergence_score
         FROM hotspots h LEFT JOIN llm_summaries ls ON ls.hotspot_id=h.hotspot_id
                         LEFT JOIN grid_cells g ON h.cell_id=g.cell_id
         WHERE h.hotspot_id=%s
