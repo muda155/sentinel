@@ -142,7 +142,8 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
         </dd>
         <dt style={{ fontSize: FONT.sm, color: COLOR.textMuted }}>{t("detail.convergence")}</dt>
         <dd style={{ margin: 0 }}>
-          <b>convergence_score: {hotspot.convergence_score == null ? "—" : hotspot.convergence_score.toFixed(1)}</b> — {hotspot.alert_level}
+          <b>convergence_score: {hotspot.convergence_score == null ? "—" : hotspot.convergence_score.toFixed(1)}</b>
+          {hotspot.convergence_score != null && <> — {hotspot.alert_level}</>}
           {(() => {
             const b = convergenceBreakdown(hotspot);
             if (b.mode === "unavailable") {
