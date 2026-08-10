@@ -355,7 +355,7 @@ describe("HotspotDetail data loading", () => {
     expect(await screen.findByText(viLocale["breakdown.unavailable"])).toBeTruthy();
     expect(screen.getAllByText(viLocale["breakdown.unavailable"]).length).toBe(1);
     // the score line shows a dash rather than calling toFixed on null
-    expect(screen.getByText(/convergence_score:/).textContent).toContain("—");
+    expect(screen.getByText("—")).toBeTruthy();
     // and no convergence bar is drawn (the vi label contains regex metachars)
     const escapedConv = viLocale["detail.convergence"].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     expect(screen.queryByRole("img", { name: new RegExp(escapedConv) })).toBeNull();
@@ -367,7 +367,7 @@ describe("HotspotDetail data loading", () => {
     claimsMock.mockResolvedValue(claimsFixture);
     render(<HotspotDetail hotspot={{ ...hotspotFixture, source_density: 0.8, geopolitical_diversity: 0.5, conf_score: 71 }} onClose={() => {}} />);
     // wait for the panel to render its score section
-    await screen.findByText(/conf_score:/);
+    await screen.findByText(/71\.0/);
     const dls = document.querySelectorAll("aside dl");
     expect(dls.length).toBeGreaterThan(0);
     dls.forEach((dl) => {

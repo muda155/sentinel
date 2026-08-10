@@ -136,5 +136,18 @@ export const en = {
   "admin.users.deleteFailed": "Could not delete that user.",
   "admin.users.passwordHint": "8–72 characters",
   "admin.users.empty": "No accounts yet.",
+  "help.confidence.title": "Confidence",
+  "help.confidence.what": "How independent the reporting is: 0.7 x source density + 0.3 x spread across countries, over unique domains.",
+  "help.confidence.read": "Above 70 means many independent, high-trust outlets. Below 40 means thin sourcing.",
+  "help.confidence.trap": "A low score means thinly sourced, not false. It is a statement about coverage, not truth.",
+  "help.convergence.title": "Convergence",
+  "help.convergence.what": "How many distinct kinds of activity overlap in this grid cell: 25 points per event type, plus 2 per event.",
+  "help.convergence.read": "This drives the alert level. One event type caps the score at 50 no matter how many events arrive.",
+  "help.convergence.trap": "The event contribution is capped at 25, so volume alone cannot raise the score past a single type's ceiling.",
+  "help.consistency.title": "Consistency",
+  "help.consistency.what": "Whether independent sources agree on the extracted claims, weighted by source trust.",
+  "help.consistency.read": "100 means every claim is corroborated by at least two independent sources. 0 means every claim is actively contradicted.",
+  "help.consistency.trap": "Low consistency signals disagreement between sources, not a low-quality hotspot. Read the claim list to see which claim is disputed.",
+  "help.more": "What is this?",
 } as const;
 export type MessageKey = keyof typeof en;

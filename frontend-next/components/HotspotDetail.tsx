@@ -15,6 +15,7 @@ import Sparkline from "@/components/Sparkline";
 import Section from "@/components/Section";
 import StackedBar from "@/components/StackedBar";
 import MixBars from "@/components/MixBars";
+import ScoreHelp from "@/components/ScoreHelp";
 import { confBreakdown, consistencyMix, convergenceBreakdown, sourceMix } from "@/lib/score-breakdown";
 import { COLOR, FONT, SPACE, chipStyle } from "@/lib/theme";
 
@@ -110,9 +111,12 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
       })()}
       <Section title={t("detail.section.scores")}>
         <dl style={{ margin: 0 }}>
-        <dt style={{ fontSize: FONT.sm, color: COLOR.textMuted }}>{t("detail.confidence")}</dt>
+        <dt style={{ fontSize: FONT.sm, color: COLOR.textMuted }}>
+          {t("detail.confidence")}
+          <ScoreHelp titleKey="help.confidence.title" bodyKeys={["help.confidence.what", "help.confidence.read", "help.confidence.trap"]} />
+        </dt>
         <dd style={{ margin: 0, marginBottom: SPACE.lg }}>
-          <b>conf_score: {hotspot.conf_score.toFixed(1)}</b>
+          <b>{hotspot.conf_score.toFixed(1)}</b>
           {(() => {
             const b = confBreakdown(hotspot);
             if (b.mode === "unavailable") {
@@ -140,9 +144,12 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
             );
           })()}
         </dd>
-        <dt style={{ fontSize: FONT.sm, color: COLOR.textMuted }}>{t("detail.convergence")}</dt>
+        <dt style={{ fontSize: FONT.sm, color: COLOR.textMuted }}>
+          {t("detail.convergence")}
+          <ScoreHelp titleKey="help.convergence.title" bodyKeys={["help.convergence.what", "help.convergence.read", "help.convergence.trap"]} />
+        </dt>
         <dd style={{ margin: 0 }}>
-          <b>convergence_score: {hotspot.convergence_score == null ? "—" : hotspot.convergence_score.toFixed(1)}</b>
+          <b>{hotspot.convergence_score == null ? "—" : hotspot.convergence_score.toFixed(1)}</b>
           {hotspot.convergence_score != null && <> — {hotspot.alert_level}</>}
           {(() => {
             const b = convergenceBreakdown(hotspot);
@@ -221,7 +228,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
         <Section title={t("detail.section.evidence")} count={claims?.claims.length}>
           {hotspot.consistency_score != null && (
             <p style={{ fontSize: 13 }}>
-              <b>{t("detail.consistencyScore")}: {hotspot.consistency_score.toFixed(1)}</b>
+              <b>{t("detail.consistencyScore")}<ScoreHelp titleKey="help.consistency.title" bodyKeys={["help.consistency.what", "help.consistency.read", "help.consistency.trap"]} />: {hotspot.consistency_score.toFixed(1)}</b>
               {claims?.insufficient_sources && (
                 <span style={{ color: COLOR.textMuted }}> — {t("detail.insufficientSources")}</span>
               )}
