@@ -53,6 +53,8 @@ export type ClaimEvidence = {
 export type Claim = {
   claim_id: number; claim_text: string;
   status: "corroborated" | "uncorroborated" | "disputed";
+  consensus_weight?: number | null;
+  origin_domains?: string[] | null;
   evidence: ClaimEvidence[];
 };
 export type HotspotClaims = { claims: Claim[]; insufficient_sources: boolean };

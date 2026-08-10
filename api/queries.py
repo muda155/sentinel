@@ -325,6 +325,7 @@ def fetch_hotspot_claims(conn, hotspot_id: int) -> dict | None:
         cur.execute(
             """
             SELECT c.claim_id, c.claim_text, c.status,
+                   c.consensus_weight, c.origin_domains,
                    ce.event_id, ce.relation, ce.probability
             FROM claims c
             LEFT JOIN claim_evidence ce ON ce.claim_id = c.claim_id
@@ -336,9 +337,14 @@ def fetch_hotspot_claims(conn, hotspot_id: int) -> dict | None:
         rows = cur.fetchall()
 
     claims: dict[int, dict] = {}
-    for claim_id, text, status, event_id, relation, probability in rows:
+    for (claim_id, text, status, weight, origins,
+         event_id, relation, probability) in rows:
         claim = claims.setdefault(claim_id, {
             "claim_id": claim_id, "claim_text": text, "status": status,
+            "consensus_weight": weight,
+            # NULL means "written before migration 023" -> unverifiable, which
+            # a consumer must not read as "no origin domains".
+            "origin_domains": list(origins) if origins is not None else None,
             "evidence": [],
         })
         if event_id is not None:
