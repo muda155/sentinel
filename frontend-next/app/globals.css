@@ -13,3 +13,17 @@ html, body {
 button, input, select, textarea {
   font-family: inherit;
 }
+
+@media print {
+  /* The map, rail and chrome carry no information on paper, and the dialog
+     is a fixed overlay that would otherwise print clipped to the viewport. */
+  body > *:not(.print-root) { display: none !important; }
+  .print-root {
+    position: static !important;
+    display: block !important;
+    background: #fff !important;
+    color: #000 !important;
+    overflow: visible !important;
+  }
+  .print-hide { display: none !important; }
+}

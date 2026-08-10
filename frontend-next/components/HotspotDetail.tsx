@@ -11,13 +11,14 @@ import { buildSubtitle } from "@/lib/subtitle";
 import { formatIntensity, formatTone, maxFatalities, meanTone } from "@/lib/severity";
 import { bucketByDay } from "@/lib/sparkline";
 import TrustTierEditor from "@/components/TrustTierEditor";
+import CompareDialog from "@/components/CompareDialog";
 import Sparkline from "@/components/Sparkline";
 import Section from "@/components/Section";
 import StackedBar from "@/components/StackedBar";
 import MixBars from "@/components/MixBars";
 import ScoreHelp from "@/components/ScoreHelp";
 import { confBreakdown, consistencyMix, convergenceBreakdown, sourceMix } from "@/lib/score-breakdown";
-import { COLOR, FONT, SPACE, chipStyle } from "@/lib/theme";
+import { COLOR, FONT, SPACE, buttonStyle, chipStyle } from "@/lib/theme";
 
 export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; onClose: () => void }) {
   const { token } = useAuth();
@@ -32,6 +33,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   const listRef = useRef<HTMLOListElement>(null);
   const [summaryError, setSummaryError] = useState(false);
   const [eventsError, setEventsError] = useState(false);
+  const [comparing, setComparing] = useState(false);
   // one generation ref per resource — a shared counter would let the last
   // synchronous fetcher (claims) invalidate the two that started earlier
   const summaryGen = useRef(0);
@@ -110,6 +112,19 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
         );
       })()}
       <Section title={t("detail.section.scores")}>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: SPACE.sm }}>
+          <button onClick={() => setComparing(true)} style={{ ...buttonStyle, fontSize: FONT.sm }}>
+            {t("compare.open")}
+          </button>
+        </div>
+        {comparing && (
+          <CompareDialog
+            hotspot={hotspot}
+            events={events}
+            claims={claims?.claims ?? null}
+            onClose={() => setComparing(false)}
+          />
+        )}
         <dl style={{ margin: 0 }}>
         <dt style={{ fontSize: FONT.sm, color: COLOR.textMuted }}>
           {t("detail.confidence")}
