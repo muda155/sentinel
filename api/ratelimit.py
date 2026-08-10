@@ -105,3 +105,19 @@ def limit_auth(request: Request) -> None:
     if not _auth_bucket.allow(client_key):
         raise HTTPException(status_code=HTTP_429_TOO_MANY_REQUESTS,
                             detail="Too many attempts. Try again later.")
+
+
+# The report endpoint fans out to an LLM. On the shared 60/min bucket a single
+# client could run up an unbounded model bill and starve the dashboard, so it
+# gets its own, much smaller allowance.
+REPORT_RATE_PER_MIN = int(os.getenv("SENTINEL_REPORT_RATE_PER_MIN", "4"))
+
+_report_bucket = TokenBucket(rate_per_min=REPORT_RATE_PER_MIN)
+
+
+def limit_report(request: Request) -> None:
+    """Stricter per-IP limit for the LLM-backed report endpoint."""
+    client_key = _client_ip(request)
+    if not _report_bucket.allow(client_key):
+        raise HTTPException(status_code=HTTP_429_TOO_MANY_REQUESTS,
+                            detail="Report rate limit exceeded. Try again later.")
