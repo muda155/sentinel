@@ -10,12 +10,9 @@ client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def _isolated_report_state(monkeypatch):
-    # The report token bucket is module-level shared state, and Redis may be
-    # live from docker compose (a cache hit would serve a previous test's
-    # narrative instead of exercising the branch under test). Neither may leak
-    # across tests.
-    import api.ratelimit as rl
-    monkeypatch.setattr(rl, "_report_bucket", rl.TokenBucket(rate_per_min=4))
+    # Redis may be live from docker compose, and a cache hit would serve a
+    # previous test's narrative instead of exercising the branch under test.
+    # (The rate-limit buckets are reset for every test by conftest.)
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6399")
 
 
