@@ -282,6 +282,7 @@ class ClaimVerdict:
     dispute: float
     weight: float
     evidence: list[EvidenceJudgment] = field(default_factory=list)
+    origin_domains: list[str] = field(default_factory=list)
 
 
 def judge_claims(claims, evidence, judge, *, sim=None, threshold=None) -> list[list[EvidenceJudgment]]:
@@ -375,6 +376,7 @@ def consensus(claims, evidence, judgments) -> list[ClaimVerdict]:
         verdicts.append(ClaimVerdict(
             text=claim.text, status=status, support=support, dispute=dispute,
             weight=max(support + dispute, 0.1), evidence=row,
+            origin_domains=sorted(origin_domains),
         ))
     return verdicts
 
@@ -409,9 +411,11 @@ class ConsistencyRepository:
             cursor.execute("DELETE FROM claims WHERE hotspot_id = %s", (hotspot_id,))
             for verdict in verdicts:
                 cursor.execute(
-                    """INSERT INTO claims (hotspot_id, claim_text, status, consensus_weight)
-                       VALUES (%s, %s, %s, %s) RETURNING claim_id""",
-                    (hotspot_id, verdict.text, verdict.status, verdict.weight),
+                    """INSERT INTO claims
+                           (hotspot_id, claim_text, status, consensus_weight, origin_domains)
+                       VALUES (%s, %s, %s, %s, %s) RETURNING claim_id""",
+                    (hotspot_id, verdict.text, verdict.status, verdict.weight,
+                     verdict.origin_domains),
                 )
                 claim_id = cursor.fetchone()[0]
                 for judgment in verdict.evidence:

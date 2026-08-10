@@ -1,0 +1,14 @@
+-- M9 (FR-28): the domains that ASSERTED each claim.
+--
+-- consensus() excludes a claim's originating domains from its own
+-- corroboration (a source cannot corroborate itself) but never persisted the
+-- set, so no consumer outside the pipeline could reproduce the verdict.
+--
+-- Domains, not source_indices: assign_citation_indices re-derives citation
+-- indices on every fetch, so stored indices would silently re-point at
+-- different events as the event set shifts.
+--
+-- NULL means "written before this migration" -> cannot verify. It must never
+-- be read as "no origin domains", which would treat every domain as
+-- independent and inflate corroboration.
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS origin_domains TEXT[];

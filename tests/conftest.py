@@ -18,6 +18,25 @@ def _disable_network_backends(monkeypatch, request):
         monkeypatch.setenv("SENTINEL_RELEVANCE_ENABLED", "false")
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limit_buckets():
+    """Give every test its own rate-limit buckets.
+
+    The buckets in api.ratelimit are module singletons keyed on client IP, and
+    every TestClient request presents the same key, so one budget is shared by
+    the entire session. The auth bucket is only 10 tokens: once the suite makes
+    an 11th /auth/login, some unrelated test gets a 429 instead of the status it
+    asserts, and which test loses depends on how fast the runner is (tokens
+    refill at 1 per 6s, so CI fails where a slow dev machine passes).
+    """
+    from api import ratelimit
+
+    ratelimit._bucket = ratelimit.TokenBucket()
+    ratelimit._auth_bucket = ratelimit.TokenBucket(rate_per_min=ratelimit.AUTH_RATE_PER_MIN)
+    ratelimit._report_bucket = ratelimit.TokenBucket(rate_per_min=ratelimit.REPORT_RATE_PER_MIN)
+    yield
+
+
 @pytest.fixture
 def synthetic_gdelt_df() -> pd.DataFrame:
     """A valid GDELT 2.0 frame with all required columns.

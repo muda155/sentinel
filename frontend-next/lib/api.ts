@@ -53,9 +53,18 @@ export type ClaimEvidence = {
 export type Claim = {
   claim_id: number; claim_text: string;
   status: "corroborated" | "uncorroborated" | "disputed";
+  consensus_weight?: number | null;
+  origin_domains?: string[] | null;
   evidence: ClaimEvidence[];
 };
 export type HotspotClaims = { claims: Claim[]; insufficient_sources: boolean };
+
+export type WindowReport = {
+  narrative: string;
+  citations: { index: number; event_id: number | null; title: string | null; url: string | null; domain: string }[];
+  model: string;
+  cached: boolean;
+};
 
 export type UserRow = {
   user_id: number; username: string; role: "analyst" | "admin"; created_at: string | null;
@@ -152,6 +161,11 @@ export const api = {
     getJson<SearchResults>(`/search?q=${encodeURIComponent(q)}`, token),
   hotspotClaims: (id: number, token?: string | null) =>
     getJson<HotspotClaims>(`/hotspots/${id}/claims`, token),
+  report: (id: number, from: string, to: string, token?: string | null) =>
+    getJson<WindowReport>(
+      `/hotspots/${id}/report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+      token,
+    ),
   users: (token?: string | null) => getJson<UserRow[]>("/auth/users", token),
   createUser: (body: { username: string; password: string; role: "analyst" | "admin" },
                token?: string | null) => postJson<UserRow>("/auth/users", body, token),

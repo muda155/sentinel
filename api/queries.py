@@ -309,6 +309,17 @@ def fetch_hotspot_events(conn, hotspot_id: int) -> list[dict] | None:
     return assign_citation_indices(collapse_duplicate_urls(rows))
 
 
+def fetch_hotspot_name(conn, hotspot_id: int) -> str | None:
+    """Display name for one hotspot; None when unnamed or absent.
+
+    Callers distinguish "hotspot does not exist" via fetch_hotspot_events,
+    which returns None in that case — an unnamed hotspot is not an error."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT name FROM hotspots WHERE hotspot_id = %s", (hotspot_id,))
+        row = cur.fetchone()
+    return row[0] if row else None
+
+
 def fetch_hotspot_claims(conn, hotspot_id: int) -> dict | None:
     """FR-24 claims payload; None if the hotspot does not exist.
 
@@ -325,6 +336,7 @@ def fetch_hotspot_claims(conn, hotspot_id: int) -> dict | None:
         cur.execute(
             """
             SELECT c.claim_id, c.claim_text, c.status,
+                   c.consensus_weight, c.origin_domains,
                    ce.event_id, ce.relation, ce.probability
             FROM claims c
             LEFT JOIN claim_evidence ce ON ce.claim_id = c.claim_id
@@ -336,9 +348,14 @@ def fetch_hotspot_claims(conn, hotspot_id: int) -> dict | None:
         rows = cur.fetchall()
 
     claims: dict[int, dict] = {}
-    for claim_id, text, status, event_id, relation, probability in rows:
+    for (claim_id, text, status, weight, origins,
+         event_id, relation, probability) in rows:
         claim = claims.setdefault(claim_id, {
             "claim_id": claim_id, "claim_text": text, "status": status,
+            "consensus_weight": weight,
+            # NULL means "written before migration 023" -> unverifiable, which
+            # a consumer must not read as "no origin domains".
+            "origin_domains": list(origins) if origins is not None else None,
             "evidence": [],
         })
         if event_id is not None:

@@ -11,12 +11,14 @@ import { buildSubtitle } from "@/lib/subtitle";
 import { formatIntensity, formatTone, maxFatalities, meanTone } from "@/lib/severity";
 import { bucketByDay } from "@/lib/sparkline";
 import TrustTierEditor from "@/components/TrustTierEditor";
+import CompareDialog from "@/components/CompareDialog";
 import Sparkline from "@/components/Sparkline";
 import Section from "@/components/Section";
 import StackedBar from "@/components/StackedBar";
 import MixBars from "@/components/MixBars";
+import ScoreHelp from "@/components/ScoreHelp";
 import { confBreakdown, consistencyMix, convergenceBreakdown, sourceMix } from "@/lib/score-breakdown";
-import { COLOR, FONT, SPACE, chipStyle } from "@/lib/theme";
+import { COLOR, FONT, RADIUS, SPACE, buttonStyle, chipStyle } from "@/lib/theme";
 
 export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; onClose: () => void }) {
   const { token } = useAuth();
@@ -31,6 +33,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   const listRef = useRef<HTMLOListElement>(null);
   const [summaryError, setSummaryError] = useState(false);
   const [eventsError, setEventsError] = useState(false);
+  const [comparing, setComparing] = useState(false);
   // one generation ref per resource — a shared counter would let the last
   // synchronous fetcher (claims) invalidate the two that started earlier
   const summaryGen = useRef(0);
@@ -81,6 +84,23 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   // every row, so they are inert chrome there
   const distinctSystems = new Set(events.map((e) => e.source_system)).size > 1;
   const distinctTypes = new Set(events.map((e) => e.event_type_label)).size > 1;
+  // The per-source badges are terse ("sắc thái -6.1"); the legend explains only
+  // the metrics this hotspot actually renders, so a single-type hotspot with no
+  // tone does not carry a legend for bars it never draws.
+  const hasTone = events.some((e) => e.avg_tone != null);
+  const hasIntensity = events.some((e) => e.goldstein_scale != null);
+  const hasFatalities = events.some((e) => (e.fatalities ?? 0) > 0);
+  const hasReports = events.some((e) => (e.duplicate_count ?? 1) > 1);
+  const hasArticles = events.some((e) => (e.num_sources ?? 1) > 1);
+  const hasTrust = events.some((e) => e.trust_tier != null);
+  const sourceLegend = [
+    hasTone && { key: "tone", text: t("sources.legend.tone") },
+    hasIntensity && { key: "intensity", text: t("sources.legend.intensity") },
+    hasTrust && { key: "trustTier", text: t("sources.legend.trustTier") },
+    hasReports && { key: "reports", text: t("sources.legend.reports") },
+    hasArticles && { key: "articles", text: t("sources.legend.articles") },
+    hasFatalities && { key: "fatalities", text: t("sources.legend.fatalities") },
+  ].filter(Boolean) as { key: string; text: string }[];
 
   return (
     <aside style={{ width: 340, flexShrink: 0, height: "100%", overflowY: "auto", background: COLOR.surface, color: COLOR.text, padding: 16, boxSizing: "border-box" }}>
@@ -109,10 +129,26 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
         );
       })()}
       <Section title={t("detail.section.scores")}>
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: SPACE.sm }}>
+          <button onClick={() => setComparing(true)} style={{ ...buttonStyle, fontSize: FONT.sm }}>
+            {t("compare.open")}
+          </button>
+        </div>
+        {comparing && (
+          <CompareDialog
+            hotspot={hotspot}
+            events={events}
+            claims={claims?.claims ?? null}
+            onClose={() => setComparing(false)}
+          />
+        )}
         <dl style={{ margin: 0 }}>
-        <dt style={{ fontSize: FONT.sm, color: COLOR.textMuted }}>{t("detail.confidence")}</dt>
+        <dt style={{ fontSize: FONT.sm, color: COLOR.textMuted }}>
+          {t("detail.confidence")}
+          <ScoreHelp titleKey="help.confidence.title" bodyKeys={["help.confidence.what", "help.confidence.read", "help.confidence.trap"]} />
+        </dt>
         <dd style={{ margin: 0, marginBottom: SPACE.lg }}>
-          <b>conf_score: {hotspot.conf_score.toFixed(1)}</b>
+          <b>{hotspot.conf_score.toFixed(1)}</b>
           {(() => {
             const b = confBreakdown(hotspot);
             if (b.mode === "unavailable") {
@@ -140,9 +176,12 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
             );
           })()}
         </dd>
-        <dt style={{ fontSize: FONT.sm, color: COLOR.textMuted }}>{t("detail.convergence")}</dt>
+        <dt style={{ fontSize: FONT.sm, color: COLOR.textMuted }}>
+          {t("detail.convergence")}
+          <ScoreHelp titleKey="help.convergence.title" bodyKeys={["help.convergence.what", "help.convergence.read", "help.convergence.trap"]} />
+        </dt>
         <dd style={{ margin: 0 }}>
-          <b>convergence_score: {hotspot.convergence_score == null ? "—" : hotspot.convergence_score.toFixed(1)}</b>
+          <b>{hotspot.convergence_score == null ? "—" : hotspot.convergence_score.toFixed(1)}</b>
           {hotspot.convergence_score != null && <> — {hotspot.alert_level}</>}
           {(() => {
             const b = convergenceBreakdown(hotspot);
@@ -221,7 +260,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
         <Section title={t("detail.section.evidence")} count={claims?.claims.length}>
           {hotspot.consistency_score != null && (
             <p style={{ fontSize: 13 }}>
-              <b>{t("detail.consistencyScore")}: {hotspot.consistency_score.toFixed(1)}</b>
+              <b>{t("detail.consistencyScore")}<ScoreHelp titleKey="help.consistency.title" bodyKeys={["help.consistency.what", "help.consistency.read", "help.consistency.trap"]} />: {hotspot.consistency_score.toFixed(1)}</b>
               {claims?.insufficient_sources && (
                 <span style={{ color: COLOR.textMuted }}> — {t("detail.insufficientSources")}</span>
               )}
@@ -331,6 +370,14 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
         {eventsError ? (
           <p>{t("detail.error")} <button onClick={retryEvents} style={retryButtonStyle}>{t("detail.retry")}</button></p>
         ) : (
+        <>
+        {sourceLegend.length > 0 && (
+          <div style={{ fontSize: 11, color: COLOR.textDim, background: COLOR.surfaceRaised,
+                        borderRadius: RADIUS.sm, padding: `${SPACE.xs}px ${SPACE.sm}px`,
+                        marginBottom: SPACE.sm, lineHeight: 1.6 }}>
+            {sourceLegend.map((item) => <div key={item.key}>{item.text}</div>)}
+          </div>
+        )}
         <ol ref={listRef} style={{ paddingLeft: 20, fontSize: FONT.md }}>
           {cited.map((e) => (
             <li key={e.event_id} data-cite={e.citation_index}
@@ -386,6 +433,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
             </li>
           ))}
         </ol>
+        </>
         )}
       </Section>
       <TrustTierEditor />

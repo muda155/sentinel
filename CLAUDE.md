@@ -49,7 +49,7 @@ The scheduler (`APScheduler`) runs the full cycle every `SENTINEL_POLL_INTERVAL_
 ### Database
 - PostgreSQL 15 + PostGIS via Docker; PgBouncer sits in front on port 6432
 - Connection pool: `SentinelConnectionPool` singleton (`pipeline/pool.py`) — always use `get_pooled_connection()` and return with `pool.return_connection(conn)` in a `finally` block
-- Schema migrations: `db/init/001_*.sql` through `db/init/020_*.sql` — applied in order on first container init
+- Schema migrations: `db/init/001_*.sql` through `db/init/023_*.sql` — applied in order on first container init
 - Key tables: `events` (partitioned by `event_date`), `hotspots`, `grid_cells`, `sources` (with `trust_tier`), `event_hotspot`
 
 ### Scoring details
@@ -71,6 +71,7 @@ All config via env vars in `sentinel.env` (copy to override locally). Key vars:
 - `SENTINEL_NLI_MODEL` (default `cross-encoder/nli-deberta-v3-base`), `SENTINEL_NLI_MIN_PROB` (default 0.6), `SENTINEL_CONSISTENCY_DISPUTE_RATIO` (default 0.5), `SENTINEL_CONSISTENCY_MAX_CLAIMS` (default 8), `SENTINEL_CONSISTENCY_MAX_DOMAINS` (default 20), `SENTINEL_CONSISTENCY_MIN_CLAIM_WORDS` (default 4) — M6 Consistency Engine (FR-22)
 - `SENTINEL_GKG_ENABLED` (default `true`), `SENTINEL_GKG_TIMEOUT_S` (default 120), `SENTINEL_GKG_BACKFILL_DAYS` (default 7) — M7 GKG headline enrichment (FR-25)
 - `SENTINEL_RELEVANCE_ENABLED` (default `true`), `SENTINEL_RELEVANCE_MODEL`, `SENTINEL_RELEVANCE_MIN_SIM` (0.35), `SENTINEL_RELEVANCE_MIN_PEAK` (0.15), `SENTINEL_RELEVANCE_MAX_HOMOGENEITY` (0.75) — M8 relevance gate (FR-26)
+- `SENTINEL_REPORT_RATE_PER_MIN` (default 4), `SENTINEL_REPORT_TIMEOUT_S` (default 30) — M9 window narrative report (FR-29)
 
 ## Spec compliance
 

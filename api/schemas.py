@@ -113,6 +113,8 @@ class Claim(BaseModel):
     claim_id: int
     claim_text: str
     status: str
+    consensus_weight: float | None = None
+    origin_domains: list[str] | None = None
     evidence: list[ClaimEvidence]
 
 
