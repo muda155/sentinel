@@ -482,6 +482,25 @@ def test_call_llm_raw_500_exhaustion_falls_back_to_ollama(monkeypatch: pytest.Mo
     assert post_mock.call_count == 4  # 3 NIM attempts + 1 Ollama
 
 
+def test_call_llm_raw_skips_nim_when_endpoint_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An Ollama-only host has endpoint="" but OLLAMA_ENDPOINT set. Posting to ""
+    # would raise MissingSchema, which is neither Timeout nor HTTPError, so the
+    # fallback was unreachable and every report 503'd with Ollama healthy.
+    post_mock = mock.Mock()
+    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
+
+    def fake_ollama(prompt, endpoint="http://localhost:11434", timeout=None):
+        return "ollama text", "llama-3-8b-ollama"
+
+    monkeypatch.setattr(llm_verifier, "call_ollama_raw", fake_ollama)
+    content, model_used = llm_verifier.call_llm_raw(
+        "p", endpoint="", api_key="k", model="m", ollama_endpoint="http://localhost:11434",
+    )
+    assert content == "ollama text"
+    assert model_used == "llama-3-8b-ollama"
+    post_mock.assert_not_called()
+
+
 def test_ollama_model_env_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SENTINEL_OLLAMA_MODEL", "llama3.2:3b")
     ok = mock.Mock()

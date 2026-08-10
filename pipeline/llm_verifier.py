@@ -231,6 +231,11 @@ def call_llm_raw(
 ) -> tuple[str, str]:
     """NIM chat call with 429 backoff and Ollama fallback; returns (content, model_used)."""
     timeout = _llm_timeout(timeout)
+    # A missing NIM endpoint means the fallback is the only path. Posting to ""
+    # raises MissingSchema (neither Timeout nor HTTPError), which would escape
+    # the retry loop below and make an Ollama-only host fail 100% of the time.
+    if not endpoint:
+        return call_ollama_raw(prompt, ollama_endpoint, timeout)
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],

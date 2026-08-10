@@ -4,7 +4,7 @@ import hashlib
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -20,26 +20,38 @@ router = APIRouter()
 
 CACHE_TTL_S = 86400
 
+_redis_client = None
+
 
 def _redis():
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client
     try:
         import redis as redis_lib
     except ImportError:
         return None
     try:
-        client = redis_lib.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"))
+        # One shared client (and pool), not a fresh pool per request. The short
+        # connect timeout stops an unreachable REDIS_URL from pinning a
+        # threadpool worker for the OS default (potentially minutes).
+        client = redis_lib.from_url(
+            os.getenv("REDIS_URL", "redis://localhost:6379"),
+            socket_connect_timeout=1, socket_timeout=1,
+        )
         client.ping()
-        return client
     except Exception:
         return None
+    _redis_client = client
+    return _redis_client
 
 
 def _cache_key(hotspot_id: int, start: str, end: str, rows: list[dict]) -> str:
-    # max(event_id) invalidates the entry the moment new evidence lands in the
-    # window, so an unchanged report is never regenerated and a changed one is
-    # never served stale.
-    high = max((r.get("event_id") or 0) for r in rows) if rows else 0
-    raw = f"{hotspot_id}:{start}:{end}:{high}"
+    # Key on the exact event set, not just its max id: re-clustering can remove
+    # events from a window without changing the largest id, which would serve a
+    # narrative citing rows the window no longer holds.
+    ids = ",".join(str(r["event_id"]) for r in sorted(rows, key=lambda r: r["event_id"]))
+    raw = f"{hotspot_id}:{start}:{end}:{ids}"
     return "sentinel:report:" + hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -49,6 +61,17 @@ def hotspot_report(hotspot_id: int,
                    end: datetime = Query(alias="to"),
                    _rate_limit: None = Depends(limit_report),
                    _user: dict = Depends(get_current_user)):
+    # events.event_date is timestamptz (tz-aware); a naive from/to from a raw
+    # client would crash the window comparison with TypeError, not a clean 4xx.
+    # Treat a missing offset as UTC, matching what the dashboard always sends.
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    else:
+        start = start.astimezone(timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    else:
+        end = end.astimezone(timezone.utc)
     if end <= start:
         raise HTTPException(status_code=422, detail="'to' must be after 'from'")
 
@@ -85,36 +108,31 @@ def hotspot_report(hotspot_id: int,
     prompt = build_window_report_prompt(name or f"Hotspot #{hotspot_id}", rows,
                                         start.isoformat(), end.isoformat())
 
-    narrative = None
-    model_used = ""
-    for _ in range(2):
-        try:
-            content, model_used = call_llm_raw(
-                prompt,
-                endpoint=endpoint,
-                api_key=os.getenv("NVIDIA_NIM_API_KEY", ""),
-                model=os.getenv("NVIDIA_NIM_MODEL", ""),
-                # One attempt, not the pipeline default of three plus an Ollama
-                # fallback: this call blocks a request worker while an analyst
-                # waits.
-                retries=1,
-                timeout=report_timeout(),
-                ollama_endpoint=ollama or "http://localhost:11434",
-            )
-        except Exception:
-            logger.warning("report LLM call failed", exc_info=True)
-            raise HTTPException(status_code=503, detail="report generation unavailable")
-        try:
-            validate_citations(content)
-            narrative = content
-            break
-        except ValueError:
-            logger.info("report failed citation validation, retrying once")
-
-    if narrative is None:
+    try:
+        content, model_used = call_llm_raw(
+            prompt,
+            endpoint=endpoint,
+            api_key=os.getenv("NVIDIA_NIM_API_KEY", ""),
+            model=os.getenv("NVIDIA_NIM_MODEL", ""),
+            # Fewer retries than the pipeline default (three NIM attempts): this
+            # call blocks a request worker while an analyst waits. There is no
+            # outer retry loop because temperature is 0 — a re-sent prompt would
+            # reproduce the same output, doubling latency without changing the
+            # verdict.
+            retries=1,
+            timeout=report_timeout(),
+            ollama_endpoint=ollama or "http://localhost:11434",
+        )
+    except Exception:
+        logger.warning("report LLM call failed", exc_info=True)
+        raise HTTPException(status_code=503, detail="report generation unavailable")
+    try:
+        validate_citations(content)
+    except ValueError:
         # FR-11/FR-12: an uncited narrative must never ship. Failing is
         # correct; the CSV and JSON exports are unaffected.
         raise HTTPException(status_code=422, detail="report failed citation validation")
+    narrative = content
 
     payload = {"narrative": narrative, "citations": citations, "model": model_used}
     if cache is not None:
