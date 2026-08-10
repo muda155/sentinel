@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildComparison } from "@/lib/compare";
+import { buildComparison, deltaTone } from "@/lib/compare";
 import type { WindowMetrics } from "@/lib/window-metrics";
 import type { WindowConsistency } from "@/lib/window-consistency";
 
@@ -43,6 +43,17 @@ describe("buildComparison", () => {
     expect(rows.find((r) => r.key === "conf")!.trusted).toBe(false);
   });
 
+  it("gives the confidence row no direction when a side is empty", () => {
+    const rows = buildComparison({
+      a: m({ conf: null }), b: m({ conf: 70 }),
+      consistencyA: noScore, consistencyB: noScore,
+      confTrusted: true, consistencyTrusted: false,
+    });
+    const row = rows.find((r) => r.key === "conf")!;
+    expect(row.delta).toBeNull();
+    expect(row.direction).toBe("none");
+  });
+
   it("gives a null delta and no direction when a side has no value", () => {
     const rows = buildComparison({
       a: m({ maxFatalities: null }), b: m({ maxFatalities: 9 }),
@@ -67,5 +78,26 @@ describe("buildComparison", () => {
       confTrusted: true, consistencyTrusted: true,
     });
     expect(with_.find((r) => r.key === "consistency")!.delta).toBeCloseTo(-20, 6);
+  });
+});
+
+describe("deltaTone", () => {
+  it("treats more confidence and consistency as good, more fatalities as bad", () => {
+    expect(deltaTone("conf", "up")).toBe("good");
+    expect(deltaTone("conf", "down")).toBe("bad");
+    expect(deltaTone("consistency", "up")).toBe("good");
+    expect(deltaTone("fatalities", "up")).toBe("bad");
+    expect(deltaTone("fatalities", "down")).toBe("good");
+  });
+
+  it("is neutral for metrics with no inherent polarity", () => {
+    expect(deltaTone("events", "up")).toBe("neutral");
+    expect(deltaTone("domains", "down")).toBe("neutral");
+    expect(deltaTone("tone", "up")).toBe("neutral");
+  });
+
+  it("is neutral for flat and none", () => {
+    expect(deltaTone("conf", "flat")).toBe("neutral");
+    expect(deltaTone("conf", "none")).toBe("neutral");
   });
 });

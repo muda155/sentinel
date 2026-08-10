@@ -32,8 +32,8 @@ describe("sourceDensity", () => {
     expect(sourceDensity(events)).toBeCloseTo(Math.tanh(0.9 / 3), 6);
   });
 
-  it("is zero with no events", () => {
-    expect(sourceDensity([])).toBe(0);
+  it("is null with no events, since nothing was measured", () => {
+    expect(sourceDensity([])).toBeNull();
   });
 });
 
@@ -74,6 +74,16 @@ describe("windowMetrics", () => {
 
   it("has null tone when no event in the window carries one", () => {
     expect(windowMetrics([ev({ avg_tone: null })], W).meanTone).toBeNull();
+  });
+
+  it("has null conf and null source density for an empty window", () => {
+    // An empty window must not render "Confidence 0.0 ↑ 70.0 +70.0" — a score
+    // of zero implies a measurement, not an absence of events.
+    const m = windowMetrics([ev({ event_date: "2026-08-09T00:00:00Z" })], W);
+    expect(m.eventCount).toBe(0);
+    expect(m.sourceDensity).toBeNull();
+    expect(m.diversity).toBeNull();
+    expect(m.conf).toBeNull();
   });
 });
 

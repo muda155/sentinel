@@ -25,5 +25,11 @@ button, input, select, textarea {
     color: #000 !important;
     overflow: visible !important;
   }
+  /* The dialog panel carries inline max-height/overflow that would still clip a
+     long comparison on paper; only .print-root was being reset. */
+  .print-root .compare-panel {
+    max-height: none !important;
+    overflow: visible !important;
+  }
   .print-hide { display: none !important; }
 }

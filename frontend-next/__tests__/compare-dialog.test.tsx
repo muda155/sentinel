@@ -65,10 +65,26 @@ describe("CompareDialog", () => {
     expect(screen.getByText(viLocale["compare.exportCsv"])).toBeTruthy();
   });
 
-  it("closes on Escape", () => {
+  it("focuses the dialog and closes on Escape", () => {
     const onClose = vi.fn();
     render(<CompareDialog hotspot={hotspot} events={events} claims={null} onClose={onClose} />);
-    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    // The dialog takes focus on mount; otherwise a keydown handler on a div
+    // with no tabIndex never sees the key the user actually presses.
+    const dialog = screen.getByRole("dialog");
+    expect(document.activeElement).toBe(dialog);
+    fireEvent.keyDown(dialog, { key: "Escape" });
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("clears a generated report when the duration changes", async () => {
+    (api.report as Mock).mockResolvedValue({
+      narrative: "Fighting intensified [1].", citations: [], model: "m", cached: false,
+    });
+    render(<CompareDialog hotspot={hotspot} events={events} claims={null} onClose={() => {}} />);
+    fireEvent.click(screen.getByText(viLocale["compare.generate"]));
+    await waitFor(() => expect(screen.getByText("Fighting intensified [1].")).toBeTruthy());
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "7d" } });
+    // The old window's narrative must not ship under the new window headers.
+    expect(screen.queryByText("Fighting intensified [1].")).toBeNull();
   });
 });

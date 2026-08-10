@@ -63,7 +63,10 @@ export function toMarkdown(payload: ExportPayload, narrative: string | null): st
   if (payload.citations.length > 0) {
     lines.push("", "## Sources", "");
     for (const c of payload.citations) {
-      lines.push(`[${c.index}] ${c.title ?? c.domain} — ${c.url ?? c.domain}`);
+      const label = c.title ?? c.domain ?? "";
+      const target = c.url ?? c.domain ?? "";
+      // A URL-less citation renders without a trailing "— ".
+      lines.push(target ? `[${c.index}] ${label} — ${target}` : `[${c.index}] ${label}`);
     }
   }
 
@@ -82,6 +85,11 @@ export function downloadText(filename: string, mime: string, content: string): v
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
+  // The anchor must be in the document for Firefox to honour the click, and the
+  // object URL must outlive the click handler — revoking it synchronously makes
+  // the download silently no-op there.
+  document.body.appendChild(a);
   a.click();
-  URL.revokeObjectURL(url);
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

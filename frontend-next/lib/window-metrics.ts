@@ -26,17 +26,21 @@ function uniqueByDomain(events: HotspotEvent[]): HotspotEvent[] {
   return [...seen.values()];
 }
 
-export function sourceDensity(events: HotspotEvent[]): number {
+export function sourceDensity(events: HotspotEvent[]): number | null {
   const rows = uniqueByDomain(events);
-  if (rows.length === 0) return 0;
+  // null, not 0: a score of zero implies a measurement, and an empty window
+  // made none — 0 would render as a fabricated drop next to a populated one.
+  if (rows.length === 0) return null;
   const total = rows.reduce((sum, r) => sum + r.trust_score, 0);
   return Math.tanh(total / CONF_DENSITY_DIVISOR);
 }
 
 /** Shannon entropy over the country codes of unique domains, normalised by
  *  log2(distinct countries) — pipeline/scoring.py:geopolitical_diversity. */
-export function diversity(events: HotspotEvent[]): number {
-  const codes = uniqueByDomain(events)
+export function diversity(events: HotspotEvent[]): number | null {
+  const rows = uniqueByDomain(events);
+  if (rows.length === 0) return null;
+  const codes = rows
     .map((r) => r.country_code)
     .filter((c): c is string => !!c && c.trim() !== "")
     .map((c) => c.toUpperCase());
@@ -53,8 +57,11 @@ export function diversity(events: HotspotEvent[]): number {
   return entropy / Math.log2(distinct.size);
 }
 
-export function confFromEvents(events: HotspotEvent[]): number {
-  return (CONF_W_DENSITY * sourceDensity(events) + CONF_W_DIVERSITY * diversity(events)) * 100;
+export function confFromEvents(events: HotspotEvent[]): number | null {
+  const density = sourceDensity(events);
+  const div = diversity(events);
+  if (density == null || div == null) return null;
+  return (CONF_W_DENSITY * density + CONF_W_DIVERSITY * div) * 100;
 }
 
 /**
@@ -67,7 +74,8 @@ export function confFromEvents(events: HotspotEvent[]): number {
  * "cannot reproduce".
  */
 export function confTrusted(allEvents: HotspotEvent[], h: Hotspot): boolean {
-  return Math.abs(confFromEvents(allEvents) - h.conf_score) <= RECONSTRUCT_TOLERANCE;
+  const conf = confFromEvents(allEvents);
+  return conf != null && Math.abs(conf - h.conf_score) <= RECONSTRUCT_TOLERANCE;
 }
 
 export type WindowConvergence =
@@ -79,9 +87,9 @@ export type WindowMetrics = {
   uniqueDomains: number;
   maxFatalities: number | null;
   meanTone: number | null;
-  sourceDensity: number;
-  diversity: number;
-  conf: number;
+  sourceDensity: number | null;
+  diversity: number | null;
+  conf: number | null;
   convergence: WindowConvergence;
 };
 

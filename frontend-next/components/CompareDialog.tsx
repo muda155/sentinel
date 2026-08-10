@@ -1,13 +1,13 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { CSSProperties } from "react";
+import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { Claim, Hotspot, HotspotEvent, WindowReport } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { api } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import type { MessageKey } from "@/lib/i18n-core";
-import { buildComparison, type Direction } from "@/lib/compare";
+import { buildComparison, deltaTone, type Direction } from "@/lib/compare";
 import { downloadText, toCsv, toJson, toMarkdown, type ExportPayload } from "@/lib/export";
 import { TIME_WINDOW_HOURS, TIME_WINDOW_LABEL, type TimeWindow } from "@/lib/filters";
 import { confTrusted, windowMetrics, type Window } from "@/lib/window-metrics";
@@ -32,6 +32,24 @@ export default function CompareDialog({ hotspot, events, claims, onClose }: {
   const [report, setReport] = useState<WindowReport | null>(null);
   const [reportError, setReportError] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const durationRef = useRef(duration);
+  useEffect(() => { durationRef.current = duration; }, [duration]);
+  // A report (narrative + citations) describes one specific window; switching
+  // the duration must not export the old narrative under the new headers.
+  useEffect(() => {
+    setReport(null);
+    setReportError(false);
+    setGenerating(false);
+  }, [duration]);
+  // A modal that opens on a click must take focus so Escape and Tab land on it,
+  // and return it where it was when it closes.
+  useEffect(() => {
+    if (!mounted) return;
+    const previous = document.activeElement as HTMLElement | null;
+    panelRef.current?.focus();
+    return () => previous?.focus?.();
+  }, [mounted]);
 
   const durMs = TIME_WINDOW_HOURS[duration] * 3600_000;
   const windows = useMemo(() => {
@@ -59,10 +77,16 @@ export default function CompareDialog({ hotspot, events, claims, onClose }: {
 
   const generate = () => {
     if (generating) return;
+    const requested = durationRef.current;
     setGenerating(true);
     setReportError(false);
     api.report(hotspot.hotspot_id, windows.windowB.from, windows.windowB.to, token)
-      .then((r) => { setReport(r); setGenerating(false); })
+      .then((r) => {
+        // A response for a window the analyst has already switched away from
+        // must not re-populate the panel.
+        if (durationRef.current === requested) setReport(r);
+        setGenerating(false);
+      })
       .catch(() => { setReportError(true); setGenerating(false); });
   };
 
@@ -77,8 +101,30 @@ export default function CompareDialog({ hotspot, events, claims, onClose }: {
 
   const fmt = (v: number | null): string => v == null ? "—" : v.toFixed(1);
   const signed = (v: number | null): string => v == null ? "—" : (v > 0 ? "+" : "") + v.toFixed(1);
-  const glyphColor = (d: Direction): string =>
-    d === "up" ? COLOR.ok : d === "down" ? COLOR.danger : d === "flat" ? COLOR.textMuted : COLOR.textDim;
+  const glyphColor = (d: Direction, key: string): string => {
+    const tone = deltaTone(key, d);
+    if (tone === "good") return COLOR.ok;
+    if (tone === "bad") return COLOR.danger;
+    return d === "none" ? COLOR.textDim : COLOR.textMuted;
+  };
+
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Escape") { onClose(); return; }
+    if (e.key !== "Tab") return;
+    const focusables = panelRef.current?.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    );
+    if (!focusables || focusables.length === 0) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
 
   if (!mounted) return null;
   return createPortal(
@@ -86,7 +132,7 @@ export default function CompareDialog({ hotspot, events, claims, onClose }: {
          style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex",
                   alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.6)", padding: SPACE.xl }}>
       <div role="dialog" aria-modal="true" aria-label={t("compare.title")}
-           onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}
+           className="compare-panel" tabIndex={-1} ref={panelRef} onKeyDown={onKeyDown}
            style={{ background: COLOR.surface, color: COLOR.text, border: `1px solid ${COLOR.border}`,
                     borderRadius: RADIUS.lg, padding: SPACE.xl, width: 640, maxWidth: "100%",
                     maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 32px rgba(0,0,0,0.6)" }}>
@@ -133,11 +179,11 @@ export default function CompareDialog({ hotspot, events, claims, onClose }: {
                   )}
                 </td>
                 <td style={{ padding: `${SPACE.sm}px 0`, textAlign: "right" }}>{fmt(r.a)}</td>
-                <td style={{ padding: `${SPACE.sm}px 0`, textAlign: "center", width: 28, color: glyphColor(r.direction) }}>
+                <td style={{ padding: `${SPACE.sm}px 0`, textAlign: "center", width: 28, color: glyphColor(r.direction, r.key) }}>
                   {GLYPH[r.direction]}
                 </td>
                 <td style={{ padding: `${SPACE.sm}px 0`, textAlign: "right" }}>{fmt(r.b)}</td>
-                <td style={{ padding: `${SPACE.sm}px 0`, textAlign: "right", color: glyphColor(r.direction) }}>
+                <td style={{ padding: `${SPACE.sm}px 0`, textAlign: "right", color: glyphColor(r.direction, r.key) }}>
                   {signed(r.delta)}
                 </td>
               </tr>

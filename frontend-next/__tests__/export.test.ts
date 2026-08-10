@@ -62,4 +62,13 @@ describe("toMarkdown", () => {
   it("says so when no narrative was generated", () => {
     expect(toMarkdown(payload, null)).toContain("No narrative report was generated");
   });
+
+  it("renders a URL-less citation without a dangling em dash", () => {
+    const md = toMarkdown(
+      { ...payload, citations: [{ index: 2, title: "Unlinked report", url: null, domain: "" }] },
+      null,
+    );
+    expect(md).toContain("[2] Unlinked report");
+    expect(md).not.toContain("Unlinked report —");
+  });
 });

@@ -53,8 +53,15 @@ function outcomeFor(c: Claim, allowedEventIds: Set<number>, trust: Map<string, n
   if (c.origin_domains == null) {
     return { claim_id: c.claim_id, text: c.claim_text, status: "unverifiable", support: 0, dispute: 0, weight: 0 };
   }
+  const eligible = c.evidence.filter((e) => allowedEventIds.has(e.event_id));
+  if (eligible.length === 0) {
+    // No surviving evidence in this window: a claim extracted from the full set
+    // may have no bearing on it. Judging anyway yields exactly 50 (every claim
+    // uncorroborated at weight 0.1) and reads as a measurement of agreement.
+    return { claim_id: c.claim_id, text: c.claim_text, status: "unverifiable", support: 0, dispute: 0, weight: 0 };
+  }
   const origins = new Set(c.origin_domains);
-  const best = bestPerDomain(c.evidence.filter((e) => allowedEventIds.has(e.event_id)));
+  const best = bestPerDomain(eligible);
 
   let support = 0;
   let dispute = 0;

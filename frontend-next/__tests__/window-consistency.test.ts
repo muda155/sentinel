@@ -122,6 +122,30 @@ describe("windowConsistency", () => {
     expect(r.mode).toBe("countsOnly");
     expect(r.outcomes).toEqual([]);
   });
+
+  it("marks a claim unverifiable when none of its evidence falls in the window", () => {
+    // A claim extracted from the full event set may have no evidence in a given
+    // window. Judging it anyway yields exactly 50 (every claim uncorroborated
+    // at weight 0.1) and reads as a measurement — it must be countsOnly.
+    const events = [ev(1, "a.com", 0.9, inWindow)];
+    const c = claim({
+      evidence: [{ event_id: 9, citation_index: 9, relation: "supports", probability: 0.9, domain: "a.com" }],
+    });
+    const r = windowConsistency([c], events, W);
+    expect(r.outcomes[0].status).toBe("unverifiable");
+    expect(r.mode).toBe("countsOnly");
+  });
+
+  it("is countsOnly, not a fabricated 50, when the window has no events", () => {
+    const events = [ev(1, "a.com", 0.9, inWindow)];
+    const c = claim({
+      evidence: [{ event_id: 1, citation_index: 1, relation: "supports", probability: 0.9, domain: "a.com" }],
+    });
+    const emptyW = { from: "2026-08-10T00:00:00Z", to: "2026-08-11T00:00:00Z" };
+    const r = windowConsistency([c], events, emptyW);
+    expect(r.mode).toBe("countsOnly");
+    expect(r.outcomes[0].status).toBe("unverifiable");
+  });
 });
 
 describe("consistencyTrusted", () => {
