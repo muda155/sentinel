@@ -172,5 +172,11 @@ export const en = {
   "compare.exportMd": "Export Markdown",
   "compare.print": "Print",
   "compare.close": "Close",
+  "sources.legend.tone": "Tone (AvgTone −20…+20): negative = conflictual coverage, positive = calmer",
+  "sources.legend.intensity": "Intensity (Goldstein −10…+10): negative = more conflictual",
+  "sources.legend.trustTier": "Trust tier (1–4): source reliability",
+  "sources.legend.reports": "N reports: GDELT event rows sharing one article",
+  "sources.legend.articles": "N articles: outlets citing this event",
+  "sources.legend.fatalities": "N fatalities: reported deaths",
 } as const;
 export type MessageKey = keyof typeof en;

@@ -18,7 +18,7 @@ import StackedBar from "@/components/StackedBar";
 import MixBars from "@/components/MixBars";
 import ScoreHelp from "@/components/ScoreHelp";
 import { confBreakdown, consistencyMix, convergenceBreakdown, sourceMix } from "@/lib/score-breakdown";
-import { COLOR, FONT, SPACE, buttonStyle, chipStyle } from "@/lib/theme";
+import { COLOR, FONT, RADIUS, SPACE, buttonStyle, chipStyle } from "@/lib/theme";
 
 export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; onClose: () => void }) {
   const { token } = useAuth();
@@ -84,6 +84,23 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   // every row, so they are inert chrome there
   const distinctSystems = new Set(events.map((e) => e.source_system)).size > 1;
   const distinctTypes = new Set(events.map((e) => e.event_type_label)).size > 1;
+  // The per-source badges are terse ("sắc thái -6.1"); the legend explains only
+  // the metrics this hotspot actually renders, so a single-type hotspot with no
+  // tone does not carry a legend for bars it never draws.
+  const hasTone = events.some((e) => e.avg_tone != null);
+  const hasIntensity = events.some((e) => e.goldstein_scale != null);
+  const hasFatalities = events.some((e) => (e.fatalities ?? 0) > 0);
+  const hasReports = events.some((e) => (e.duplicate_count ?? 1) > 1);
+  const hasArticles = events.some((e) => (e.num_sources ?? 1) > 1);
+  const hasTrust = events.some((e) => e.trust_tier != null);
+  const sourceLegend = [
+    hasTone && { key: "tone", text: t("sources.legend.tone") },
+    hasIntensity && { key: "intensity", text: t("sources.legend.intensity") },
+    hasTrust && { key: "trustTier", text: t("sources.legend.trustTier") },
+    hasReports && { key: "reports", text: t("sources.legend.reports") },
+    hasArticles && { key: "articles", text: t("sources.legend.articles") },
+    hasFatalities && { key: "fatalities", text: t("sources.legend.fatalities") },
+  ].filter(Boolean) as { key: string; text: string }[];
 
   return (
     <aside style={{ width: 340, flexShrink: 0, height: "100%", overflowY: "auto", background: COLOR.surface, color: COLOR.text, padding: 16, boxSizing: "border-box" }}>
@@ -353,6 +370,14 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
         {eventsError ? (
           <p>{t("detail.error")} <button onClick={retryEvents} style={retryButtonStyle}>{t("detail.retry")}</button></p>
         ) : (
+        <>
+        {sourceLegend.length > 0 && (
+          <div style={{ fontSize: 11, color: COLOR.textDim, background: COLOR.surfaceRaised,
+                        borderRadius: RADIUS.sm, padding: `${SPACE.xs}px ${SPACE.sm}px`,
+                        marginBottom: SPACE.sm, lineHeight: 1.6 }}>
+            {sourceLegend.map((item) => <div key={item.key}>{item.text}</div>)}
+          </div>
+        )}
         <ol ref={listRef} style={{ paddingLeft: 20, fontSize: FONT.md }}>
           {cited.map((e) => (
             <li key={e.event_id} data-cite={e.citation_index}
@@ -408,6 +433,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
             </li>
           ))}
         </ol>
+        </>
         )}
       </Section>
       <TrustTierEditor />

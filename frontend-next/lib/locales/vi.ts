@@ -174,4 +174,10 @@ export const vi: Record<MessageKey, string> = {
   "compare.exportMd": "Xuất Markdown",
   "compare.print": "In",
   "compare.close": "Đóng",
+  "sources.legend.tone": "Sắc thái (AvgTone −20…+20): âm = phủ sóng xung đột, dương = yên bình hơn",
+  "sources.legend.intensity": "Cường độ (Goldstein −10…+10): âm = xung đột nhiều hơn",
+  "sources.legend.trustTier": "Bậc tin cậy (1–4): độ tin cậy của nguồn",
+  "sources.legend.reports": "N bản tin: số dòng sự kiện GDELT cùng một bài báo",
+  "sources.legend.articles": "N bài báo: số nguồn đưa tin sự kiện này",
+  "sources.legend.fatalities": "N thương vong: số người thiệt mạng được báo cáo",
 };

@@ -25,10 +25,10 @@ describe("ScoreHelp", () => {
     expect(screen.getByRole("tooltip").textContent).toContain(viLocale["help.confidence.what"]);
   });
 
-  it("closes on Escape", () => {
+  it("closes on Escape from anywhere, not only while the tooltip is focused", () => {
     renderHelp();
     fireEvent.click(screen.getByRole("button"));
-    fireEvent.keyDown(screen.getByRole("tooltip"), { key: "Escape" });
+    fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("tooltip")).toBeNull();
   });
 });
