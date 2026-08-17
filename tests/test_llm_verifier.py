@@ -1,7 +1,9 @@
+import json
 from unittest import mock
 
 import pytest
 import requests
+from pydantic import ValidationError
 
 from pipeline import llm_verifier
 
@@ -664,3 +666,102 @@ def test_no_recovery_log_when_no_ratelimit(monkeypatch: pytest.MonkeyPatch,
             "p", endpoint="https://nim.example.com/v1/chat", api_key="k", model="m",
         )
     assert [r.getMessage() for r in caplog.records if "cleared" in r.getMessage()] == []
+
+
+def _summary_json(summary: str, conflict_detail: object = "") -> str:
+    return json.dumps({
+        "conflict_detected": False,
+        "conflict_detail": conflict_detail,
+        "summary": summary,
+        "sources_cited": ["1"],
+    })
+
+
+def test_summary_list_is_coerced_to_string() -> None:
+    # The model intermittently returns summary/conflict_detail as a JSON list;
+    # sources_cited already had a coercion validator and these did not, so the
+    # whole hotspot was discarded on a formatting quirk.
+    parsed = json.loads(_summary_json(""))
+    parsed["summary"] = ["Forces advanced north [1].", "Fire was reported [2]."]
+    result = llm_verifier.LLMSummary(**parsed)
+    assert isinstance(result.summary, str)
+    assert "Forces advanced north [1]." in result.summary
+    assert "Fire was reported [2]." in result.summary
+
+
+def test_conflict_detail_list_is_coerced_to_string() -> None:
+    parsed = json.loads(_summary_json("Forces advanced north [1]."))
+    parsed["conflict_detail"] = ["Sources disagree on the toll [1][2]"]
+    result = llm_verifier.LLMSummary(**parsed)
+    assert result.conflict_detail == "Sources disagree on the toll [1][2]"
+
+
+def test_coerced_summary_list_still_validates_citations() -> None:
+    # Coercion must not become a way to smuggle uncited text past FR-11.
+    parsed = json.loads(_summary_json(""))
+    parsed["summary"] = ["Forces advanced north.", "Fire was reported [2]."]
+    with pytest.raises(ValueError, match="Forces advanced north."):
+        llm_verifier.LLMSummary(**parsed)
+
+
+def test_uncited_summary_triggers_one_repair_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The first call is 100% wasted on a format violation, so one re-prompt is
+    # nearly free next to discarding the hotspot.
+    prompts: list[str] = []
+
+    def fake_raw(prompt, **kwargs):
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            return _summary_json("Forces advanced north."), "m"
+        return _summary_json("Forces advanced north [1]."), "m"
+
+    monkeypatch.setattr(llm_verifier, "call_llm_raw", fake_raw)
+    result, model_used = llm_verifier.call_nim_api(
+        "ORIGINAL PROMPT", endpoint="https://nim/x", api_key="k", model="m",
+    )
+    assert result["summary"] == "Forces advanced north [1]."
+    assert model_used == "m"
+    assert len(prompts) == 2
+    # The repair prompt must carry both the original task and what was wrong.
+    assert "ORIGINAL PROMPT" in prompts[1]
+    assert "Forces advanced north." in prompts[1]
+
+
+def test_valid_summary_makes_no_repair_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    prompts: list[str] = []
+
+    def fake_raw(prompt, **kwargs):
+        prompts.append(prompt)
+        return _summary_json("Forces advanced north [1]."), "m"
+
+    monkeypatch.setattr(llm_verifier, "call_llm_raw", fake_raw)
+    llm_verifier.call_nim_api("p", endpoint="https://nim/x", api_key="k", model="m")
+    assert len(prompts) == 1
+
+
+def test_repair_failure_propagates_without_looping(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Exactly one repair: a model that cannot cite must not be retried forever.
+    prompts: list[str] = []
+
+    def fake_raw(prompt, **kwargs):
+        prompts.append(prompt)
+        return _summary_json("Forces advanced north."), "m"
+
+    monkeypatch.setattr(llm_verifier, "call_llm_raw", fake_raw)
+    with pytest.raises(ValidationError):
+        llm_verifier.call_nim_api("p", endpoint="https://nim/x", api_key="k", model="m")
+    assert len(prompts) == 2
+
+
+def test_citation_repair_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    prompts: list[str] = []
+
+    def fake_raw(prompt, **kwargs):
+        prompts.append(prompt)
+        return _summary_json("Forces advanced north."), "m"
+
+    monkeypatch.setattr(llm_verifier, "call_llm_raw", fake_raw)
+    monkeypatch.setenv("SENTINEL_LLM_CITATION_REPAIR", "false")
+    with pytest.raises(ValidationError):
+        llm_verifier.call_nim_api("p", endpoint="https://nim/x", api_key="k", model="m")
+    assert len(prompts) == 1

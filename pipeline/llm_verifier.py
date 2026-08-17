@@ -9,7 +9,7 @@ import time
 from urllib.parse import urlparse
 
 import requests
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ValidationError, field_validator
 
 from pipeline.citations import collapse_duplicate_urls
 from pipeline.db import get_pooled_connection
@@ -215,6 +215,16 @@ class LLMSummary(BaseModel):
             return [str(item) for item in value]
         return value
 
+    @field_validator("summary", "conflict_detail", mode="before")
+    @classmethod
+    def _coerce_text(cls, value: object) -> object:
+        # The model intermittently returns these as a JSON list of sentences
+        # rather than a string. sources_cited already had a coercion and these
+        # did not, so a formatting quirk discarded the whole hotspot.
+        if isinstance(value, list):
+            return " ".join(str(item).strip() for item in value if str(item).strip())
+        return value
+
     @field_validator("summary")
     @classmethod
     def _summary_must_cite(cls, value: str) -> str:
@@ -343,9 +353,38 @@ def call_ollama_fallback(
 ) -> tuple[dict, str]:
     """Call local Ollama as fallback when NIM is unavailable (FR-12)."""
     text, model_used = call_ollama_raw(prompt, endpoint, timeout)
-    parsed = _extract_json(text)
-    summary = LLMSummary(**parsed)
-    return summary.model_dump(), model_used
+    return _parse_summary(text), model_used
+
+
+def _parse_summary(content: str) -> dict:
+    return LLMSummary(**_extract_json(content)).model_dump()
+
+
+def _citation_repair_enabled() -> bool:
+    return os.getenv("SENTINEL_LLM_CITATION_REPAIR", "true").strip().lower() not in {
+        "false", "0", "no",
+    }
+
+
+def build_repair_prompt(original_prompt: str, bad_output: str, error: str) -> str:
+    """Re-prompt carrying the original task plus what the last answer got wrong.
+
+    The rejected call is already paid for, so one repair costs far less than
+    discarding the hotspot — which is what every FR-11 violation did before.
+    """
+    return "\n".join([
+        original_prompt,
+        "",
+        "Your previous answer was REJECTED because it broke the citation rule:",
+        error,
+        "",
+        "Previous answer:",
+        bad_output,
+        "",
+        "Return the SAME JSON object, correcting only the citations: every "
+        'sentence in "summary" must end with exactly one marker like [1] '
+        "immediately before its full stop. Do not add or change any facts.",
+    ])
 
 
 def call_nim_api(
@@ -361,9 +400,20 @@ def call_nim_api(
         prompt, endpoint=endpoint, api_key=api_key, model=model,
         retries=retries, timeout=timeout, ollama_endpoint=ollama_endpoint,
     )
-    parsed = _extract_json(content)
-    summary = LLMSummary(**parsed)
-    return summary.model_dump(), model_used
+    try:
+        return _parse_summary(content), model_used
+    except ValidationError as error:
+        if not _citation_repair_enabled():
+            raise
+        logger.info("SITREP rejected on citations, re-prompting once to repair")
+        # Exactly one repair: a model that cannot cite must not be retried
+        # forever, and a second failure is the honest answer.
+        content, model_used = call_llm_raw(
+            build_repair_prompt(prompt, content, str(error)),
+            endpoint=endpoint, api_key=api_key, model=model,
+            retries=retries, timeout=timeout, ollama_endpoint=ollama_endpoint,
+        )
+        return _parse_summary(content), model_used
 
 
 class LLMRepository:
