@@ -626,3 +626,41 @@ def test_429_ignores_unparseable_retry_after(monkeypatch: pytest.MonkeyPatch) ->
     )
     assert content == "hello"
     assert sleeps == [15.0]
+
+
+def test_429_recovery_is_logged(monkeypatch: pytest.MonkeyPatch,
+                                caplog: pytest.LogCaptureFixture) -> None:
+    # A retry that succeeds logs nothing, so the only visible 429s were the ones
+    # that exhausted anyway — leaving the backoff unfalsifiable in production.
+    ok = mock.Mock()
+    ok.raise_for_status.return_value = None
+    ok.json.return_value = {"choices": [{"message": {"content": "hello"}}]}
+    monkeypatch.setattr("pipeline.llm_verifier.requests.post",
+                        mock.Mock(side_effect=[_rate_limited("5"), _rate_limited("5"), ok]))
+    monkeypatch.setattr("pipeline.llm_verifier.time.sleep", mock.Mock())
+
+    with caplog.at_level("INFO", logger="sentinel.llm_verifier"):
+        content, _model = llm_verifier.call_llm_raw(
+            "p", endpoint="https://nim.example.com/v1/chat", api_key="k", model="m",
+        )
+    assert content == "hello"
+    recovered = [r.getMessage() for r in caplog.records if "cleared" in r.getMessage()]
+    assert len(recovered) == 1
+    assert "2 retries" in recovered[0]
+    assert "10s" in recovered[0]  # 5s stated twice
+
+
+def test_no_recovery_log_when_no_ratelimit(monkeypatch: pytest.MonkeyPatch,
+                                           caplog: pytest.LogCaptureFixture) -> None:
+    # The common path must stay silent; a per-call INFO on every success would
+    # bury the signal this log exists to carry.
+    ok = mock.Mock()
+    ok.raise_for_status.return_value = None
+    ok.json.return_value = {"choices": [{"message": {"content": "hello"}}]}
+    monkeypatch.setattr("pipeline.llm_verifier.requests.post", mock.Mock(return_value=ok))
+
+    with caplog.at_level("INFO", logger="sentinel.llm_verifier"):
+        llm_verifier.call_llm_raw(
+            "p", endpoint="https://nim.example.com/v1/chat", api_key="k", model="m",
+        )
+    assert [r.getMessage() for r in caplog.records if "cleared" in r.getMessage()] == []

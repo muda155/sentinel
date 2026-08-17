@@ -62,7 +62,25 @@ class LLMWorker(Worker):
         }]
 
 
+def configure_logging() -> None:
+    """Enable INFO for our own loggers without inheriting third-party chatter.
+
+    Without a handler the root logger falls back to lastResort, which drops
+    everything below WARNING — every logger.info in this path was invisible.
+    Raising the root level also switches on httpx, which logs one line per
+    HuggingFace request and buries the SITREP signal it was raised for.
+    """
+    level = os.getenv("LOG_LEVEL", "INFO")
+    logging.basicConfig(level=level)
+    # basicConfig is a no-op once the root logger has a handler, so anything
+    # that configured logging on import would silently keep the old level.
+    logging.getLogger().setLevel(level)
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
+
 def main() -> int:  # pragma: no cover
+    configure_logging()
     LLMWorker().run_forever()
     return 0
 
