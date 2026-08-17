@@ -513,3 +513,116 @@ def test_ollama_model_env_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
     assert content == "hi"
     assert post_mock.call_args.kwargs["json"]["model"] == "llama3.2:3b"
     assert model_used == "llama3.2:3b-ollama"
+
+
+def _rate_limited(retry_after: object = None) -> mock.Mock:
+    """A 429 response; `retry_after` sets the header NIM uses to state its quota reset."""
+    resp = mock.Mock()
+    resp.status_code = 429
+    resp.headers = {} if retry_after is None else {"Retry-After": retry_after}
+    resp.raise_for_status.side_effect = requests.HTTPError(response=resp)
+    return resp
+
+
+def test_429_backoff_outlasts_the_5xx_schedule(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A 429 is a quota clock, not a transient fault: the 2**attempt 5xx schedule
+    # (2s, 4s) retries inside the same rate-limit window, so all three attempts
+    # burn and the hotspot lands on the Ollama fallback that cannot cite.
+    ok = mock.Mock()
+    ok.raise_for_status.return_value = None
+    ok.json.return_value = {"choices": [{"message": {"content": "hello"}}]}
+    post_mock = mock.Mock(side_effect=[_rate_limited(), _rate_limited(), ok])
+    sleeps: list[float] = []
+    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
+    monkeypatch.setattr("pipeline.llm_verifier.time.sleep", lambda s: sleeps.append(s))
+    monkeypatch.delenv("SENTINEL_LLM_RATELIMIT_BACKOFF_S", raising=False)
+
+    content, _model = llm_verifier.call_llm_raw(
+        "p", endpoint="https://nim.example.com/v1/chat", api_key="k", model="m",
+    )
+    assert content == "hello"
+    assert post_mock.call_count == 3
+    assert sleeps == [15.0, 30.0]
+
+
+def test_5xx_keeps_the_short_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The rate-limit schedule must not slow the transient-fault path.
+    err = mock.Mock()
+    err.status_code = 503
+    err.headers = {}
+    err.raise_for_status.side_effect = requests.HTTPError(response=err)
+    ok = mock.Mock()
+    ok.raise_for_status.return_value = None
+    ok.json.return_value = {"choices": [{"message": {"content": "hello"}}]}
+    post_mock = mock.Mock(side_effect=[err, err, ok])
+    sleeps: list[float] = []
+    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
+    monkeypatch.setattr("pipeline.llm_verifier.time.sleep", lambda s: sleeps.append(s))
+
+    content, _model = llm_verifier.call_llm_raw(
+        "p", endpoint="https://nim.example.com/v1/chat", api_key="k", model="m",
+    )
+    assert content == "hello"
+    assert sleeps == [2, 4]
+
+
+def test_429_honours_retry_after_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    # When NIM states its reset explicitly, guessing is strictly worse.
+    ok = mock.Mock()
+    ok.raise_for_status.return_value = None
+    ok.json.return_value = {"choices": [{"message": {"content": "hello"}}]}
+    post_mock = mock.Mock(side_effect=[_rate_limited("7"), ok])
+    sleeps: list[float] = []
+    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
+    monkeypatch.setattr("pipeline.llm_verifier.time.sleep", lambda s: sleeps.append(s))
+
+    content, _model = llm_verifier.call_llm_raw(
+        "p", endpoint="https://nim.example.com/v1/chat", api_key="k", model="m",
+    )
+    assert content == "hello"
+    assert sleeps == [7.0]
+
+
+def test_429_retry_after_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An hour-long Retry-After would park the single-threaded worker for an hour
+    # and stall every other hotspot behind it; past the cap, fall back instead.
+    ollama_ok = mock.Mock()
+    ollama_ok.raise_for_status.return_value = None
+    ollama_ok.json.return_value = {"response": "fallback text"}
+
+    def post_side_effect(url, **kwargs):
+        if "11434" in url:
+            return ollama_ok
+        raise requests.HTTPError(response=_rate_limited("3600"))
+
+    sleeps: list[float] = []
+    monkeypatch.setattr("pipeline.llm_verifier.requests.post",
+                        mock.Mock(side_effect=post_side_effect))
+    monkeypatch.setattr("pipeline.llm_verifier.time.sleep", lambda s: sleeps.append(s))
+    monkeypatch.setenv("SENTINEL_LLM_RATELIMIT_MAX_WAIT_S", "60")
+
+    content, model_used = llm_verifier.call_llm_raw(
+        "p", endpoint="https://nim.example.com/v1/chat", api_key="k", model="m",
+        ollama_endpoint="http://localhost:11434",
+    )
+    assert content == "fallback text"
+    assert model_used == "llama-3-8b-ollama"
+    assert sleeps == []  # never waited; a reset beyond the cap is not worth blocking on
+
+
+def test_429_ignores_unparseable_retry_after(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Retry-After may be an HTTP-date rather than seconds; fall back to the schedule.
+    ok = mock.Mock()
+    ok.raise_for_status.return_value = None
+    ok.json.return_value = {"choices": [{"message": {"content": "hello"}}]}
+    post_mock = mock.Mock(side_effect=[_rate_limited("Wed, 21 Oct 2026 07:28:00 GMT"), ok])
+    sleeps: list[float] = []
+    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
+    monkeypatch.setattr("pipeline.llm_verifier.time.sleep", lambda s: sleeps.append(s))
+    monkeypatch.delenv("SENTINEL_LLM_RATELIMIT_BACKOFF_S", raising=False)
+
+    content, _model = llm_verifier.call_llm_raw(
+        "p", endpoint="https://nim.example.com/v1/chat", api_key="k", model="m",
+    )
+    assert content == "hello"
+    assert sleeps == [15.0]
