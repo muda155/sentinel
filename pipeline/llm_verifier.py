@@ -276,10 +276,20 @@ def call_llm_raw(
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     last_error: Exception | None = None
+    # A retry that succeeds is otherwise silent, so only the 429s that exhausted
+    # anyway reach the log and the backoff cannot be told apart from a no-op.
+    ratelimit_waits: list[float] = []
     for attempt in range(1, retries + 1):
         try:
             response = requests.post(endpoint, headers=headers, json=payload, timeout=timeout)
             response.raise_for_status()
+            if ratelimit_waits:
+                logger.info(
+                    "NIM 429 cleared after %d retr%s (%.0fs waited)",
+                    len(ratelimit_waits),
+                    "y" if len(ratelimit_waits) == 1 else "ies",
+                    sum(ratelimit_waits),
+                )
             return response.json()["choices"][0]["message"]["content"], model
         except requests.Timeout:
             logger.warning("NIM API timed out after %ds, falling back to Ollama", timeout)
@@ -290,8 +300,9 @@ def call_llm_raw(
             if status == 429:
                 if attempt >= retries:
                     logger.warning(
-                        "NIM rate limit (429) still set after %d attempts, "
-                        "falling back to Ollama", retries,
+                        "NIM rate limit (429) still set after %d attempts "
+                        "(%.0fs waited), falling back to Ollama",
+                        retries, sum(ratelimit_waits),
                     )
                     return call_ollama_raw(prompt, ollama_endpoint, timeout)
                 stated = _retry_after_seconds(error.response)
@@ -306,6 +317,7 @@ def call_llm_raw(
                     )
                     return call_ollama_raw(prompt, ollama_endpoint, timeout)
                 time.sleep(wait)
+                ratelimit_waits.append(wait)
                 continue
             # NIM 500s are routinely transient, and the Ollama fallback may not
             # exist on the host, so they are retried rather than dumped on it.

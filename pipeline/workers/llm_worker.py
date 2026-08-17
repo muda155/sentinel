@@ -63,6 +63,9 @@ class LLMWorker(Worker):
 
 
 def main() -> int:  # pragma: no cover
+    # Without a handler the root logger falls back to lastResort, which drops
+    # everything below WARNING — every logger.info in this path was invisible.
+    logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
     LLMWorker().run_forever()
     return 0
 
