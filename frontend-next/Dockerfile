@@ -3,7 +3,10 @@ ARG NEXT_PUBLIC_API_BASE
 ARG NEXT_PUBLIC_MAP_STYLE
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci
+# Cache npm downloads in the build cache so node_modules isn't re-fetched on
+# every rebuild; --prefer-offline installs from cache when the network is slow.
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --prefer-offline
 COPY . .
 RUN npm run build
 
