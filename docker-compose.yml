@@ -97,6 +97,10 @@ services:
     environment: { PGHOST: pgbouncer, PGPORT: "5432", PGPASSWORD: "${POSTGRES_PASSWORD:-sentinel_pass}", REDIS_URL: "redis://redis:6379" }
     command: ["python", "-m", "pipeline.workers.consensus_worker"]
     depends_on: { redis: { condition: service_healthy }, pgbouncer: { condition: service_started } }
+    # HF model cache (NLI + relevance embedder) persists across container
+    # recreations; otherwise both re-download on every restart.
+    volumes:
+      - hf-cache:/root/.cache/huggingface
 
   llm-worker:
     build: { context: ., dockerfile: docker/Dockerfile }
@@ -104,6 +108,8 @@ services:
     environment: { PGHOST: pgbouncer, PGPORT: "5432", PGPASSWORD: "${POSTGRES_PASSWORD:-sentinel_pass}", REDIS_URL: "redis://redis:6379" }
     command: ["python", "-m", "pipeline.workers.llm_worker"]
     depends_on: { redis: { condition: service_healthy }, pgbouncer: { condition: service_started } }
+    volumes:
+      - hf-cache:/root/.cache/huggingface
 
   frontend-next:
     build:
@@ -118,3 +124,4 @@ services:
 
 volumes:
   pgdata:
+  hf-cache:
