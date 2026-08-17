@@ -141,6 +141,38 @@ def _llm_timeout(timeout: int | None) -> int:
     return int(os.getenv("SENTINEL_LLM_TIMEOUT_S", "60"))
 
 
+def _ratelimit_backoff(attempt: int) -> float:
+    """Backoff for a 429, which is a quota clock rather than a transient fault.
+
+    The 5xx schedule (2s, 4s) retries inside the same rate-limit window, so all
+    three attempts land in the bucket that just rejected them and the hotspot
+    drops to the Ollama fallback for nothing.
+    """
+    base = float(os.getenv("SENTINEL_LLM_RATELIMIT_BACKOFF_S", "15"))
+    return base * (2 ** (attempt - 1))
+
+
+def _ratelimit_max_wait() -> float:
+    return float(os.getenv("SENTINEL_LLM_RATELIMIT_MAX_WAIT_S", "60"))
+
+
+def _retry_after_seconds(response: object) -> float | None:
+    """Seconds stated by a Retry-After header, or None when absent or unparseable.
+
+    The HTTP-date form is deliberately not parsed: it is rare here and the
+    backoff schedule already covers it.
+    """
+    headers = getattr(response, "headers", None)
+    try:
+        value = headers.get("Retry-After")  # type: ignore[union-attr]
+    except (AttributeError, TypeError):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def validate_citations(summary: str) -> None:
     r"""Validate that every sentence ends with a numeric citation (FR-11).
 
@@ -255,9 +287,29 @@ def call_llm_raw(
         except requests.HTTPError as error:
             status = error.response.status_code if error.response is not None else None
             last_error = error
-            # 5xx is retried like 429: NIM 500s are routinely transient, and
-            # the Ollama fallback may not exist on the host.
-            if status == 429 or (status is not None and status >= 500):
+            if status == 429:
+                if attempt >= retries:
+                    logger.warning(
+                        "NIM rate limit (429) still set after %d attempts, "
+                        "falling back to Ollama", retries,
+                    )
+                    return call_ollama_raw(prompt, ollama_endpoint, timeout)
+                stated = _retry_after_seconds(error.response)
+                wait = stated if stated is not None else _ratelimit_backoff(attempt)
+                cap = _ratelimit_max_wait()
+                if wait > cap:
+                    # The worker is single-threaded: parking it past the cap
+                    # stalls every other hotspot behind this one.
+                    logger.warning(
+                        "NIM rate limit clears in %.0fs (cap %.0fs), "
+                        "falling back to Ollama", wait, cap,
+                    )
+                    return call_ollama_raw(prompt, ollama_endpoint, timeout)
+                time.sleep(wait)
+                continue
+            # NIM 500s are routinely transient, and the Ollama fallback may not
+            # exist on the host, so they are retried rather than dumped on it.
+            if status is not None and status >= 500:
                 if attempt < retries:
                     time.sleep(2**attempt)
                     continue
