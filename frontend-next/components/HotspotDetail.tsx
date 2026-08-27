@@ -18,14 +18,18 @@ import StackedBar from "@/components/StackedBar";
 import MixBars from "@/components/MixBars";
 import ScoreHelp from "@/components/ScoreHelp";
 import { confBreakdown, consistencyMix, convergenceBreakdown, sourceMix } from "@/lib/score-breakdown";
+import { displayClaimText, displaySummary, shouldTranslate } from "@/lib/translation";
+import type { Translation } from "@/lib/api";
 import { COLOR, FONT, RADIUS, SPACE, buttonStyle, chipStyle } from "@/lib/theme";
 
 export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; onClose: () => void }) {
   const { token } = useAuth();
-  const { t } = useT();
+  const { t, locale } = useT();
   const [summary, setSummary] = useState<HotspotSummary | null>(null);
   const [events, setEvents] = useState<HotspotEvent[]>([]);
   const [claims, setClaims] = useState<HotspotClaims | null>(null);
+  const [translation, setTranslation] = useState<Translation | null>(null);
+  const [showOriginal, setShowOriginal] = useState(false);
   const [flash, setFlash] = useState<number | null>(null);
   // Sources must stay reachable by citation jumps: a collapsed Section unmounts
   // its <ol>, so jumpTo forces it open before scrolling (FR-16).
@@ -39,6 +43,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   const summaryGen = useRef(0);
   const eventsGen = useRef(0);
   const claimsGen = useRef(0);
+  const translationGen = useRef(0);
 
   // guard every set* with a generation check so a stale in-flight response
   // (older retry, or a previous hotspot) can never populate this panel
@@ -64,6 +69,19 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   }, [hotspot.hotspot_id, token]);
 
   useEffect(() => { fetchSummary(); fetchEvents(); fetchClaims(); }, [fetchSummary, fetchEvents, fetchClaims]);
+
+  useEffect(() => { setTranslation(null); setShowOriginal(false); }, [hotspot.hotspot_id]);
+
+  // FR-30: fires only for the Vietnamese locale and only when there is text to
+  // translate. Any failure leaves the panel English on purpose - English is a
+  // correct rendering, so there is no error state to show.
+  useEffect(() => {
+    if (!shouldTranslate(locale, summary?.summary, claims?.claims)) return;
+    const gen = ++translationGen.current;
+    api.translation(hotspot.hotspot_id, locale, token)
+      .then((tr) => { if (translationGen.current === gen) setTranslation(tr); })
+      .catch(() => { if (translationGen.current === gen) setTranslation(null); });
+  }, [locale, hotspot.hotspot_id, token, summary, claims]);
 
   const retrySummary = () => { setSummaryError(false); fetchSummary(); };
   const retryEvents = () => { setEventsError(false); fetchEvents(); };
@@ -231,7 +249,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
             {summary.conflict_detected && <p style={{ color: COLOR.danger }}>{t("detail.conflictDetected")}</p>}
             {summary.summary ? (
               <p>
-                {parseCitations(summary.summary).map((part, i) =>
+                {parseCitations(displaySummary(summary.summary, translation, showOriginal)).map((part, i) =>
                   part.type === "cite" ? (
                     <sup key={i} role="button" onClick={() => jumpTo(part.n)}
                          style={{ color: COLOR.accent, cursor: "pointer", fontWeight: 600 }}>
@@ -247,6 +265,15 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
                 {sitrepState(summary.summary, summary.conf_score) === "pending"
                   ? t("detail.sitrepPending")
                   : t("detail.noSitrepBelowThreshold")}
+              </p>
+            )}
+            {translation && (
+              <p style={{ fontSize: FONT.sm, color: COLOR.textMuted, margin: `${SPACE.xs}px 0 0` }}>
+                {translation.summary_translated ? t("detail.autoTranslated")
+                                                : t("detail.translationUnavailable")}
+                <button onClick={() => setShowOriginal((v) => !v)} style={retryButtonStyle}>
+                  {showOriginal ? t("detail.showTranslation") : t("detail.showOriginal")}
+                </button>
               </p>
             )}
           </>
@@ -289,7 +316,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
                 <span style={{ color: statusColor(c.status), fontWeight: 600 }}>
                   {t(statusLabelKey(c.status) as MessageKey)}
                 </span>{" "}
-                {c.claim_text}
+                {displayClaimText(c, translation, showOriginal)}
                 {(() => {
                   const { supporting, contradicting } = splitEvidence(c);
                   // inline probability is dispute-only: on supporting citations it is
