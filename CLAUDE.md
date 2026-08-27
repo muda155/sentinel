@@ -73,6 +73,7 @@ All config via env vars in `sentinel.env` (copy to override locally). Key vars:
 - `SENTINEL_RELEVANCE_ENABLED` (default `true`), `SENTINEL_RELEVANCE_MODEL`, `SENTINEL_RELEVANCE_MIN_SIM` (0.35), `SENTINEL_RELEVANCE_MIN_PEAK` (0.15), `SENTINEL_RELEVANCE_MAX_HOMOGENEITY` (0.75) — M8 relevance gate (FR-26)
 - `SENTINEL_REPORT_RATE_PER_MIN` (default 4), `SENTINEL_REPORT_TIMEOUT_S` (default 30) — M9 window narrative report (FR-29)
 - `GOOGLE_TRANSLATE_API_KEY` (unset ⇒ feature off), `SENTINEL_TRANSLATE_ENABLED` (default true), `SENTINEL_TRANSLATE_RATE_PER_MIN` (default 20), `SENTINEL_TRANSLATE_TIMEOUT_S` (default 10), `SENTINEL_TRANSLATE_TTL_S` (default 86400), `SENTINEL_TRANSLATE_MAX_CHARS` (default 5000) — M10 Vietnamese display translation (FR-30)
+- `SENTINEL_LLM_PROVIDERS` (default `deepseek,kimi,ollama`), `SENTINEL_LLM_PAID_MIN_CONF` (default 70), `DEEPSEEK_API_KEY`/`DEEPSEEK_ENDPOINT`/`DEEPSEEK_MODEL`, `MOONSHOT_API_KEY`/`MOONSHOT_ENDPOINT`/`MOONSHOT_MODEL` — M11 LLM provider chain (FR-31)
 
 ## Spec compliance
 
