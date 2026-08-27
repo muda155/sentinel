@@ -581,10 +581,15 @@ class GDELT2Ingestor:
         # Sort newest first
         export_candidates.sort(key=lambda x: x[0], reverse=True)
 
-        # Try each candidate until we find one that actually exists
+        # Try each candidate until we find one that actually exists.
+        # allow_redirects is required: requests.head does NOT follow redirects
+        # by default (unlike get), and data.gdeltproject.org answers plain http
+        # with a 301 to https. Without it every candidate scores 301, no file is
+        # ever "accessible", and ingestion stops dead.
         for _, url in export_candidates[:max_candidates]:
             try:
-                head_resp = requests.head(url, timeout=self.timeout_seconds)
+                head_resp = requests.head(url, timeout=self.timeout_seconds,
+                                          allow_redirects=True)
                 if head_resp.status_code == 200:
                     return url
             except requests.RequestException:

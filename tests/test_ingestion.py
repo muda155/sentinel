@@ -719,3 +719,29 @@ def test_acled_logs_embargo_when_window_is_out_of_reach(
     assert ingestor.data_query_restrictions["date_recency"]["date"] == "2025-08-22"
     assert "12 Months old" in caplog.text
     assert "2025-08-22" in caplog.text
+
+
+def test_latest_existing_url_follows_redirects(monkeypatch: pytest.MonkeyPatch) -> None:
+    """requests.head does not follow redirects by default.
+
+    data.gdeltproject.org answers plain http with a 301 to https, so a HEAD
+    without allow_redirects scores every candidate 301, finds nothing
+    "accessible" and stops ingestion dead - observed live 2026-08-27.
+    """
+    master = Mock()
+    master.raise_for_status.return_value = None
+    master.text = (
+        "1 a http://data.gdeltproject.org/gdeltv2/20260827011500.export.CSV.zip\n"
+    )
+    monkeypatch.setattr("pipeline.ingestion.requests.get", Mock(return_value=master))
+
+    def _head(url, **kwargs):
+        return Mock(status_code=200 if kwargs.get("allow_redirects") else 301)
+
+    head_mock = Mock(side_effect=_head)
+    monkeypatch.setattr("pipeline.ingestion.requests.head", head_mock)
+
+    ingestor = GDELT2Ingestor()
+    assert ingestor.fetch_latest_existing_url().endswith("20260827011500.export.CSV.zip")
+    assert head_mock.call_args.kwargs["allow_redirects"] is True
+
