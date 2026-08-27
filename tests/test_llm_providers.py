@@ -251,3 +251,16 @@ def test_deepseek_disables_thinking_other_providers_do_not(monkeypatch):
 
     call_openai_compatible("p", provider=PROVIDERS["nim"])
     assert "thinking" not in post.call_args.kwargs["json"]
+
+
+def test_kimi_disables_thinking_and_uses_the_model_required_temperature(monkeypatch):
+    # kimi-k2.6 only accepts temperature 0.6 in thinking-disabled mode — the
+    # pipeline's SENTINEL_LLM_TEMPERATURE (0.3) would 400 and kill the chain.
+    monkeypatch.setenv("MOONSHOT_API_KEY", "m")
+    post = Mock(return_value=_ok())
+    monkeypatch.setattr("pipeline.llm_providers.requests.post", post)
+
+    call_openai_compatible("p", provider=PROVIDERS["kimi"])
+    payload = post.call_args.kwargs["json"]
+    assert payload["thinking"] == {"type": "disabled"}
+    assert payload["temperature"] == 0.6

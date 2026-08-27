@@ -158,12 +158,17 @@ def call_openai_compatible(
         "temperature": float(os.getenv("SENTINEL_LLM_TEMPERATURE", "0")),
         "max_tokens": int(os.getenv("SENTINEL_LLM_MAX_TOKENS", "500")),
     }
-    if provider.name == "deepseek":
-        # deepseek-v4-flash reasons by default: on real prompts the reasoning
-        # eats the whole max_tokens budget and the response comes back with
-        # empty content (measured 8-16k reasoning tokens on an extraction
-        # prompt). Disabling thinking is what makes the model answer at all.
+    if provider.name in ("deepseek", "kimi"):
+        # Both vendors' current chat models reason by default. deepseek-v4-flash
+        # answers 200 with empty content once the reasoning eats max_tokens
+        # (measured 8-16k reasoning tokens on an extraction prompt); kimi-k2.6
+        # accepts a temperature only in thinking-disabled mode, so the pipeline's
+        # SENTINEL_LLM_TEMPERATURE would 400 and kill the chain.
         payload["thinking"] = {"type": "disabled"}
+    if provider.name == "kimi":
+        # kimi-k2.6 validates temperature only when thinking is off: 0.6 is the
+        # sole admissible value in that mode (1 without thinking, 0.6 with).
+        payload["temperature"] = 0.6
     headers = {
         "Authorization": f"Bearer {api_key_of(provider)}",
         "Content-Type": "application/json",
