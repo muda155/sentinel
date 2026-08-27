@@ -844,3 +844,54 @@ def test_extraction_and_sitrep_share_one_bound_llm(monkeypatch):
     assert seen["engine_llm"] is not None
     # and the SITREP must be told the same score
     assert seen["sitrep_kwargs"].get("conf_score") == 75.0
+
+
+def test_null_conf_score_is_bound_as_local_only(monkeypatch):
+    # A hotspot with NULL conf_score has never been scored; spending a paid
+    # provider on it is not the gate's intent. conf_score=None inside
+    # generate_sitrep must resolve to local-only (0.0), not the unscoped
+    # paid-allowed meaning that /report's caller deliberately uses.
+    from unittest.mock import MagicMock
+
+    import pipeline.llm_verifier as lv
+
+    seen = {}
+
+    def _engine(conn, hotspot_id, *, llm=None, judge=None):
+        seen["engine_llm"] = llm
+        return None
+
+    repo_articles = [{"title": "t", "url": "https://e.com/1", "domain": "e.com"}]
+    monkeypatch.setattr(lv.LLMRepository, "fetch_hotspot_articles",
+                        lambda self, hid: repo_articles)
+    monkeypatch.setattr(lv.LLMRepository, "fetch_conf_score", lambda self, hid: None)
+    monkeypatch.setattr(lv.LLMRepository, "save_summary", lambda *a, **k: None)
+
+    def _llm_call(prompt, **kwargs):
+        seen["sitrep_kwargs"] = kwargs
+        return {"summary": "S [1].", "conflict_detected": False}, "deepseek:m"
+
+    conn = MagicMock()
+    conn.cursor.return_value.__enter__.return_value.fetchone.return_value = None
+
+    lv.generate_sitrep(conn, 1, endpoint="", api_key="", model="",
+                       engine=_engine, llm_call=_llm_call)
+
+    assert seen["engine_llm"].keywords["conf_score"] == 0.0
+    assert seen["sitrep_kwargs"].get("conf_score") == 0.0
+
+
+def test_main_requires_a_configured_provider(monkeypatch):
+    # The CLI used to hard-fail on missing NVIDIA_NIM_* even though the
+    # default chain needs no NIM; it now gates on the resolved chain.
+    import sys
+
+    import pipeline.llm_providers as lp
+
+    monkeypatch.setattr(sys, "argv", ["llm_verifier", "--threshold", "40"])
+    monkeypatch.setattr(
+        lp, "resolve_chain",
+        lambda **kw: (_ for _ in ()).throw(lp.NoProviderConfigured("none")),
+    )
+    with pytest.raises(RuntimeError, match="no LLM provider configured"):
+        llm_verifier.main()

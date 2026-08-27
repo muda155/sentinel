@@ -158,17 +158,11 @@ def call_openai_compatible(
         "temperature": float(os.getenv("SENTINEL_LLM_TEMPERATURE", "0")),
         "max_tokens": int(os.getenv("SENTINEL_LLM_MAX_TOKENS", "500")),
     }
-    if provider.name in ("deepseek", "kimi"):
-        # Both vendors' current chat models reason by default. deepseek-v4-flash
-        # answers 200 with empty content once the reasoning eats max_tokens
-        # (measured 8-16k reasoning tokens on an extraction prompt); kimi-k2.6
-        # accepts a temperature only in thinking-disabled mode, so the pipeline's
-        # SENTINEL_LLM_TEMPERATURE would 400 and kill the chain.
-        payload["thinking"] = {"type": "disabled"}
     if provider.name == "kimi":
-        # kimi-k2.6 validates temperature only when thinking is off: 0.6 is the
-        # sole admissible value in that mode (1 without thinking, 0.6 with).
-        payload["temperature"] = 0.6
+        # kimi-k2.6 validates temperature only when thinking is on (the
+        # default): 1 is the sole admissible value, so the pipeline's
+        # SENTINEL_LLM_TEMPERATURE would 400 and kill the chain.
+        payload["temperature"] = 1.0
     headers = {
         "Authorization": f"Bearer {api_key_of(provider)}",
         "Content-Type": "application/json",
@@ -180,6 +174,19 @@ def call_openai_compatible(
             response = requests.post(endpoint, headers=headers, json=payload,
                                      timeout=timeout)
             response.raise_for_status()
+            try:
+                content = response.json()["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError, ValueError) as error:
+                # A 2xx whose body is not the chat shape is not an answer;
+                # falling through beats letting a KeyError abort the chain.
+                raise ProviderFailed(
+                    f"{provider.name} returned an unparseable response body"
+                ) from error
+            if not content:
+                # Reasoning models answer 200 with empty content when the
+                # reasoning exhausts max_tokens (finish_reason=length). That
+                # is not an answer; fall through to the next provider.
+                raise ProviderFailed(f"{provider.name} returned empty content")
             if waited:
                 # A retry that succeeds is otherwise silent, so only the 429s
                 # that exhausted anyway reach the log and the backoff cannot be
@@ -189,8 +196,7 @@ def call_openai_compatible(
                     provider.name, len(waited),
                     "y" if len(waited) == 1 else "ies", sum(waited),
                 )
-            return response.json()["choices"][0]["message"]["content"], \
-                f"{provider.name}:{model}"
+            return content, f"{provider.name}:{model}"
         except requests.Timeout as error:
             raise ProviderFailed(f"{provider.name} timed out after {timeout}s") from error
         except requests.HTTPError as error:

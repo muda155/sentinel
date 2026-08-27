@@ -186,22 +186,25 @@ def run_pipeline() -> None:
     # Step 6: LLM Verification
     try:
         step_start = time.monotonic()
+        from pipeline.llm_providers import NoProviderConfigured, resolve_chain
         from pipeline.llm_verifier import verify_hotspots_with_llm
 
-        endpoint = os.getenv("NVIDIA_NIM_ENDPOINT", "")
-        api_key = os.getenv("NVIDIA_NIM_API_KEY", "")
-        model = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct")
-        ollama_endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
         threshold = float(os.getenv("SENTINEL_LLM_THRESHOLD", "40"))
 
-        if not endpoint or not api_key:
-            logger.warning("Step 6: LLM verification skipped (no NIM credentials)")
+        try:
+            resolve_chain()
+        except NoProviderConfigured:
+            logger.warning("Step 6: LLM verification skipped (no provider configured)")
         else:
             conn, pool = get_pooled_connection()
             try:
                 result = verify_hotspots_with_llm(
-                    conn, endpoint=endpoint, api_key=api_key, model=model,
-                    threshold=threshold, ollama_endpoint=ollama_endpoint,
+                    conn,
+                    endpoint=os.getenv("NVIDIA_NIM_ENDPOINT", ""),
+                    api_key=os.getenv("NVIDIA_NIM_API_KEY", ""),
+                    model=os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct"),
+                    threshold=threshold,
+                    ollama_endpoint=os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434"),
                 )
                 logger.info("Step 6: LLM verification complete", extra={
                     "step": "llm_verification", "duration_s": round(time.monotonic() - step_start, 2),

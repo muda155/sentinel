@@ -105,6 +105,11 @@ def generate_sitrep(
     repo = LLMRepository(conn)
 
     conf_score = repo.fetch_conf_score(hotspot_id)
+    if conf_score is None:
+        # NULL means "never scored": spending a paid provider on an unscored
+        # hotspot is not the gate's intent. The only legitimate "unscoped"
+        # conf_score=None caller is /report, which never reaches this path.
+        conf_score = 0.0
     # One tier for the whole hotspot. Resolving it separately in the engine and
     # again for the SITREP would let a single hotspot be written half locally
     # and half by a paid provider, which makes llm_model_version a lie.
@@ -451,17 +456,22 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _build_parser().parse_args()
-    endpoint = os.getenv("NVIDIA_NIM_ENDPOINT", "")
-    api_key = os.getenv("NVIDIA_NIM_API_KEY", "")
-    model = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct")
-    ollama_endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
-    if not endpoint or not api_key:
-        raise RuntimeError("NVIDIA_NIM_ENDPOINT and NVIDIA_NIM_API_KEY are required")
+    from pipeline.llm_providers import NoProviderConfigured, resolve_chain
+    try:
+        resolve_chain()
+    except NoProviderConfigured as error:
+        raise RuntimeError(
+            "no LLM provider configured; check SENTINEL_LLM_PROVIDERS"
+        ) from error
     conn, pool = get_pooled_connection()
     try:
         result = verify_hotspots_with_llm(
-            conn, endpoint=endpoint, api_key=api_key, model=model,
-            threshold=args.threshold, ollama_endpoint=ollama_endpoint,
+            conn,
+            endpoint=os.getenv("NVIDIA_NIM_ENDPOINT", ""),
+            api_key=os.getenv("NVIDIA_NIM_API_KEY", ""),
+            model=os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct"),
+            threshold=args.threshold,
+            ollama_endpoint=os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434"),
         )
     finally:
         pool.return_connection(conn)

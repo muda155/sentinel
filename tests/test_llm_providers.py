@@ -237,30 +237,55 @@ def test_ollama_keeps_its_fr12_audit_tag(monkeypatch):
     assert call_ollama_raw("p")[1] == "llama-3-8b-ollama"
 
 
-def test_deepseek_disables_thinking_other_providers_do_not(monkeypatch):
-    # deepseek-v4-flash reasons by default and returns empty content on real
-    # prompts once the reasoning eats max_tokens; the adapter turns thinking
-    # off for it only — NIM/Kimi must not receive a param they may reject.
+def test_openai_compatible_payloads_carry_no_thinking_param(monkeypatch):
+    # Reasoning stays ON for the SITREP quality; neither provider may receive
+    # a thinking toggle NIM might reject.
     monkeypatch.setenv("DEEPSEEK_API_KEY", "d")
     monkeypatch.setenv("NVIDIA_NIM_API_KEY", "n")
     post = Mock(return_value=_ok())
     monkeypatch.setattr("pipeline.llm_providers.requests.post", post)
 
     call_openai_compatible("p", provider=PROVIDERS["deepseek"])
-    assert post.call_args.kwargs["json"]["thinking"] == {"type": "disabled"}
+    assert "thinking" not in post.call_args.kwargs["json"]
 
     call_openai_compatible("p", provider=PROVIDERS["nim"])
     assert "thinking" not in post.call_args.kwargs["json"]
 
 
-def test_kimi_disables_thinking_and_uses_the_model_required_temperature(monkeypatch):
-    # kimi-k2.6 only accepts temperature 0.6 in thinking-disabled mode — the
-    # pipeline's SENTINEL_LLM_TEMPERATURE (0.3) would 400 and kill the chain.
+def test_kimi_uses_the_model_required_temperature(monkeypatch):
+    # kimi-k2.6 only accepts temperature 1 with reasoning on (the default) —
+    # the pipeline's SENTINEL_LLM_TEMPERATURE (0.3) would 400 and kill the
+    # chain.
     monkeypatch.setenv("MOONSHOT_API_KEY", "m")
     post = Mock(return_value=_ok())
     monkeypatch.setattr("pipeline.llm_providers.requests.post", post)
 
     call_openai_compatible("p", provider=PROVIDERS["kimi"])
     payload = post.call_args.kwargs["json"]
-    assert payload["thinking"] == {"type": "disabled"}
-    assert payload["temperature"] == 0.6
+    assert "thinking" not in payload
+    assert payload["temperature"] == 1.0
+
+
+def test_empty_content_on_a_2xx_is_a_provider_failure(monkeypatch):
+    # Reasoning models answer 200 with empty content when the reasoning
+    # exhausts max_tokens. That is not an answer — it must fail over, and a
+    # deterministic failure is not worth retrying.
+    post = Mock(return_value=_ok(content=""))
+    monkeypatch.setattr("pipeline.llm_providers.requests.post", post)
+    with pytest.raises(ProviderFailed):
+        call_openai_compatible("p", provider=PROVIDERS["deepseek"], retries=3)
+    assert post.call_count == 1
+
+
+def test_malformed_2xx_body_is_a_provider_failure_not_a_keyerror(monkeypatch):
+    # A 2xx whose body is not the chat shape must fall through, not abort the
+    # chain with an uncaught KeyError/IndexError.
+    r = Mock()
+    r.status_code = 200
+    r.raise_for_status.return_value = None
+    r.json.return_value = {"unexpected": True}
+    post = Mock(return_value=r)
+    monkeypatch.setattr("pipeline.llm_providers.requests.post", post)
+    with pytest.raises(ProviderFailed):
+        call_openai_compatible("p", provider=PROVIDERS["deepseek"], retries=3)
+    assert post.call_count == 1
