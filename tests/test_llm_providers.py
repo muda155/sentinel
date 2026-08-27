@@ -8,6 +8,7 @@ from pipeline.llm_providers import (
     PROVIDERS,
     NoProviderConfigured,
     ProviderFailed,
+    call_llm,
     call_openai_compatible,
     resolve_chain,
 )
@@ -159,3 +160,78 @@ def test_429_falls_through_when_the_wait_exceeds_the_cap(monkeypatch):
     with pytest.raises(ProviderFailed):
         call_openai_compatible("p", provider=PROVIDERS["deepseek"], retries=3)
     assert post.call_count == 1
+
+
+def test_the_chain_tries_the_next_provider_after_a_failure(monkeypatch):
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "deepseek,kimi")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "d")
+    monkeypatch.setenv("MOONSHOT_API_KEY", "m")
+    calls = []
+
+    def _fake(prompt, *, provider, retries=3, timeout=None):
+        calls.append(provider.name)
+        if provider.name == "deepseek":
+            raise ProviderFailed("down")
+        return "from kimi", f"{provider.name}:x"
+
+    monkeypatch.setattr("pipeline.llm_providers.call_openai_compatible", _fake)
+    text, used = call_llm("p")
+    assert calls == ["deepseek", "kimi"]
+    assert (text, used) == ("from kimi", "kimi:x")
+
+
+def test_a_400_stops_the_chain_dead(monkeypatch):
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "deepseek,kimi")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "d")
+    monkeypatch.setenv("MOONSHOT_API_KEY", "m")
+    calls = []
+
+    def _fake(prompt, *, provider, retries=3, timeout=None):
+        calls.append(provider.name)
+        raise requests.HTTPError("bad request")
+
+    monkeypatch.setattr("pipeline.llm_providers.call_openai_compatible", _fake)
+    with pytest.raises(requests.HTTPError):
+        call_llm("p")
+    assert calls == ["deepseek"], "a malformed request must not reach the next provider"
+
+
+def test_the_paid_gate_keeps_a_low_score_off_the_paid_providers(monkeypatch):
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "deepseek,ollama")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "d")
+    monkeypatch.setenv("SENTINEL_LLM_PAID_MIN_CONF", "70")
+    paid = Mock(side_effect=AssertionError("paid provider must not be called"))
+    monkeypatch.setattr("pipeline.llm_providers.call_openai_compatible", paid)
+    monkeypatch.setattr("pipeline.llm_providers.call_ollama_raw",
+                        Mock(return_value=("local", "llama-3-8b-ollama")))
+    assert call_llm("p", conf_score=69.9) == ("local", "llama-3-8b-ollama")
+
+
+def test_a_score_above_the_gate_reaches_the_paid_provider(monkeypatch):
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "deepseek,ollama")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "d")
+    monkeypatch.setenv("SENTINEL_LLM_PAID_MIN_CONF", "70")
+    monkeypatch.setattr("pipeline.llm_providers.call_openai_compatible",
+                        Mock(return_value=("paid", "deepseek:deepseek-v4-flash")))
+    assert call_llm("p", conf_score=70.1)[1] == "deepseek:deepseek-v4-flash"
+
+
+def test_an_unknown_score_is_treated_as_paid_allowed(monkeypatch):
+    # conf_score=None means the caller did not scope the call (the /report
+    # endpoint is one). Refusing to spend there would silently downgrade a
+    # user-triggered request that has its own 4/min bucket already.
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "deepseek,ollama")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "d")
+    monkeypatch.setattr("pipeline.llm_providers.call_openai_compatible",
+                        Mock(return_value=("paid", "deepseek:m")))
+    assert call_llm("p", conf_score=None)[0] == "paid"
+
+
+def test_ollama_keeps_its_fr12_audit_tag(monkeypatch):
+    monkeypatch.setenv("SENTINEL_OLLAMA_MODEL", "llama3:8b")
+    r = Mock()
+    r.raise_for_status.return_value = None
+    r.json.return_value = {"response": "text"}
+    monkeypatch.setattr("pipeline.llm_providers.requests.post", Mock(return_value=r))
+    from pipeline.llm_providers import call_ollama_raw
+    assert call_ollama_raw("p")[1] == "llama-3-8b-ollama"

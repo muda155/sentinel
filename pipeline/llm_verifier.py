@@ -13,6 +13,13 @@ from pydantic import BaseModel, ValidationError, field_validator
 
 from pipeline.citations import collapse_duplicate_urls
 from pipeline.db import get_pooled_connection
+from pipeline.llm_providers import (  # noqa: F401 — transport moved here (FR-31); re-exported
+    _llm_timeout,
+    _ratelimit_backoff,
+    _ratelimit_max_wait,
+    _retry_after_seconds,
+    call_ollama_raw,
+)
 
 logger = logging.getLogger("sentinel.llm_verifier")
 
@@ -135,44 +142,6 @@ def _extract_json(text: str) -> dict:
         raise ValueError(f"LLM response is not valid JSON: {text[:200]}") from None
 
 
-def _llm_timeout(timeout: int | None) -> int:
-    if timeout is not None:
-        return timeout
-    return int(os.getenv("SENTINEL_LLM_TIMEOUT_S", "60"))
-
-
-def _ratelimit_backoff(attempt: int) -> float:
-    """Backoff for a 429, which is a quota clock rather than a transient fault.
-
-    The 5xx schedule (2s, 4s) retries inside the same rate-limit window, so all
-    three attempts land in the bucket that just rejected them and the hotspot
-    drops to the Ollama fallback for nothing.
-    """
-    base = float(os.getenv("SENTINEL_LLM_RATELIMIT_BACKOFF_S", "15"))
-    return base * (2 ** (attempt - 1))
-
-
-def _ratelimit_max_wait() -> float:
-    return float(os.getenv("SENTINEL_LLM_RATELIMIT_MAX_WAIT_S", "60"))
-
-
-def _retry_after_seconds(response: object) -> float | None:
-    """Seconds stated by a Retry-After header, or None when absent or unparseable.
-
-    The HTTP-date form is deliberately not parsed: it is rare here and the
-    backoff schedule already covers it.
-    """
-    headers = getattr(response, "headers", None)
-    try:
-        value = headers.get("Retry-After")  # type: ignore[union-attr]
-    except (AttributeError, TypeError):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def validate_citations(summary: str) -> None:
     r"""Validate that every sentence ends with a numeric citation (FR-11).
 
@@ -230,35 +199,6 @@ class LLMSummary(BaseModel):
     def _summary_must_cite(cls, value: str) -> str:
         validate_citations(value)  # raises ValueError on uncited sentences
         return value
-
-
-def call_ollama_raw(
-    prompt: str,
-    endpoint: str = "http://localhost:11434",
-    timeout: int | None = None,
-) -> tuple[str, str]:
-    """Raw Ollama call: returns (response text, model tag). FR-12 fallback."""
-    model = os.getenv("SENTINEL_OLLAMA_MODEL", "llama3:8b")
-    # Historical audit tag for the default model (spec FR-12 acceptance);
-    # non-default models tag as "<model>-ollama".
-    model_tag = "llama-3-8b-ollama" if model == "llama3:8b" else f"{model}-ollama"
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {
-            "temperature": float(os.getenv("SENTINEL_LLM_TEMPERATURE", "0")),
-            "num_predict": int(os.getenv("SENTINEL_LLM_MAX_TOKENS", "500")),
-        },
-    }
-    try:
-        response = requests.post(
-            f"{endpoint}/api/generate", json=payload, timeout=_llm_timeout(timeout),
-        )
-        response.raise_for_status()
-        return response.json().get("response", ""), model_tag
-    except requests.RequestException as e:
-        raise RuntimeError(f"Ollama fallback failed: {e}") from e
 
 
 def call_llm_raw(

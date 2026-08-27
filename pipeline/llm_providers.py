@@ -19,14 +19,47 @@ from dataclasses import dataclass
 
 import requests
 
-from pipeline.llm_verifier import (
-    _llm_timeout,
-    _ratelimit_backoff,
-    _ratelimit_max_wait,
-    _retry_after_seconds,
-)
+from api.metrics import METRICS
 
 logger = logging.getLogger("sentinel.llm_providers")
+
+
+def _llm_timeout(timeout: int | None) -> int:
+    if timeout is not None:
+        return timeout
+    return int(os.getenv("SENTINEL_LLM_TIMEOUT_S", "60"))
+
+
+def _ratelimit_backoff(attempt: int) -> float:
+    """Backoff for a 429, which is a quota clock rather than a transient fault.
+
+    The 5xx schedule (2s, 4s) retries inside the same rate-limit window, so all
+    three attempts land in the bucket that just rejected them and the hotspot
+    drops to the Ollama fallback for nothing.
+    """
+    base = float(os.getenv("SENTINEL_LLM_RATELIMIT_BACKOFF_S", "15"))
+    return base * (2 ** (attempt - 1))
+
+
+def _ratelimit_max_wait() -> float:
+    return float(os.getenv("SENTINEL_LLM_RATELIMIT_MAX_WAIT_S", "60"))
+
+
+def _retry_after_seconds(response: object) -> float | None:
+    """Seconds stated by a Retry-After header, or None when absent or unparseable.
+
+    The HTTP-date form is deliberately not parsed: it is rare here and the
+    backoff schedule already covers it.
+    """
+    headers = getattr(response, "headers", None)
+    try:
+        value = headers.get("Retry-After")  # type: ignore[union-attr]
+    except (AttributeError, TypeError):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 class NoProviderConfigured(RuntimeError):
@@ -176,3 +209,70 @@ def call_openai_compatible(
         except requests.RequestException as error:
             raise ProviderFailed(f"{provider.name} unreachable: {error}") from error
     raise ProviderFailed(f"{provider.name} exhausted {retries} attempts")
+
+
+def call_ollama_raw(
+    prompt: str,
+    endpoint: str = "http://localhost:11434",
+    timeout: int | None = None,
+) -> tuple[str, str]:
+    """Raw Ollama call: returns (response text, model tag). FR-12 fallback."""
+    model = os.getenv("SENTINEL_OLLAMA_MODEL", "llama3:8b")
+    # Historical audit tag for the default model (spec FR-12 acceptance);
+    # non-default models tag as "<model>-ollama".
+    model_tag = "llama-3-8b-ollama" if model == "llama3:8b" else f"{model}-ollama"
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "temperature": float(os.getenv("SENTINEL_LLM_TEMPERATURE", "0")),
+            "num_predict": int(os.getenv("SENTINEL_LLM_MAX_TOKENS", "500")),
+        },
+    }
+    try:
+        response = requests.post(
+            f"{endpoint}/api/generate", json=payload, timeout=_llm_timeout(timeout),
+        )
+        response.raise_for_status()
+        return response.json().get("response", ""), model_tag
+    except requests.RequestException as e:
+        raise RuntimeError(f"Ollama fallback failed: {e}") from e
+
+
+def _paid_min_conf() -> float:
+    return float(os.getenv("SENTINEL_LLM_PAID_MIN_CONF", "70"))
+
+
+def call_llm(
+    prompt: str, *, conf_score: float | None = None,
+    retries: int = 3, timeout: int | None = None,
+) -> tuple[str, str]:
+    """Try each configured provider in order; return the first answer.
+
+    conf_score None means "unscoped" and allows paid providers: the only such
+    caller is the /report endpoint, which is user-triggered and already capped
+    at SENTINEL_REPORT_RATE_PER_MIN."""
+    paid_allowed = conf_score is None or conf_score > _paid_min_conf()
+    if not paid_allowed:
+        METRICS.inc("llm_paid_skipped_total")
+    chain = resolve_chain(paid_allowed=paid_allowed)
+    last: Exception | None = None
+    for provider in chain:
+        METRICS.inc(f"llm_calls_{provider.name}_total")
+        try:
+            if provider.kind == "ollama":
+                return call_ollama_raw(prompt, endpoint_of(provider), timeout)
+            return call_openai_compatible(
+                prompt, provider=provider, retries=retries, timeout=timeout,
+            )
+        except ProviderFailed as error:
+            METRICS.inc(f"llm_failures_{provider.name}_total")
+            logger.warning("provider %s failed: %s", provider.name, error)
+            last = error
+        except RuntimeError as error:
+            # call_ollama_raw raises bare RuntimeError on transport failure.
+            METRICS.inc(f"llm_failures_{provider.name}_total")
+            logger.warning("provider %s failed: %s", provider.name, error)
+            last = error
+    raise RuntimeError(f"every provider in the chain failed; last was {last}")
