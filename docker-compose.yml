@@ -94,7 +94,12 @@ services:
   consensus-worker:
     build: { context: ., dockerfile: docker/Dockerfile }
     env_file: [sentinel.env]
-    environment: { PGHOST: pgbouncer, PGPORT: "5432", PGPASSWORD: "${POSTGRES_PASSWORD:-sentinel_pass}", REDIS_URL: "redis://redis:6379" }
+    # HF_HUB_OFFLINE reads the weights straight from hf-cache instead of
+    # revalidating etags against huggingface.co on every process start. A COLD
+    # hf-cache volume with this set to 1 makes from_pretrained raise, which
+    # run_consistency_engine swallows into a per-hotspot warning — the engine
+    # then no-ops silently. Warm a fresh volume once with HF_HUB_OFFLINE=0.
+    environment: { PGHOST: pgbouncer, PGPORT: "5432", PGPASSWORD: "${POSTGRES_PASSWORD:-sentinel_pass}", REDIS_URL: "redis://redis:6379", HF_HUB_OFFLINE: "${HF_HUB_OFFLINE:-1}" }
     command: ["python", "-m", "pipeline.workers.consensus_worker"]
     depends_on: { redis: { condition: service_healthy }, pgbouncer: { condition: service_started } }
     # HF model cache (NLI + relevance embedder) persists across container
@@ -105,7 +110,12 @@ services:
   llm-worker:
     build: { context: ., dockerfile: docker/Dockerfile }
     env_file: [sentinel.env]
-    environment: { PGHOST: pgbouncer, PGPORT: "5432", PGPASSWORD: "${POSTGRES_PASSWORD:-sentinel_pass}", REDIS_URL: "redis://redis:6379" }
+    # HF_HUB_OFFLINE reads the weights straight from hf-cache instead of
+    # revalidating etags against huggingface.co on every process start. A COLD
+    # hf-cache volume with this set to 1 makes from_pretrained raise, which
+    # run_consistency_engine swallows into a per-hotspot warning — the engine
+    # then no-ops silently. Warm a fresh volume once with HF_HUB_OFFLINE=0.
+    environment: { PGHOST: pgbouncer, PGPORT: "5432", PGPASSWORD: "${POSTGRES_PASSWORD:-sentinel_pass}", REDIS_URL: "redis://redis:6379", HF_HUB_OFFLINE: "${HF_HUB_OFFLINE:-1}" }
     command: ["python", "-m", "pipeline.workers.llm_worker"]
     depends_on: { redis: { condition: service_healthy }, pgbouncer: { condition: service_started } }
     volumes:

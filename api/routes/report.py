@@ -12,6 +12,7 @@ from api.auth import get_current_user
 from api.cache import cache_get_json, cache_setex_json
 from api.ratelimit import limit_report
 from pipeline.db import get_pooled_connection
+from pipeline.llm_providers import NoProviderConfigured, resolve_chain
 from pipeline.llm_verifier import call_llm_raw, validate_citations
 from pipeline.window_report import build_window_report_prompt, report_timeout, window_citations
 
@@ -70,9 +71,9 @@ def hotspot_report(hotspot_id: int,
     if hit:
         return {**hit, "cached": True}
 
-    endpoint = os.getenv("NVIDIA_NIM_ENDPOINT", "")
-    ollama = os.getenv("OLLAMA_ENDPOINT", "")
-    if not endpoint and not ollama:
+    try:
+        resolve_chain()
+    except NoProviderConfigured:
         raise HTTPException(status_code=503, detail="report generation unavailable")
 
     prompt = build_window_report_prompt(name or f"Hotspot #{hotspot_id}", rows,
@@ -81,7 +82,7 @@ def hotspot_report(hotspot_id: int,
     try:
         content, model_used = call_llm_raw(
             prompt,
-            endpoint=endpoint,
+            endpoint=os.getenv("NVIDIA_NIM_ENDPOINT", ""),
             api_key=os.getenv("NVIDIA_NIM_API_KEY", ""),
             model=os.getenv("NVIDIA_NIM_MODEL", ""),
             # Fewer retries than the pipeline default (three NIM attempts): this
@@ -91,7 +92,7 @@ def hotspot_report(hotspot_id: int,
             # verdict.
             retries=1,
             timeout=report_timeout(),
-            ollama_endpoint=ollama or "http://localhost:11434",
+            ollama_endpoint=os.getenv("OLLAMA_ENDPOINT", "") or "http://localhost:11434",
         )
     except Exception:
         logger.warning("report LLM call failed", exc_info=True)

@@ -80,6 +80,10 @@ def test_report_is_unavailable_without_llm_credentials(monkeypatch):
     monkeypatch.setattr(queries, "fetch_hotspot_name", lambda conn, hid: "Test Hotspot")
     monkeypatch.setenv("NVIDIA_NIM_ENDPOINT", "")
     monkeypatch.setenv("OLLAMA_ENDPOINT", "")
+    # The 503 guard now tests the resolved chain: paid-only providers with no
+    # keys make it empty. Ollama is deliberately absent so the chain cannot
+    # resolve to a localhost POST instead of the 503 under test.
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "deepseek,kimi")
 
     r = client.get("/hotspots/1/report?from=2026-08-05T00:00:00Z&to=2026-08-06T00:00:00Z",
                    headers=_auth_headers())
@@ -103,11 +107,9 @@ def _patch_llm_only(monkeypatch):
 
 
 def test_report_serves_an_ollama_only_deployment(monkeypatch):
-    from pipeline import llm_verifier
-
     _patch_llm_only(monkeypatch)
     monkeypatch.setattr(
-        llm_verifier, "call_ollama_raw",
+        "pipeline.llm_providers.call_ollama_raw",
         lambda prompt, endpoint="http://localhost:11434", timeout=None:
         ("Shelling was reported near the border [1].", "llama-3-8b-ollama"),
     )
@@ -120,11 +122,9 @@ def test_report_serves_an_ollama_only_deployment(monkeypatch):
 
 
 def test_report_422s_when_the_narrative_lacks_citations(monkeypatch):
-    from pipeline import llm_verifier
-
     _patch_llm_only(monkeypatch)
     monkeypatch.setattr(
-        llm_verifier, "call_ollama_raw",
+        "pipeline.llm_providers.call_ollama_raw",
         lambda prompt, endpoint="http://localhost:11434", timeout=None:
         ("The situation is calm.", "llama-3-8b-ollama"),
     )
@@ -142,3 +142,30 @@ def test_report_handles_naive_window_times(monkeypatch):
                    headers=_auth_headers())
     # The event sits at 2026-08-05T06:00Z, outside the naive-as-UTC window.
     assert r.status_code == 404
+
+
+def test_report_is_available_when_only_deepseek_is_configured(monkeypatch):
+    _patch_llm_only(monkeypatch)
+    monkeypatch.delenv("NVIDIA_NIM_ENDPOINT", raising=False)
+    monkeypatch.delenv("OLLAMA_ENDPOINT", raising=False)
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "deepseek")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "d")
+    monkeypatch.setattr("api.routes.report.call_llm_raw",
+                        lambda *a, **k: ("Sentence [1].", "deepseek:m"))
+    r = client.get("/hotspots/1/report?from=2026-08-05T00:00:00Z&to=2026-08-06T00:00:00Z",
+                   headers=_auth_headers())
+    assert r.status_code != 503
+
+
+def test_report_is_503_when_no_provider_is_configured(monkeypatch):
+    _patch_llm_only(monkeypatch)
+    monkeypatch.delenv("NVIDIA_NIM_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("MOONSHOT_API_KEY", raising=False)
+    # Drop OLLAMA_ENDPOINT too: the old two-env-var guard would otherwise pass
+    # and fall through to a real localhost POST instead of the 503 under test.
+    monkeypatch.delenv("OLLAMA_ENDPOINT", raising=False)
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "deepseek,kimi")
+    r = client.get("/hotspots/1/report?from=2026-08-05T00:00:00Z&to=2026-08-06T00:00:00Z",
+                   headers=_auth_headers())
+    assert r.status_code == 503

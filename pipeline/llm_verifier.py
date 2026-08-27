@@ -5,14 +5,21 @@ import json
 import logging
 import os
 import re
-import time
+import threading
 from urllib.parse import urlparse
 
-import requests
 from pydantic import BaseModel, ValidationError, field_validator
 
 from pipeline.citations import collapse_duplicate_urls
 from pipeline.db import get_pooled_connection
+from pipeline.llm_providers import (  # noqa: F401 — transport moved here (FR-31); re-exported
+    _llm_timeout,
+    _ratelimit_backoff,
+    _ratelimit_max_wait,
+    _retry_after_seconds,
+    call_llm,
+    call_ollama_raw,
+)
 
 logger = logging.getLogger("sentinel.llm_verifier")
 
@@ -82,7 +89,7 @@ def generate_sitrep(
     endpoint: str,
     api_key: str,
     model: str,
-    ollama_endpoint: str = "http://localhost:11434",
+    ollama_endpoint: str | None = None,
     engine=None,
     llm_call=None,
 ) -> tuple[int | None, str | None]:
@@ -90,13 +97,26 @@ def generate_sitrep(
 
     6a: consistency engine (never blocks; falls back to headline prompt).
     6b: SITREP generation + save. Returns (summary_id, model_used)."""
+    from functools import partial
+
     from pipeline.consistency import run_consistency_engine
 
     engine = engine or run_consistency_engine
     llm_call = llm_call or call_nim_api
     repo = LLMRepository(conn)
 
-    engine_result = engine(conn, hotspot_id)
+    conf_score = repo.fetch_conf_score(hotspot_id)
+    if conf_score is None:
+        # NULL means "never scored": spending a paid provider on an unscored
+        # hotspot is not the gate's intent. The only legitimate "unscoped"
+        # conf_score=None caller is /report, which never reaches this path.
+        conf_score = 0.0
+    # One tier for the whole hotspot. Resolving it separately in the engine and
+    # again for the SITREP would let a single hotspot be written half locally
+    # and half by a paid provider, which makes llm_model_version a lie.
+    bound_llm = partial(call_llm, conf_score=conf_score)
+
+    engine_result = engine(conn, hotspot_id, llm=bound_llm)
     if engine_result is not None and engine_result.verdicts:
         prompt = build_claims_sitrep_prompt(hotspot_id, engine_result)
     else:
@@ -107,7 +127,7 @@ def generate_sitrep(
 
     result, model_used = llm_call(
         prompt, endpoint=endpoint, api_key=api_key, model=model,
-        ollama_endpoint=ollama_endpoint,
+        ollama_endpoint=ollama_endpoint, conf_score=conf_score,
     )
     if not result or not result.get("summary"):
         return None, model_used
@@ -133,44 +153,6 @@ def _extract_json(text: str) -> dict:
         if match:
             return json.loads(match.group())
         raise ValueError(f"LLM response is not valid JSON: {text[:200]}") from None
-
-
-def _llm_timeout(timeout: int | None) -> int:
-    if timeout is not None:
-        return timeout
-    return int(os.getenv("SENTINEL_LLM_TIMEOUT_S", "60"))
-
-
-def _ratelimit_backoff(attempt: int) -> float:
-    """Backoff for a 429, which is a quota clock rather than a transient fault.
-
-    The 5xx schedule (2s, 4s) retries inside the same rate-limit window, so all
-    three attempts land in the bucket that just rejected them and the hotspot
-    drops to the Ollama fallback for nothing.
-    """
-    base = float(os.getenv("SENTINEL_LLM_RATELIMIT_BACKOFF_S", "15"))
-    return base * (2 ** (attempt - 1))
-
-
-def _ratelimit_max_wait() -> float:
-    return float(os.getenv("SENTINEL_LLM_RATELIMIT_MAX_WAIT_S", "60"))
-
-
-def _retry_after_seconds(response: object) -> float | None:
-    """Seconds stated by a Retry-After header, or None when absent or unparseable.
-
-    The HTTP-date form is deliberately not parsed: it is rare here and the
-    backoff schedule already covers it.
-    """
-    headers = getattr(response, "headers", None)
-    try:
-        value = headers.get("Retry-After")  # type: ignore[union-attr]
-    except (AttributeError, TypeError):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def validate_citations(summary: str) -> None:
@@ -232,33 +214,10 @@ class LLMSummary(BaseModel):
         return value
 
 
-def call_ollama_raw(
-    prompt: str,
-    endpoint: str = "http://localhost:11434",
-    timeout: int | None = None,
-) -> tuple[str, str]:
-    """Raw Ollama call: returns (response text, model tag). FR-12 fallback."""
-    model = os.getenv("SENTINEL_OLLAMA_MODEL", "llama3:8b")
-    # Historical audit tag for the default model (spec FR-12 acceptance);
-    # non-default models tag as "<model>-ollama".
-    model_tag = "llama-3-8b-ollama" if model == "llama3:8b" else f"{model}-ollama"
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {
-            "temperature": float(os.getenv("SENTINEL_LLM_TEMPERATURE", "0")),
-            "num_predict": int(os.getenv("SENTINEL_LLM_MAX_TOKENS", "500")),
-        },
-    }
-    try:
-        response = requests.post(
-            f"{endpoint}/api/generate", json=payload, timeout=_llm_timeout(timeout),
-        )
-        response.raise_for_status()
-        return response.json().get("response", ""), model_tag
-    except requests.RequestException as e:
-        raise RuntimeError(f"Ollama fallback failed: {e}") from e
+# The shim applies its arguments by mutating os.environ for the duration of
+# the call. The /report handler runs under a threadpool, so the mutation must
+# be serialized or two concurrent reports could read each other's overrides.
+_ENV_OVERRIDE_LOCK = threading.Lock()
 
 
 def call_llm_raw(
@@ -269,81 +228,37 @@ def call_llm_raw(
     model: str,
     retries: int = 3,
     timeout: int | None = None,
-    ollama_endpoint: str = "http://localhost:11434",
+    ollama_endpoint: str | None = None,
+    conf_score: float | None = None,
 ) -> tuple[str, str]:
-    """NIM chat call with 429 backoff and Ollama fallback; returns (content, model_used)."""
-    timeout = _llm_timeout(timeout)
-    # A missing NIM endpoint means the fallback is the only path. Posting to ""
-    # raises MissingSchema (neither Timeout nor HTTPError), which would escape
-    # the retry loop below and make an Ollama-only host fail 100% of the time.
-    if not endpoint:
-        return call_ollama_raw(prompt, ollama_endpoint, timeout)
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": float(os.getenv("SENTINEL_LLM_TEMPERATURE", "0")),
-        "max_tokens": int(os.getenv("SENTINEL_LLM_MAX_TOKENS", "500")),
-    }
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    last_error: Exception | None = None
-    # A retry that succeeds is otherwise silent, so only the 429s that exhausted
-    # anyway reach the log and the backoff cannot be told apart from a no-op.
-    ratelimit_waits: list[float] = []
-    for attempt in range(1, retries + 1):
+    """Back-compat shim over the FR-31 provider chain.
+
+    The endpoint/api_key/model arguments predate the chain and named NIM
+    specifically; they are now applied as environment overrides for the `nim`
+    and `ollama` providers so existing callers keep working unchanged.
+    ollama_endpoint None leaves a configured OLLAMA_ENDPOINT alone; the old
+    truthy localhost default used to clobber it whenever a caller omitted the
+    argument."""
+    overrides = {}
+    if endpoint:
+        overrides["NVIDIA_NIM_ENDPOINT"] = endpoint
+    if api_key:
+        overrides["NVIDIA_NIM_API_KEY"] = api_key
+    if model:
+        overrides["NVIDIA_NIM_MODEL"] = model
+    if ollama_endpoint:
+        overrides["OLLAMA_ENDPOINT"] = ollama_endpoint
+    previous = {k: os.environ.get(k) for k in overrides}
+    with _ENV_OVERRIDE_LOCK:
+        os.environ.update(overrides)
         try:
-            response = requests.post(endpoint, headers=headers, json=payload, timeout=timeout)
-            response.raise_for_status()
-            if ratelimit_waits:
-                logger.info(
-                    "NIM 429 cleared after %d retr%s (%.0fs waited)",
-                    len(ratelimit_waits),
-                    "y" if len(ratelimit_waits) == 1 else "ies",
-                    sum(ratelimit_waits),
-                )
-            return response.json()["choices"][0]["message"]["content"], model
-        except requests.Timeout:
-            logger.warning("NIM API timed out after %ds, falling back to Ollama", timeout)
-            return call_ollama_raw(prompt, ollama_endpoint, timeout)
-        except requests.HTTPError as error:
-            status = error.response.status_code if error.response is not None else None
-            last_error = error
-            if status == 429:
-                if attempt >= retries:
-                    logger.warning(
-                        "NIM rate limit (429) still set after %d attempts "
-                        "(%.0fs waited), falling back to Ollama",
-                        retries, sum(ratelimit_waits),
-                    )
-                    return call_ollama_raw(prompt, ollama_endpoint, timeout)
-                stated = _retry_after_seconds(error.response)
-                wait = stated if stated is not None else _ratelimit_backoff(attempt)
-                cap = _ratelimit_max_wait()
-                if wait > cap:
-                    # The worker is single-threaded: parking it past the cap
-                    # stalls every other hotspot behind this one.
-                    logger.warning(
-                        "NIM rate limit clears in %.0fs (cap %.0fs), "
-                        "falling back to Ollama", wait, cap,
-                    )
-                    return call_ollama_raw(prompt, ollama_endpoint, timeout)
-                time.sleep(wait)
-                ratelimit_waits.append(wait)
-                continue
-            # NIM 500s are routinely transient, and the Ollama fallback may not
-            # exist on the host, so they are retried rather than dumped on it.
-            if status is not None and status >= 500:
-                if attempt < retries:
-                    time.sleep(2**attempt)
-                    continue
-                logger.warning(
-                    "NIM API exhausted (%s) after %d retries, falling back to Ollama",
-                    status, retries,
-                )
-                return call_ollama_raw(prompt, ollama_endpoint, timeout)
-            raise
-    if last_error is not None:
-        raise last_error
-    raise RuntimeError("NIM call failed without explicit error")
+            return call_llm(prompt, conf_score=conf_score, retries=retries, timeout=timeout)
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 def call_ollama_fallback(
@@ -394,11 +309,13 @@ def call_nim_api(
     model: str,
     retries: int = 3,
     timeout: int | None = None,
-    ollama_endpoint: str = "http://localhost:11434",
+    ollama_endpoint: str | None = None,
+    conf_score: float | None = None,
 ) -> tuple[dict, str]:
     content, model_used = call_llm_raw(
         prompt, endpoint=endpoint, api_key=api_key, model=model,
         retries=retries, timeout=timeout, ollama_endpoint=ollama_endpoint,
+        conf_score=conf_score,
     )
     try:
         return _parse_summary(content), model_used
@@ -412,6 +329,7 @@ def call_nim_api(
             build_repair_prompt(prompt, content, str(error)),
             endpoint=endpoint, api_key=api_key, model=model,
             retries=retries, timeout=timeout, ollama_endpoint=ollama_endpoint,
+            conf_score=conf_score,
         )
         return _parse_summary(content), model_used
 
@@ -464,6 +382,14 @@ class LLMRepository:
             )
             return cursor.fetchone() is not None
 
+    def fetch_conf_score(self, hotspot_id: int) -> float | None:
+        with self._conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT conf_score FROM hotspots WHERE hotspot_id = %s", (hotspot_id,)
+            )
+            row = cursor.fetchone()
+        return float(row[0]) if row and row[0] is not None else None
+
     def save_summary(self, hotspot_id: int, result: dict, model: str) -> None:
         with self._conn.cursor() as cursor:
             cursor.execute(
@@ -500,15 +426,31 @@ def verify_hotspots_with_llm(
     api_key: str,
     model: str,
     threshold: float = 40,
-    ollama_endpoint: str = "http://localhost:11434",
+    ollama_endpoint: str | None = None,
 ) -> dict[str, int]:
     hotspot_ids = LLMRepository(conn).candidate_hotspots(threshold)
     processed = 0
     for hotspot_id in hotspot_ids:
-        summary_id, _model_used = generate_sitrep(
-            conn, hotspot_id, endpoint=endpoint, api_key=api_key, model=model,
-            ollama_endpoint=ollama_endpoint,
-        )
+        try:
+            summary_id, _model_used = generate_sitrep(
+                conn, hotspot_id, endpoint=endpoint, api_key=api_key, model=model,
+                ollama_endpoint=ollama_endpoint,
+            )
+        except Exception as error:
+            # One bad hotspot (every provider failing on it, a malformed
+            # answer) must not end the run for all the rest — the LLM worker
+            # isolates per hotspot already; the monolith/CLI must too.
+            logger.warning("hotspot %s failed LLM verification: %s", hotspot_id, error)
+            # A DB error inside generate_sitrep leaves the transaction aborted,
+            # and this loop keeps using the same connection: without the
+            # rollback every remaining hotspot dies of InFailedSqlTransaction
+            # and the run reports processed=0 with no error. The worker gets
+            # this for free because putconn rolls back on release.
+            try:
+                conn.rollback()
+            except Exception:
+                logger.warning("rollback failed after hotspot %s", hotspot_id)
+            continue
         if summary_id is not None:
             processed += 1
     return {"candidates": len(hotspot_ids), "processed": processed}
@@ -541,17 +483,22 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _build_parser().parse_args()
-    endpoint = os.getenv("NVIDIA_NIM_ENDPOINT", "")
-    api_key = os.getenv("NVIDIA_NIM_API_KEY", "")
-    model = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct")
-    ollama_endpoint = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434")
-    if not endpoint or not api_key:
-        raise RuntimeError("NVIDIA_NIM_ENDPOINT and NVIDIA_NIM_API_KEY are required")
+    from pipeline.llm_providers import NoProviderConfigured, resolve_chain
+    try:
+        resolve_chain()
+    except NoProviderConfigured as error:
+        raise RuntimeError(
+            "no LLM provider configured; check SENTINEL_LLM_PROVIDERS"
+        ) from error
     conn, pool = get_pooled_connection()
     try:
         result = verify_hotspots_with_llm(
-            conn, endpoint=endpoint, api_key=api_key, model=model,
-            threshold=args.threshold, ollama_endpoint=ollama_endpoint,
+            conn,
+            endpoint=os.getenv("NVIDIA_NIM_ENDPOINT", ""),
+            api_key=os.getenv("NVIDIA_NIM_API_KEY", ""),
+            model=os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct"),
+            threshold=args.threshold,
+            ollama_endpoint=os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434"),
         )
     finally:
         pool.return_connection(conn)
