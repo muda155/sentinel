@@ -943,3 +943,62 @@ def test_shim_leaves_configured_ollama_endpoint_alone(monkeypatch):
     monkeypatch.setattr(lv, "call_llm", _chain)
     lv.call_llm_raw("p", endpoint="", api_key="", model="")
     assert seen["ollama_env"] == "http://host.docker.internal:11434"
+
+
+def test_verify_hotspots_rolls_back_a_failed_hotspot(monkeypatch):
+    # generate_sitrep writes and commits; a DB error partway through leaves the
+    # transaction aborted. The loop reuses the same connection, so without a
+    # rollback every remaining hotspot dies of InFailedSqlTransaction and the
+    # run reports processed=0 while looking like N independent LLM failures.
+    from unittest.mock import Mock
+
+    import pipeline.llm_verifier as lv
+
+    conn = Mock()
+    calls = []
+
+    def _sitrep(_conn, hid, **kwargs):
+        calls.append(("sitrep", hid))
+        if hid == 1:
+            raise RuntimeError("current transaction is aborted")
+        return 99, "deepseek:m"
+
+    conn.rollback.side_effect = lambda: calls.append(("rollback", None))
+
+    monkeypatch.setattr(lv, "generate_sitrep", _sitrep)
+    monkeypatch.setattr(lv.LLMRepository, "candidate_hotspots",
+                        lambda self, threshold: [1, 2])
+
+    result = lv.verify_hotspots_with_llm(
+        conn, endpoint="", api_key="", model="", threshold=40,
+    )
+    assert calls == [("sitrep", 1), ("rollback", None), ("sitrep", 2)], (
+        "the rollback must land between the failing hotspot and the next one"
+    )
+    assert result == {"candidates": 2, "processed": 1}
+
+
+def test_verify_hotspots_survives_a_failing_rollback(monkeypatch):
+    # A connection dead enough that rollback() itself raises must not turn a
+    # per-hotspot failure back into a run-ending one.
+    from unittest.mock import Mock
+
+    import pipeline.llm_verifier as lv
+
+    conn = Mock()
+    conn.rollback.side_effect = RuntimeError("connection already closed")
+    attempted = []
+
+    def _sitrep(_conn, hid, **kwargs):
+        attempted.append(hid)
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(lv, "generate_sitrep", _sitrep)
+    monkeypatch.setattr(lv.LLMRepository, "candidate_hotspots",
+                        lambda self, threshold: [1, 2])
+
+    result = lv.verify_hotspots_with_llm(
+        conn, endpoint="", api_key="", model="", threshold=40,
+    )
+    assert attempted == [1, 2]
+    assert result == {"candidates": 2, "processed": 0}

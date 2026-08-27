@@ -441,6 +441,15 @@ def verify_hotspots_with_llm(
             # answer) must not end the run for all the rest — the LLM worker
             # isolates per hotspot already; the monolith/CLI must too.
             logger.warning("hotspot %s failed LLM verification: %s", hotspot_id, error)
+            # A DB error inside generate_sitrep leaves the transaction aborted,
+            # and this loop keeps using the same connection: without the
+            # rollback every remaining hotspot dies of InFailedSqlTransaction
+            # and the run reports processed=0 with no error. The worker gets
+            # this for free because putconn rolls back on release.
+            try:
+                conn.rollback()
+            except Exception:
+                logger.warning("rollback failed after hotspot %s", hotspot_id)
             continue
         if summary_id is not None:
             processed += 1
