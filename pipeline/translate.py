@@ -16,6 +16,9 @@ import requests
 _MARKER = re.compile(r"\[\d+\]")
 _WRAPPED = re.compile(r'<span[^>]*>\s*(\[\d+\])\s*</span>')
 _ANY_SPAN = re.compile(r"</?span[^>]*>")
+# Google treats the wrapper as a word and returns "Dabholkar [1] ." for a
+# sentence that went out as "Dabholkar [1]." - close the gap it opened.
+_MARKER_GAP = re.compile(r"(\[\d+\])\s+([.,;:!?)\]])")
 
 
 def protect_citations(text: str) -> str:
@@ -27,7 +30,8 @@ def restore_citations(text: str) -> str:
     # spacing Google returns is not guaranteed to match what we sent.
     out = _WRAPPED.sub(r"\1", text or "")
     out = _ANY_SPAN.sub("", out)
-    return html.unescape(out)
+    # after unescape, so an &nbsp; Google inserted counts as the gap it is
+    return _MARKER_GAP.sub(r"\1\2", html.unescape(out))
 
 
 def citation_markers(text: str) -> list[str]:

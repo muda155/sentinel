@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shouldTranslate, displaySummary, displayClaimText } from "@/lib/translation";
+import { anyClaimTranslated, shouldTranslate, displaySummary, displayClaimText } from "@/lib/translation";
 import type { Claim } from "@/lib/api";
 import type { Translation } from "@/lib/api";
 
@@ -59,5 +59,25 @@ describe("displayClaimText", () => {
   it("returns English when the reader asked for the original", () => {
     expect(displayClaimText(claim(7, "Military forces advanced north."), tr, true))
       .toBe("Military forces advanced north.");
+  });
+});
+
+describe("anyClaimTranslated", () => {
+  it("is false without a translation", () => {
+    expect(anyClaimTranslated([claim(7, "Military forces advanced north.")], null))
+      .toBe(false);
+  });
+  it("is true when a claim reads back in Vietnamese", () => {
+    expect(anyClaimTranslated([claim(7, "Military forces advanced north.")], tr))
+      .toBe(true);
+  });
+  it("is false when the endpoint returned the English source unchanged", () => {
+    // an over-budget claim is never sent, and its fallback is the same string -
+    // nothing was translated, so no disclosure is owed
+    const english: Translation = {
+      ...tr, claims: [{ claim_id: 7, text: "Military forces advanced north." }],
+    };
+    expect(anyClaimTranslated([claim(7, "Military forces advanced north.")], english))
+      .toBe(false);
   });
 });

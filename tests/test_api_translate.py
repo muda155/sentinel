@@ -122,7 +122,9 @@ def test_google_failure_is_a_503(monkeypatch):
 
 
 def test_over_cap_claims_are_returned_untranslated(monkeypatch):
-    monkeypatch.setenv("SENTINEL_TRANSLATE_MAX_CHARS", "40")
+    # 80 = the 38-char wire summary ('Short [1].' plus its span wrapper) plus
+    # the first 30-char claim, with no room for the second
+    monkeypatch.setenv("SENTINEL_TRANSLATE_MAX_CHARS", "80")
     _patch_hotspot(monkeypatch, summary="Short [1].", claims=[
         {"claim_id": 1, "claim_text": "A" * 30},
         {"claim_id": 2, "claim_text": "B" * 30},
@@ -133,6 +135,7 @@ def test_over_cap_claims_are_returned_untranslated(monkeypatch):
     r = client.get("/hotspots/1/translation?lang=vi", headers=_auth_headers())
     body = r.json()
     assert [c["claim_id"] for c in body["claims"]] == [1, 2]
+    assert body["claims"][0]["text"] == "Đã dịch"
     # The second claim exceeded the budget and came back as its English source.
     assert body["claims"][1]["text"] == "B" * 30
 
@@ -228,3 +231,46 @@ def test_metrics_cover_every_response_class(monkeypatch):
     assert snap["translation_errors_total"] == 3
     # no cache hits in this test - the counter was never incremented
     assert snap.get("translation_cache_hits_total", 0) == 0
+
+
+def test_the_budget_counts_the_wire_string_not_the_raw_text(monkeypatch):
+    # 'Short [1].' is 10 raw characters but 38 on the wire: html.escape plus the
+    # <span translate="no"> wrapper. A cap of 20 must reject it, or the cap does
+    # not bound the request Google actually meters.
+    monkeypatch.setenv("SENTINEL_TRANSLATE_MAX_CHARS", "20")
+    _patch_hotspot(monkeypatch, summary="Short [1].", claims=[])
+    captured = {}
+
+    def _fake(strings, **kw):
+        captured["strings"] = list(strings)
+        return []
+
+    monkeypatch.setattr("api.routes.translate.translate_batch", _fake)
+    r = client.get("/hotspots/1/translation?lang=vi", headers=_auth_headers())
+    body = r.json()
+    assert captured["strings"] == []
+    assert body["summary"] == "Short [1]."
+    assert body["summary_translated"] is False
+
+
+def test_upstream_latency_is_observed_on_success_and_on_failure(monkeypatch):
+    from api.metrics import METRICS
+    from pipeline.translate import TranslationUnavailable
+    _patch_hotspot(monkeypatch)
+    monkeypatch.setattr("api.routes.translate.translate_batch",
+                        lambda strings, **kw: ["Lực lượng [1].", "Quân đội tiến bắc."])
+    client.get("/hotspots/1/translation?lang=vi", headers=_auth_headers())
+
+    def _fail(*a, **k):
+        raise TranslationUnavailable("boom")
+
+    monkeypatch.setattr("api.routes.translate.translate_batch", _fail)
+    # a different summary, or the first call's cache entry would answer this one
+    _patch_hotspot(monkeypatch, summary="Other forces advanced [1].")
+    client.get("/hotspots/1/translation?lang=vi", headers=_auth_headers())
+
+    snap = METRICS.snapshot()
+    # a metric that skipped the failure path would read healthiest during an
+    # outage, when every call is a timeout
+    assert snap["translation_latency_seconds_count"] == 2
+    assert snap["translation_latency_seconds_sum"] >= 0

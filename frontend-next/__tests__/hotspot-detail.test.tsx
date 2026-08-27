@@ -489,4 +489,40 @@ describe("HotspotDetail data loading", () => {
     expect(screen.queryByText(/Lực lượng đã tiến lên/)).toBeNull();
     expect(screen.queryByText(viLocale["detail.autoTranslated"])).toBeNull();
   });
+
+  it("discloses the translation on a hotspot with claims but no SITREP", async () => {
+    summaryMock.mockResolvedValue({ ...summaryFixture, summary: "" });
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue({ claims: [claimFixture], insufficient_sources: false });
+    i18nState.locale = "vi";
+    translationMock.mockResolvedValue({
+      lang: "vi", summary: "", summary_translated: true,
+      claims: [{ claim_id: 1, text: "Khẳng định A" }], cached: false,
+    });
+
+    renderPanel();
+
+    // there is no Brief to carry the disclosure, so it must appear under the
+    // claims - translated text never ships without it, nor without the toggle
+    await screen.findByText(/Khẳng định A/);
+    expect(screen.getByText(viLocale["detail.autoTranslated"])).toBeTruthy();
+    expect(screen.getByText(viLocale["detail.showOriginal"])).toBeTruthy();
+  });
+
+  it("shows no disclosure when every claim came back in English", async () => {
+    summaryMock.mockResolvedValue({ ...summaryFixture, summary: "" });
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue({ claims: [claimFixture], insufficient_sources: false });
+    i18nState.locale = "vi";
+    // the endpoint falls back to the English source for an over-budget claim
+    translationMock.mockResolvedValue({
+      lang: "vi", summary: "", summary_translated: true,
+      claims: [{ claim_id: 1, text: claimFixture.claim_text }], cached: false,
+    });
+
+    renderPanel();
+
+    await screen.findByText(/Claim A/);
+    expect(screen.queryByText(viLocale["detail.autoTranslated"])).toBeNull();
+  });
 });

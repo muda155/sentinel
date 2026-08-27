@@ -9,6 +9,7 @@ import hashlib
 import html
 import logging
 import os
+import time
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -48,24 +49,39 @@ def _cache_key(lang: str, hotspot_id: int, summary: str, claims: list[dict]) -> 
     return "sentinel:translation:" + hashlib.sha256(body.encode()).hexdigest()
 
 
-def _within_budget(summary: str, claims: list[dict]) -> tuple[bool, list[dict]]:
+def _wire_summary(summary: str) -> str:
+    """The exact string the summary is sent as.
+
+    format=html parses markup, so raw text with < or & would be dropped as
+    tags/entities; escaping makes it literal and restore_citations unescapes."""
+    return protect_citations(html.escape(summary))
+
+
+def _within_budget(wire_summary: str,
+                   claims: list[dict]) -> tuple[bool, list[str], list[dict]]:
     """Which strings fit under the per-request character cap, in order.
 
-    The summary is part of the metered total, so one that alone exceeds the cap
-    is skipped and returned untranslated rather than shipping an over-budget
+    Measured on the strings ACTUALLY SENT: html.escape plus the
+    <span translate="no"> wrappers add ~30 characters per citation marker, so
+    counting the raw text would under-report what Google meters - the cap would
+    not bound the billed request it exists to bound.
+
+    The summary is part of that total, so one that alone exceeds the cap is
+    skipped and returned untranslated rather than shipping an over-budget
     request."""
     budget = translate_max_chars()
-    summary_fits = len(summary) <= budget
+    summary_fits = len(wire_summary) <= budget
     if summary_fits:
-        budget -= len(summary)
-    kept = []
+        budget -= len(wire_summary)
+    wire_claims, kept = [], []
     for claim in claims:
-        text = claim["claim_text"]
+        text = html.escape(claim["claim_text"])
         if len(text) > budget:
             continue
         budget -= len(text)
+        wire_claims.append(text)
         kept.append(claim)
-    return summary_fits, kept
+    return summary_fits, wire_claims, kept
 
 
 @router.get("/hotspots/{hotspot_id}/translation", response_model=Translation)
@@ -111,13 +127,12 @@ def hotspot_translation(hotspot_id: int, lang: str = Query("vi"),
         METRICS.inc("translation_errors_total")
         raise HTTPException(status_code=503, detail="translation unavailable")
 
-    summary_fits, translatable = _within_budget(summary, claims)
+    wire_summary = _wire_summary(summary) if summary else ""
+    summary_fits, wire_claims, translatable = _within_budget(wire_summary, claims)
     send_summary = bool(summary) and summary_fits
-    # format=html parses markup, so raw text with < or & would be dropped as
-    # tags/entities; escaping makes it literal and restore_citations unescapes.
-    payload_strings = ([protect_citations(html.escape(summary))] if send_summary else []) + \
-        [html.escape(c["claim_text"]) for c in translatable]
+    payload_strings = ([wire_summary] if send_summary else []) + wire_claims
 
+    started = time.monotonic()
     try:
         raw = translate_batch(
             payload_strings,
@@ -129,6 +144,10 @@ def hotspot_translation(hotspot_id: int, lang: str = Query("vi"),
         METRICS.inc("translation_errors_total")
         logger.warning("translation failed for hotspot %s: %s", hotspot_id, exc)
         raise HTTPException(status_code=503, detail="translation unavailable") from exc
+    finally:
+        # timed on both paths: a latency metric that ignores timeouts reads
+        # healthiest exactly when Google is slowest
+        METRICS.observe("translation_latency_seconds", time.monotonic() - started)
 
     # An empty summary is vacuously translated - nothing failed, so the client
     # must not read summary_translated=false as a translation failure.

@@ -31,3 +31,18 @@ export function displayClaimText(
   const hit = translation.claims.find((c) => c.claim_id === claim.claim_id);
   return hit?.text || claim.claim_text;
 }
+
+/** Whether any claim is actually on screen in Vietnamese. The endpoint falls
+ *  back to the English source per claim (an over-budget claim is never sent),
+ *  and that fallback is the identical string, so an unchanged text means
+ *  nothing was translated and no disclosure is owed. */
+export function anyClaimTranslated(
+  claims: Claim[] | undefined,
+  translation: Translation | null,
+): boolean {
+  if (!translation) return false;
+  return (claims ?? []).some((c) => {
+    const hit = translation.claims.find((t) => t.claim_id === c.claim_id);
+    return Boolean(hit?.text) && hit!.text !== c.claim_text;
+  });
+}

@@ -130,3 +130,16 @@ def test_translate_batch_raises_when_the_count_does_not_match(monkeypatch):
                         lambda *a, **k: _Resp())
     with pytest.raises(TranslationUnavailable):
         translate_batch(["One", "Two"], api_key="k")
+
+
+def test_restore_closes_the_gap_google_opens_before_punctuation():
+    # The <span> wrapper reads as a word, so a sentence sent as "... [1]."
+    # comes back as "... [1] ." - live output from hotspot 12554.
+    assert restore_citations('Dabholkar <span translate="no">[1]</span> . Sana Khan') \
+        == "Dabholkar [1]. Sana Khan"
+    # a non-breaking space is the same gap
+    assert restore_citations("Dabholkar [1]&nbsp;.") == "Dabholkar [1]."
+    # a marker mid-sentence keeps its ordinary spacing
+    assert restore_citations("Forces advanced [1] and held.") \
+        == "Forces advanced [1] and held."
+

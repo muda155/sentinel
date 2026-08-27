@@ -18,7 +18,7 @@ import StackedBar from "@/components/StackedBar";
 import MixBars from "@/components/MixBars";
 import ScoreHelp from "@/components/ScoreHelp";
 import { confBreakdown, consistencyMix, convergenceBreakdown, sourceMix } from "@/lib/score-breakdown";
-import { displayClaimText, displaySummary, shouldTranslate } from "@/lib/translation";
+import { anyClaimTranslated, displayClaimText, displaySummary, shouldTranslate } from "@/lib/translation";
 import type { Translation } from "@/lib/api";
 import { COLOR, FONT, RADIUS, SPACE, buttonStyle, chipStyle } from "@/lib/theme";
 
@@ -98,6 +98,19 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   const retryEvents = () => { setEventsError(false); fetchEvents(); };
 
   const retryButtonStyle = { background: COLOR.surfaceRaised, color: COLOR.text, padding: "2px 10px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 12, marginLeft: 8 };
+
+  // FR-30: translated text never ships without this line. It renders under the
+  // Brief when there is a SITREP and under the claims when there is not, so a
+  // claims-only hotspot is not silently Vietnamese - and never twice, because
+  // both instances drive the same showOriginal toggle.
+  const disclosure = (translated: boolean) => (
+    <p style={{ fontSize: FONT.sm, color: COLOR.textMuted, margin: `${SPACE.xs}px 0 0` }}>
+      {translated ? t("detail.autoTranslated") : t("detail.translationUnavailable")}
+      <button onClick={() => setShowOriginal((v) => !v)} style={retryButtonStyle}>
+        {showOriginal ? t("detail.showTranslation") : t("detail.showOriginal")}
+      </button>
+    </p>
+  );
 
   const jumpTo = (n: number) => {
     setSourcesOpen(true);
@@ -278,15 +291,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
                   : t("detail.noSitrepBelowThreshold")}
               </p>
             )}
-            {translation && summary.summary && (
-              <p style={{ fontSize: FONT.sm, color: COLOR.textMuted, margin: `${SPACE.xs}px 0 0` }}>
-                {translation.summary_translated ? t("detail.autoTranslated")
-                                                : t("detail.translationUnavailable")}
-                <button onClick={() => setShowOriginal((v) => !v)} style={retryButtonStyle}>
-                  {showOriginal ? t("detail.showTranslation") : t("detail.showOriginal")}
-                </button>
-              </p>
-            )}
+            {translation && summary.summary && disclosure(translation.summary_translated)}
           </>
         ) : summaryError ? (
           <p>{t("detail.error")} <button onClick={retrySummary} style={retryButtonStyle}>{t("detail.retry")}</button></p>
@@ -369,6 +374,8 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
               </li>
             ))}
           </ul>
+          {!summary?.summary && anyClaimTranslated(claims?.claims, translation)
+            && disclosure(true)}
         </Section>
       )}
       {events.length > 0 && (() => {
