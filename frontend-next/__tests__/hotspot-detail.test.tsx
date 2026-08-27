@@ -449,4 +449,44 @@ describe("HotspotDetail data loading", () => {
     // the disclosure only appears once the translation lands - wait for it
     await screen.findByText(viLocale["detail.translationUnavailable"]);
   });
+
+  it("fires the translation fetch exactly once per panel open", async () => {
+    summaryMock.mockResolvedValue({ ...summaryFixture, summary: "Forces advanced [1]." });
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue(claimsFixture);
+    i18nState.locale = "vi";
+    translationMock.mockResolvedValue({
+      lang: "vi", summary: "Lực lượng đã tiến lên [1].", summary_translated: true,
+      claims: [], cached: false,
+    });
+
+    renderPanel();
+    await screen.findByText(/Lực lượng đã tiến lên/);
+
+    // summary and claims settle in separate ticks; the effect must batch their
+    // text in ONE call, or every panel open spends two rate-limit tokens
+    expect(translationMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the translation when the locale switches back to English", async () => {
+    summaryMock.mockResolvedValue({ ...summaryFixture, summary: "Forces advanced [1]." });
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue(claimsFixture);
+    i18nState.locale = "vi";
+    translationMock.mockResolvedValue({
+      lang: "vi", summary: "Lực lượng đã tiến lên [1].", summary_translated: true,
+      claims: [], cached: false,
+    });
+
+    const { rerender } = renderPanel();
+    await screen.findByText(/Lực lượng đã tiến lên/);
+
+    i18nState.locale = "en";
+    rerender(<HotspotDetail hotspot={hotspotFixture} onClose={() => {}} />);
+
+    // stale Vietnamese must not keep rendering once the locale is English
+    await screen.findByText(/Forces advanced/);
+    expect(screen.queryByText(/Lực lượng đã tiến lên/)).toBeNull();
+    expect(screen.queryByText(viLocale["detail.autoTranslated"])).toBeNull();
+  });
 });

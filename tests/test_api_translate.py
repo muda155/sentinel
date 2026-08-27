@@ -10,9 +10,13 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def _isolated_translation_state(monkeypatch):
     # Point at a dead Redis so a live docker-compose cache cannot serve another
-    # test's payload. (Rate-limit buckets are reset per test by conftest.)
+    # test's payload, and reset the metrics counters so each test sees only its
+    # own requests. (Rate-limit buckets are reset per test by conftest.)
+    from api.metrics import METRICS
+    METRICS.reset()
     monkeypatch.setenv("REDIS_URL", "redis://localhost:6399")
     monkeypatch.setattr("api.cache._client", None, raising=False)
+    monkeypatch.setattr("api.cache._last_failure", 0.0, raising=False)
     monkeypatch.setenv("GOOGLE_TRANSLATE_API_KEY", "test-key")
     monkeypatch.setenv("SENTINEL_TRANSLATE_ENABLED", "true")
 
@@ -138,3 +142,89 @@ def test_cache_key_changes_when_a_claim_changes(monkeypatch):
     a = _cache_key("vi", 1, "S [1].", [{"claim_id": 7, "claim_text": "One"}])
     b = _cache_key("vi", 1, "S [1].", [{"claim_id": 7, "claim_text": "Two"}])
     assert a != b
+
+
+def test_claim_markup_is_sent_literal_not_parsed(monkeypatch):
+    _patch_hotspot(monkeypatch, claims=[
+        {"claim_id": 7, "claim_text": "Prices <b>rose</b> & fell."},
+    ])
+    captured = {}
+
+    def _fake(strings, **kw):
+        captured["strings"] = list(strings)
+        return ['Lực lượng <span translate="no">[1]</span>.',
+                "Giá &lt;b&gt;tăng&lt;/b&gt; &amp; giảm."]
+
+    monkeypatch.setattr("api.routes.translate.translate_batch", _fake)
+    r = client.get("/hotspots/1/translation?lang=vi", headers=_auth_headers())
+    body = r.json()
+    # format=html would parse raw < > & as markup, so the claim must reach
+    # Google escaped...
+    assert captured["strings"][1] == "Prices &lt;b&gt;rose&lt;/b&gt; &amp; fell."
+    # ...and restore_citations unescapes it back to the literal text.
+    assert body["claims"][0]["text"] == "Giá <b>tăng</b> & giảm."
+
+
+def test_summary_over_the_budget_is_returned_untranslated(monkeypatch):
+    monkeypatch.setenv("SENTINEL_TRANSLATE_MAX_CHARS", "20")
+    _patch_hotspot(monkeypatch, summary="S" * 30, claims=[
+        {"claim_id": 7, "claim_text": "Short claim."},
+    ])
+    captured = {}
+
+    def _fake(strings, **kw):
+        captured["strings"] = list(strings)
+        return ["Câu ngắn."]
+
+    monkeypatch.setattr("api.routes.translate.translate_batch", _fake)
+    r = client.get("/hotspots/1/translation?lang=vi", headers=_auth_headers())
+    body = r.json()
+    assert body["summary"] == "S" * 30
+    assert body["summary_translated"] is False
+    # the over-budget summary was not sent to Google at all
+    assert captured["strings"] == ["Short claim."]
+    assert body["claims"][0]["text"] == "Câu ngắn."
+
+
+def test_claims_only_hotspot_reports_summary_translated_true(monkeypatch):
+    _patch_hotspot(monkeypatch, summary="", claims=[
+        {"claim_id": 7, "claim_text": "Military forces advanced north."},
+    ])
+    monkeypatch.setattr("api.routes.translate.translate_batch",
+                        lambda strings, **kw: ["Quân đội tiến về phía bắc."])
+    r = client.get("/hotspots/1/translation?lang=vi", headers=_auth_headers())
+    body = r.json()
+    # no SITREP is not a translation failure
+    assert body["summary_translated"] is True
+    assert body["summary"] == ""
+    assert body["claims"][0]["text"] == "Quân đội tiến về phía bắc."
+
+
+def test_metrics_cover_every_response_class(monkeypatch):
+    from api.metrics import METRICS
+    # 422: unsupported language, before any DB read
+    r = client.get("/hotspots/1/translation?lang=fr", headers=_auth_headers())
+    assert r.status_code == 422
+    # 404: unknown hotspot
+    monkeypatch.setattr("api.routes.translate.queries.fetch_hotspot_summary",
+                        lambda conn, hid: None)
+    monkeypatch.setattr("api.routes.translate.queries.fetch_hotspot_claims",
+                        lambda conn, hid: None)
+    r = client.get("/hotspots/999999999/translation?lang=vi", headers=_auth_headers())
+    assert r.status_code == 404
+    # 503: no API key
+    monkeypatch.delenv("GOOGLE_TRANSLATE_API_KEY", raising=False)
+    _patch_hotspot(monkeypatch)
+    r = client.get("/hotspots/1/translation?lang=vi", headers=_auth_headers())
+    assert r.status_code == 503
+    # 200: success
+    monkeypatch.setenv("GOOGLE_TRANSLATE_API_KEY", "test-key")
+    monkeypatch.setattr("api.routes.translate.translate_batch",
+                        lambda strings, **kw: ["Lực lượng [1].", "Quân đội tiến về phía bắc."])
+    r = client.get("/hotspots/1/translation?lang=vi", headers=_auth_headers())
+    assert r.status_code == 200
+    snap = METRICS.snapshot()
+    assert snap["translation_requests_total"] == 4
+    assert snap["translation_errors_total"] == 3
+    # no cache hits in this test - the counter was never incremented
+    assert snap.get("translation_cache_hits_total", 0) == 0

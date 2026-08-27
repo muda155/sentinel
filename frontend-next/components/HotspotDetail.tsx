@@ -38,6 +38,11 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   const [summaryError, setSummaryError] = useState(false);
   const [eventsError, setEventsError] = useState(false);
   const [comparing, setComparing] = useState(false);
+  // whether the summary/claims fetches have settled — the translation batches
+  // their text, so it must not fire on the first settlement and again on the
+  // second (that would spend two limit_translate tokens per panel open)
+  const [summaryLoaded, setSummaryLoaded] = useState(false);
+  const [claimsLoaded, setClaimsLoaded] = useState(false);
   // one generation ref per resource — a shared counter would let the last
   // synchronous fetcher (claims) invalidate the two that started earlier
   const summaryGen = useRef(0);
@@ -50,8 +55,8 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   const fetchSummary = useCallback(() => {
     const gen = ++summaryGen.current;
     api.summary(hotspot.hotspot_id, token)
-      .then((s) => { if (summaryGen.current === gen) setSummary(s); })
-      .catch(() => { if (summaryGen.current === gen) setSummaryError(true); });
+      .then((s) => { if (summaryGen.current === gen) { setSummary(s); setSummaryLoaded(true); } })
+      .catch(() => { if (summaryGen.current === gen) { setSummaryError(true); setSummaryLoaded(true); } });
   }, [hotspot.hotspot_id, token]);
 
   const fetchEvents = useCallback(() => {
@@ -64,24 +69,30 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   const fetchClaims = useCallback(() => {
     const gen = ++claimsGen.current;
     api.hotspotClaims(hotspot.hotspot_id, token)
-      .then((c) => { if (claimsGen.current === gen) setClaims(c); })
-      .catch(() => { if (claimsGen.current === gen) setClaims(null); });
+      .then((c) => { if (claimsGen.current === gen) { setClaims(c); setClaimsLoaded(true); } })
+      .catch(() => { if (claimsGen.current === gen) { setClaims(null); setClaimsLoaded(true); } });
   }, [hotspot.hotspot_id, token]);
 
   useEffect(() => { fetchSummary(); fetchEvents(); fetchClaims(); }, [fetchSummary, fetchEvents, fetchClaims]);
 
   useEffect(() => { setTranslation(null); setShowOriginal(false); }, [hotspot.hotspot_id]);
 
-  // FR-30: fires only for the Vietnamese locale and only when there is text to
-  // translate. Any failure leaves the panel English on purpose - English is a
-  // correct rendering, so there is no error state to show.
+  // FR-30: fires once summary and claims have both settled, only for the
+  // Vietnamese locale, and only when there is text to translate. Any failure
+  // leaves the panel English on purpose - English is a correct rendering, so
+  // there is no error state to show. Switching back to English clears the
+  // translation rather than rendering stale Vietnamese.
   useEffect(() => {
-    if (!shouldTranslate(locale, summary?.summary, claims?.claims)) return;
+    if (!summaryLoaded || !claimsLoaded) return;
+    if (!shouldTranslate(locale, summary?.summary, claims?.claims)) {
+      setTranslation(null);
+      return;
+    }
     const gen = ++translationGen.current;
     api.translation(hotspot.hotspot_id, locale, token)
       .then((tr) => { if (translationGen.current === gen) setTranslation(tr); })
       .catch(() => { if (translationGen.current === gen) setTranslation(null); });
-  }, [locale, hotspot.hotspot_id, token, summary, claims]);
+  }, [locale, hotspot.hotspot_id, token, summaryLoaded, claimsLoaded, summary, claims]);
 
   const retrySummary = () => { setSummaryError(false); fetchSummary(); };
   const retryEvents = () => { setEventsError(false); fetchEvents(); };
@@ -267,7 +278,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
                   : t("detail.noSitrepBelowThreshold")}
               </p>
             )}
-            {translation && (
+            {translation && summary.summary && (
               <p style={{ fontSize: FONT.sm, color: COLOR.textMuted, margin: `${SPACE.xs}px 0 0` }}>
                 {translation.summary_translated ? t("detail.autoTranslated")
                                                 : t("detail.translationUnavailable")}

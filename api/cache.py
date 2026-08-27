@@ -2,25 +2,33 @@
 
 One client (and one pool) per process, not a fresh pool per request. The short
 connect timeout stops an unreachable REDIS_URL from pinning a threadpool worker
-for the OS default, which can be minutes."""
+for the OS default, which can be minutes. A failed connect is remembered for a
+cooldown: without it every request re-runs from_url + ping and pays the timeout
+again, and a blip at startup would disable caching for the whole process."""
 from __future__ import annotations
 
 import json
 import logging
 import os
+import time
 
 logger = logging.getLogger("sentinel.api.cache")
 
 _client = None
+_last_failure = 0.0
+_RETRY_AFTER_S = 30.0
 
 
 def redis_client():
-    global _client
+    global _client, _last_failure
     if _client is not None:
         return _client
+    if time.monotonic() - _last_failure < _RETRY_AFTER_S:
+        return None
     try:
         import redis as redis_lib
     except ImportError:
+        _last_failure = time.monotonic()
         return None
     try:
         client = redis_lib.from_url(
@@ -29,6 +37,7 @@ def redis_client():
         )
         client.ping()
     except Exception:
+        _last_failure = time.monotonic()
         return None
     _client = client
     return _client
