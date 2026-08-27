@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, ValidationError
 
 from pipeline.citations import collapse_duplicate_urls
-from pipeline.llm_verifier import _extract_json, call_llm_raw
+from pipeline.llm_verifier import _extract_json
 from pipeline.relevance import (
     evidence_homogeneity,
     get_embedder,
@@ -163,13 +163,12 @@ def build_claims_prompt(evidence: list[dict]) -> str:
 
 
 def _default_llm(prompt: str) -> tuple[str, str]:
-    return call_llm_raw(
-        prompt,
-        endpoint=os.getenv("NVIDIA_NIM_ENDPOINT", ""),
-        api_key=os.getenv("NVIDIA_NIM_API_KEY", ""),
-        model=os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct"),
-        ollama_endpoint=os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434"),
-    )
+    # Unbound default for direct callers (the `python -m pipeline.consistency`
+    # CLI). A manual invocation must not silently spend on a paid provider;
+    # generate_sitrep passes a bound callable that can.
+    from pipeline.llm_providers import call_llm, resolve_chain
+    resolve_chain(paid_allowed=False)
+    return call_llm(prompt, conf_score=0.0)
 
 
 def _min_claim_words() -> int:

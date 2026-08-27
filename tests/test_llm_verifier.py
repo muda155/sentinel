@@ -810,3 +810,37 @@ def test_call_llm_raw_passes_explicit_nim_config_through_as_overrides(monkeypatc
                     api_key="k", model="some-model")
     assert captured["nim_endpoint"] == "https://nim.example/v1/chat/completions"
     assert captured["nim_model"] == "some-model"
+
+
+def test_extraction_and_sitrep_share_one_bound_llm(monkeypatch):
+    from unittest.mock import MagicMock
+
+    import pipeline.llm_verifier as lv
+
+    seen = {}
+
+    def _engine(conn, hotspot_id, *, llm=None, judge=None):
+        seen["engine_llm"] = llm
+        return None                      # forces the headline-prompt path
+
+    repo_articles = [{"title": "t", "url": "https://e.com/1", "domain": "e.com"}]
+    monkeypatch.setattr(lv.LLMRepository, "fetch_hotspot_articles",
+                        lambda self, hid: repo_articles)
+    monkeypatch.setattr(lv.LLMRepository, "fetch_conf_score", lambda self, hid: 75.0)
+    monkeypatch.setattr(lv.LLMRepository, "save_summary", lambda *a, **k: None)
+
+    def _llm_call(prompt, **kwargs):
+        seen["sitrep_kwargs"] = kwargs
+        return {"summary": "S [1].", "conflict_detected": False}, "deepseek:m"
+
+    conn = MagicMock()
+    # The final summary_id SELECT must read as "no row" on the mock connection.
+    conn.cursor.return_value.__enter__.return_value.fetchone.return_value = None
+
+    lv.generate_sitrep(conn, 1, endpoint="", api_key="", model="",
+                       engine=_engine, llm_call=_llm_call)
+
+    # the engine must receive a bound callable, not None
+    assert seen["engine_llm"] is not None
+    # and the SITREP must be told the same score
+    assert seen["sitrep_kwargs"].get("conf_score") == 75.0

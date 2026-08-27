@@ -96,13 +96,21 @@ def generate_sitrep(
 
     6a: consistency engine (never blocks; falls back to headline prompt).
     6b: SITREP generation + save. Returns (summary_id, model_used)."""
+    from functools import partial
+
     from pipeline.consistency import run_consistency_engine
 
     engine = engine or run_consistency_engine
     llm_call = llm_call or call_nim_api
     repo = LLMRepository(conn)
 
-    engine_result = engine(conn, hotspot_id)
+    conf_score = repo.fetch_conf_score(hotspot_id)
+    # One tier for the whole hotspot. Resolving it separately in the engine and
+    # again for the SITREP would let a single hotspot be written half locally
+    # and half by a paid provider, which makes llm_model_version a lie.
+    bound_llm = partial(call_llm, conf_score=conf_score)
+
+    engine_result = engine(conn, hotspot_id, llm=bound_llm)
     if engine_result is not None and engine_result.verdicts:
         prompt = build_claims_sitrep_prompt(hotspot_id, engine_result)
     else:
@@ -113,7 +121,7 @@ def generate_sitrep(
 
     result, model_used = llm_call(
         prompt, endpoint=endpoint, api_key=api_key, model=model,
-        ollama_endpoint=ollama_endpoint,
+        ollama_endpoint=ollama_endpoint, conf_score=conf_score,
     )
     if not result or not result.get("summary"):
         return None, model_used
@@ -286,10 +294,12 @@ def call_nim_api(
     retries: int = 3,
     timeout: int | None = None,
     ollama_endpoint: str = "http://localhost:11434",
+    conf_score: float | None = None,
 ) -> tuple[dict, str]:
     content, model_used = call_llm_raw(
         prompt, endpoint=endpoint, api_key=api_key, model=model,
         retries=retries, timeout=timeout, ollama_endpoint=ollama_endpoint,
+        conf_score=conf_score,
     )
     try:
         return _parse_summary(content), model_used
@@ -303,6 +313,7 @@ def call_nim_api(
             build_repair_prompt(prompt, content, str(error)),
             endpoint=endpoint, api_key=api_key, model=model,
             retries=retries, timeout=timeout, ollama_endpoint=ollama_endpoint,
+            conf_score=conf_score,
         )
         return _parse_summary(content), model_used
 
@@ -354,6 +365,14 @@ class LLMRepository:
                 "SELECT 1 FROM llm_summaries WHERE hotspot_id = %s", (hotspot_id,)
             )
             return cursor.fetchone() is not None
+
+    def fetch_conf_score(self, hotspot_id: int) -> float | None:
+        with self._conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT conf_score FROM hotspots WHERE hotspot_id = %s", (hotspot_id,)
+            )
+            row = cursor.fetchone()
+        return float(row[0]) if row and row[0] is not None else None
 
     def save_summary(self, hotspot_id: int, result: dict, model: str) -> None:
         with self._conn.cursor() as cursor:
