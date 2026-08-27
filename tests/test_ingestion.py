@@ -101,6 +101,14 @@ def test_run_once_supports_headerless_gdelt_export(monkeypatch: pytest.MonkeyPat
         "pipeline.ingestion.requests.get",
         Mock(side_effect=[lastupdate_response, export_response]),
     )
+    # run_once goes through fetch_latest_existing_url, which HEAD-checks each
+    # candidate. Unmocked, that reaches data.gdeltproject.org for a URL this
+    # test invented; the 404 it gets back leaves no accessible candidate and
+    # the test fails everywhere, network or not.
+    monkeypatch.setattr(
+        "pipeline.ingestion.requests.head",
+        Mock(return_value=Mock(status_code=200)),
+    )
 
     ingestor = GDELT2Ingestor()
     filtered = ingestor.run_once()

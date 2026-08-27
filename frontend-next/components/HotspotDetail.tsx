@@ -18,14 +18,18 @@ import StackedBar from "@/components/StackedBar";
 import MixBars from "@/components/MixBars";
 import ScoreHelp from "@/components/ScoreHelp";
 import { confBreakdown, consistencyMix, convergenceBreakdown, sourceMix } from "@/lib/score-breakdown";
+import { anyClaimTranslated, displayClaimText, displaySummary, shouldTranslate } from "@/lib/translation";
+import type { Translation } from "@/lib/api";
 import { COLOR, FONT, RADIUS, SPACE, buttonStyle, chipStyle } from "@/lib/theme";
 
 export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; onClose: () => void }) {
   const { token } = useAuth();
-  const { t } = useT();
+  const { t, locale } = useT();
   const [summary, setSummary] = useState<HotspotSummary | null>(null);
   const [events, setEvents] = useState<HotspotEvent[]>([]);
   const [claims, setClaims] = useState<HotspotClaims | null>(null);
+  const [translation, setTranslation] = useState<Translation | null>(null);
+  const [showOriginal, setShowOriginal] = useState(false);
   const [flash, setFlash] = useState<number | null>(null);
   // Sources must stay reachable by citation jumps: a collapsed Section unmounts
   // its <ol>, so jumpTo forces it open before scrolling (FR-16).
@@ -34,19 +38,25 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   const [summaryError, setSummaryError] = useState(false);
   const [eventsError, setEventsError] = useState(false);
   const [comparing, setComparing] = useState(false);
+  // whether the summary/claims fetches have settled — the translation batches
+  // their text, so it must not fire on the first settlement and again on the
+  // second (that would spend two limit_translate tokens per panel open)
+  const [summaryLoaded, setSummaryLoaded] = useState(false);
+  const [claimsLoaded, setClaimsLoaded] = useState(false);
   // one generation ref per resource — a shared counter would let the last
   // synchronous fetcher (claims) invalidate the two that started earlier
   const summaryGen = useRef(0);
   const eventsGen = useRef(0);
   const claimsGen = useRef(0);
+  const translationGen = useRef(0);
 
   // guard every set* with a generation check so a stale in-flight response
   // (older retry, or a previous hotspot) can never populate this panel
   const fetchSummary = useCallback(() => {
     const gen = ++summaryGen.current;
     api.summary(hotspot.hotspot_id, token)
-      .then((s) => { if (summaryGen.current === gen) setSummary(s); })
-      .catch(() => { if (summaryGen.current === gen) setSummaryError(true); });
+      .then((s) => { if (summaryGen.current === gen) { setSummary(s); setSummaryLoaded(true); } })
+      .catch(() => { if (summaryGen.current === gen) { setSummaryError(true); setSummaryLoaded(true); } });
   }, [hotspot.hotspot_id, token]);
 
   const fetchEvents = useCallback(() => {
@@ -59,16 +69,48 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
   const fetchClaims = useCallback(() => {
     const gen = ++claimsGen.current;
     api.hotspotClaims(hotspot.hotspot_id, token)
-      .then((c) => { if (claimsGen.current === gen) setClaims(c); })
-      .catch(() => { if (claimsGen.current === gen) setClaims(null); });
+      .then((c) => { if (claimsGen.current === gen) { setClaims(c); setClaimsLoaded(true); } })
+      .catch(() => { if (claimsGen.current === gen) { setClaims(null); setClaimsLoaded(true); } });
   }, [hotspot.hotspot_id, token]);
 
   useEffect(() => { fetchSummary(); fetchEvents(); fetchClaims(); }, [fetchSummary, fetchEvents, fetchClaims]);
+
+  useEffect(() => { setTranslation(null); setShowOriginal(false); }, [hotspot.hotspot_id]);
+
+  // FR-30: fires once summary and claims have both settled, only for the
+  // Vietnamese locale, and only when there is text to translate. Any failure
+  // leaves the panel English on purpose - English is a correct rendering, so
+  // there is no error state to show. Switching back to English clears the
+  // translation rather than rendering stale Vietnamese.
+  useEffect(() => {
+    if (!summaryLoaded || !claimsLoaded) return;
+    if (!shouldTranslate(locale, summary?.summary, claims?.claims)) {
+      setTranslation(null);
+      return;
+    }
+    const gen = ++translationGen.current;
+    api.translation(hotspot.hotspot_id, locale, token)
+      .then((tr) => { if (translationGen.current === gen) setTranslation(tr); })
+      .catch(() => { if (translationGen.current === gen) setTranslation(null); });
+  }, [locale, hotspot.hotspot_id, token, summaryLoaded, claimsLoaded, summary, claims]);
 
   const retrySummary = () => { setSummaryError(false); fetchSummary(); };
   const retryEvents = () => { setEventsError(false); fetchEvents(); };
 
   const retryButtonStyle = { background: COLOR.surfaceRaised, color: COLOR.text, padding: "2px 10px", borderRadius: 4, border: "none", cursor: "pointer", fontSize: 12, marginLeft: 8 };
+
+  // FR-30: translated text never ships without this line. It renders under the
+  // Brief when there is a SITREP and under the claims when there is not, so a
+  // claims-only hotspot is not silently Vietnamese - and never twice, because
+  // both instances drive the same showOriginal toggle.
+  const disclosure = (translated: boolean) => (
+    <p style={{ fontSize: FONT.sm, color: COLOR.textMuted, margin: `${SPACE.xs}px 0 0` }}>
+      {translated ? t("detail.autoTranslated") : t("detail.translationUnavailable")}
+      <button onClick={() => setShowOriginal((v) => !v)} style={retryButtonStyle}>
+        {showOriginal ? t("detail.showTranslation") : t("detail.showOriginal")}
+      </button>
+    </p>
+  );
 
   const jumpTo = (n: number) => {
     setSourcesOpen(true);
@@ -231,7 +273,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
             {summary.conflict_detected && <p style={{ color: COLOR.danger }}>{t("detail.conflictDetected")}</p>}
             {summary.summary ? (
               <p>
-                {parseCitations(summary.summary).map((part, i) =>
+                {parseCitations(displaySummary(summary.summary, translation, showOriginal)).map((part, i) =>
                   part.type === "cite" ? (
                     <sup key={i} role="button" onClick={() => jumpTo(part.n)}
                          style={{ color: COLOR.accent, cursor: "pointer", fontWeight: 600 }}>
@@ -249,6 +291,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
                   : t("detail.noSitrepBelowThreshold")}
               </p>
             )}
+            {translation && summary.summary && disclosure(translation.summary_translated)}
           </>
         ) : summaryError ? (
           <p>{t("detail.error")} <button onClick={retrySummary} style={retryButtonStyle}>{t("detail.retry")}</button></p>
@@ -289,7 +332,7 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
                 <span style={{ color: statusColor(c.status), fontWeight: 600 }}>
                   {t(statusLabelKey(c.status) as MessageKey)}
                 </span>{" "}
-                {c.claim_text}
+                {displayClaimText(c, translation, showOriginal)}
                 {(() => {
                   const { supporting, contradicting } = splitEvidence(c);
                   // inline probability is dispute-only: on supporting citations it is
@@ -331,6 +374,8 @@ export default function HotspotDetail({ hotspot, onClose }: { hotspot: Hotspot; 
               </li>
             ))}
           </ul>
+          {!summary?.summary && anyClaimTranslated(claims?.claims, translation)
+            && disclosure(true)}
         </Section>
       )}
       {events.length > 0 && (() => {

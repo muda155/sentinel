@@ -1,5 +1,6 @@
 """Minimal in-process counters rendered in Prometheus text format (NFR-6).
-Tracked: cluster/hotspot count, alert count, LLM latency, fallback rate."""
+Tracked: cluster/hotspot count, alert count, LLM latency, fallback rate, and
+translation requests, cache hits, errors and latency (FR-30)."""
 from __future__ import annotations
 
 import threading

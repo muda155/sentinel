@@ -34,6 +34,8 @@ def _reset_rate_limit_buckets():
     ratelimit._bucket = ratelimit.TokenBucket()
     ratelimit._auth_bucket = ratelimit.TokenBucket(rate_per_min=ratelimit.AUTH_RATE_PER_MIN)
     ratelimit._report_bucket = ratelimit.TokenBucket(rate_per_min=ratelimit.REPORT_RATE_PER_MIN)
+    ratelimit._translate_bucket = ratelimit.TokenBucket(
+        rate_per_min=ratelimit.TRANSLATE_RATE_PER_MIN)
     yield
 
 

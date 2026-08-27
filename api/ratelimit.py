@@ -121,3 +121,20 @@ def limit_report(request: Request) -> None:
     if not _report_bucket.allow(client_key):
         raise HTTPException(status_code=HTTP_429_TOO_MANY_REQUESTS,
                             detail="Report rate limit exceeded. Try again later.")
+
+
+# The translation endpoint fans out to a paid external API. It fires
+# automatically on every Vietnamese panel open, so it needs more headroom than
+# the 4/min report bucket - but not the shared 60/min one, which in front of a
+# metered API is a cost hole.
+TRANSLATE_RATE_PER_MIN = int(os.getenv("SENTINEL_TRANSLATE_RATE_PER_MIN", "20"))
+
+_translate_bucket = TokenBucket(rate_per_min=TRANSLATE_RATE_PER_MIN)
+
+
+def limit_translate(request: Request) -> None:
+    """Per-IP limit for the externally-billed translation endpoint."""
+    client_key = _client_ip(request)
+    if not _translate_bucket.allow(client_key):
+        raise HTTPException(status_code=HTTP_429_TOO_MANY_REQUESTS,
+                            detail="Translation rate limit exceeded. Try again later.")

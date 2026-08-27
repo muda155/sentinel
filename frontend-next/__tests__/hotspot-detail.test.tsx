@@ -5,12 +5,15 @@ import type { Claim, Hotspot, HotspotClaims, HotspotEvent, HotspotSummary } from
 
 // token is mutable so a test can supersede an in-flight fetch (generation counter)
 const authState = vi.hoisted(() => ({ token: "test-token" }));
+// locale is mutable so a test can turn the FR-30 translation fetch on/off
+const i18nState = vi.hoisted(() => ({ locale: "en" as string }));
 
 vi.mock("@/lib/api", () => ({
   api: {
     summary: vi.fn(),
     hotspotEvents: vi.fn(),
     hotspotClaims: vi.fn(),
+    translation: vi.fn(),
   },
 }));
 
@@ -20,7 +23,12 @@ vi.mock("@/lib/auth", () => ({
 
 vi.mock("@/lib/i18n", async () => {
   const { vi: dict } = await import("@/lib/locales/vi");
-  return { useT: () => ({ t: (k: string) => dict[k as keyof typeof dict] ?? k }) };
+  return {
+    useT: () => ({
+      t: (k: string) => dict[k as keyof typeof dict] ?? k,
+      locale: i18nState.locale,
+    }),
+  };
 });
 
 vi.mock("@/components/TrustTierEditor", () => ({ default: () => null }));
@@ -56,12 +64,14 @@ const claimFixture: Claim = {
 const summaryMock = vi.mocked(api.summary);
 const eventsMock = vi.mocked(api.hotspotEvents);
 const claimsMock = vi.mocked(api.hotspotClaims);
+const translationMock = vi.mocked(api.translation);
 
 const renderPanel = () => render(<HotspotDetail hotspot={hotspotFixture} onClose={() => {}} />);
 
 beforeEach(() => {
   vi.clearAllMocks();
   authState.token = "test-token";
+  i18nState.locale = "en";
 });
 
 describe("HotspotDetail data loading", () => {
@@ -389,5 +399,130 @@ describe("HotspotDetail data loading", () => {
 
     fireEvent.click(screen.getByText("[1]"));
     await screen.findByText(eventFixture.title!);
+  });
+
+  it("does not request a translation for the English locale", async () => {
+    summaryMock.mockResolvedValue(summaryFixture);
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue(claimsFixture);
+
+    renderPanel();
+    await screen.findByText(summaryFixture.summary);
+    expect(translationMock).not.toHaveBeenCalled();
+  });
+
+  it("renders the Vietnamese summary and keeps the citation marker", async () => {
+    summaryMock.mockResolvedValue({ ...summaryFixture, summary: "Forces advanced [1]." });
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue(claimsFixture);
+    i18nState.locale = "vi";
+    translationMock.mockResolvedValue({
+      lang: "vi", summary: "Lực lượng đã tiến lên [1].", summary_translated: true,
+      claims: [], cached: false,
+    });
+
+    renderPanel();
+
+    // the translated text renders, the [1] superscript survives the display
+    // path (FR-16 click-to-jump), and the disclosure line states the original
+    // analysis is English
+    await screen.findByText(/Lực lượng đã tiến lên/);
+    expect(screen.getByText("[1]")).toBeTruthy();
+    expect(screen.getByText(viLocale["detail.autoTranslated"])).toBeTruthy();
+    expect(screen.getByText(viLocale["detail.showOriginal"])).toBeTruthy();
+  });
+
+  it("keeps the English summary when summary_translated is false", async () => {
+    summaryMock.mockResolvedValue({ ...summaryFixture, summary: "Forces advanced [1]." });
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue(claimsFixture);
+    i18nState.locale = "vi";
+    translationMock.mockResolvedValue({
+      lang: "vi", summary: "Lực lượng đã tiến lên [1].", summary_translated: false,
+      claims: [], cached: false,
+    });
+
+    renderPanel();
+
+    await screen.findByText(/Forces advanced/);
+    expect(screen.queryByText(/Lực lượng đã tiến lên/)).toBeNull();
+    // the disclosure only appears once the translation lands - wait for it
+    await screen.findByText(viLocale["detail.translationUnavailable"]);
+  });
+
+  it("fires the translation fetch exactly once per panel open", async () => {
+    summaryMock.mockResolvedValue({ ...summaryFixture, summary: "Forces advanced [1]." });
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue(claimsFixture);
+    i18nState.locale = "vi";
+    translationMock.mockResolvedValue({
+      lang: "vi", summary: "Lực lượng đã tiến lên [1].", summary_translated: true,
+      claims: [], cached: false,
+    });
+
+    renderPanel();
+    await screen.findByText(/Lực lượng đã tiến lên/);
+
+    // summary and claims settle in separate ticks; the effect must batch their
+    // text in ONE call, or every panel open spends two rate-limit tokens
+    expect(translationMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the translation when the locale switches back to English", async () => {
+    summaryMock.mockResolvedValue({ ...summaryFixture, summary: "Forces advanced [1]." });
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue(claimsFixture);
+    i18nState.locale = "vi";
+    translationMock.mockResolvedValue({
+      lang: "vi", summary: "Lực lượng đã tiến lên [1].", summary_translated: true,
+      claims: [], cached: false,
+    });
+
+    const { rerender } = renderPanel();
+    await screen.findByText(/Lực lượng đã tiến lên/);
+
+    i18nState.locale = "en";
+    rerender(<HotspotDetail hotspot={hotspotFixture} onClose={() => {}} />);
+
+    // stale Vietnamese must not keep rendering once the locale is English
+    await screen.findByText(/Forces advanced/);
+    expect(screen.queryByText(/Lực lượng đã tiến lên/)).toBeNull();
+    expect(screen.queryByText(viLocale["detail.autoTranslated"])).toBeNull();
+  });
+
+  it("discloses the translation on a hotspot with claims but no SITREP", async () => {
+    summaryMock.mockResolvedValue({ ...summaryFixture, summary: "" });
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue({ claims: [claimFixture], insufficient_sources: false });
+    i18nState.locale = "vi";
+    translationMock.mockResolvedValue({
+      lang: "vi", summary: "", summary_translated: true,
+      claims: [{ claim_id: 1, text: "Khẳng định A" }], cached: false,
+    });
+
+    renderPanel();
+
+    // there is no Brief to carry the disclosure, so it must appear under the
+    // claims - translated text never ships without it, nor without the toggle
+    await screen.findByText(/Khẳng định A/);
+    expect(screen.getByText(viLocale["detail.autoTranslated"])).toBeTruthy();
+    expect(screen.getByText(viLocale["detail.showOriginal"])).toBeTruthy();
+  });
+
+  it("shows no disclosure when every claim came back in English", async () => {
+    summaryMock.mockResolvedValue({ ...summaryFixture, summary: "" });
+    eventsMock.mockResolvedValue([eventFixture]);
+    claimsMock.mockResolvedValue({ claims: [claimFixture], insufficient_sources: false });
+    i18nState.locale = "vi";
+    // the endpoint falls back to the English source for an over-budget claim
+    translationMock.mockResolvedValue({
+      lang: "vi", summary: "", summary_translated: true,
+      claims: [{ claim_id: 1, text: claimFixture.claim_text }], cached: false,
+    });
+
+    renderPanel();
+
+    await screen.findByText(/Claim A/);
+    expect(screen.queryByText(viLocale["detail.autoTranslated"])).toBeNull();
   });
 });

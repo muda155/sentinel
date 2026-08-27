@@ -65,13 +65,14 @@ All config via env vars in `sentinel.env` (copy to override locally). Key vars:
 - `PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD` — DB connection (port 6432 = PgBouncer)
 - `NVIDIA_NIM_ENDPOINT`, `NVIDIA_NIM_API_KEY`, `NVIDIA_NIM_MODEL` — LLM step (step 6 skipped if absent)
 - `OLLAMA_ENDPOINT` — fallback LLM (default `http://localhost:11434`), `SENTINEL_OLLAMA_MODEL` — fallback model (default `llama3:8b`; 8 GB hosts use `llama3.2:3b`)
-- `ACLED_EMAIL`/`ACLED_PASSWORD` — myACLED OAuth credentials (step 2 skipped if absent)
+- `ACLED_EMAIL`/`ACLED_PASSWORD`, or `ACLED_ACCESS_TOKEN`, or `ACLED_REFRESH_TOKEN` — myACLED credentials; step 2 is skipped when none is set
 - `SENTINEL_LOOKBACK_HOURS` (default 24), `SENTINEL_DBSCAN_WINDOW_HOURS` (default 2), `SENTINEL_LLM_THRESHOLD` (default 40)
 - `SENTINEL_CONF_W_DENSITY` (default 0.7), `SENTINEL_CONF_W_DIVERSITY` (default 0.3), `SENTINEL_CONF_DENSITY_DIVISOR` (default 3) — conf_score recalibration (FR-7/FR-8/FR-9)
 - `SENTINEL_NLI_MODEL` (default `cross-encoder/nli-deberta-v3-base`), `SENTINEL_NLI_MIN_PROB` (default 0.6), `SENTINEL_CONSISTENCY_DISPUTE_RATIO` (default 0.5), `SENTINEL_CONSISTENCY_MAX_CLAIMS` (default 8), `SENTINEL_CONSISTENCY_MAX_DOMAINS` (default 20), `SENTINEL_CONSISTENCY_MIN_CLAIM_WORDS` (default 4) — M6 Consistency Engine (FR-22)
 - `SENTINEL_GKG_ENABLED` (default `true`), `SENTINEL_GKG_TIMEOUT_S` (default 120), `SENTINEL_GKG_BACKFILL_DAYS` (default 7) — M7 GKG headline enrichment (FR-25)
 - `SENTINEL_RELEVANCE_ENABLED` (default `true`), `SENTINEL_RELEVANCE_MODEL`, `SENTINEL_RELEVANCE_MIN_SIM` (0.35), `SENTINEL_RELEVANCE_MIN_PEAK` (0.15), `SENTINEL_RELEVANCE_MAX_HOMOGENEITY` (0.75) — M8 relevance gate (FR-26)
 - `SENTINEL_REPORT_RATE_PER_MIN` (default 4), `SENTINEL_REPORT_TIMEOUT_S` (default 30) — M9 window narrative report (FR-29)
+- `GOOGLE_TRANSLATE_API_KEY` (unset ⇒ feature off), `SENTINEL_TRANSLATE_ENABLED` (default true), `SENTINEL_TRANSLATE_RATE_PER_MIN` (default 20), `SENTINEL_TRANSLATE_TIMEOUT_S` (default 10), `SENTINEL_TRANSLATE_TTL_S` (default 86400), `SENTINEL_TRANSLATE_MAX_CHARS` (default 5000) — M10 Vietnamese display translation (FR-30)
 
 ## Spec compliance
 

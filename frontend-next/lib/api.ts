@@ -66,6 +66,14 @@ export type WindowReport = {
   cached: boolean;
 };
 
+export type Translation = {
+  lang: string;
+  summary: string;
+  summary_translated: boolean;
+  claims: { claim_id: number; text: string }[];
+  cached: boolean;
+};
+
 export type UserRow = {
   user_id: number; username: string; role: "analyst" | "admin"; created_at: string | null;
 };
@@ -166,6 +174,8 @@ export const api = {
       `/hotspots/${id}/report?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
       token,
     ),
+  translation: (id: number, lang: string, token?: string | null) =>
+    getJson<Translation>(`/hotspots/${id}/translation?lang=${encodeURIComponent(lang)}`, token),
   users: (token?: string | null) => getJson<UserRow[]>("/auth/users", token),
   createUser: (body: { username: string; password: string; role: "analyst" | "admin" },
                token?: string | null) => postJson<UserRow>("/auth/users", body, token),
