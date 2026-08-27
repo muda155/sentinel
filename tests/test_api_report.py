@@ -103,11 +103,9 @@ def _patch_llm_only(monkeypatch):
 
 
 def test_report_serves_an_ollama_only_deployment(monkeypatch):
-    from pipeline import llm_verifier
-
     _patch_llm_only(monkeypatch)
     monkeypatch.setattr(
-        llm_verifier, "call_ollama_raw",
+        "pipeline.llm_providers.call_ollama_raw",
         lambda prompt, endpoint="http://localhost:11434", timeout=None:
         ("Shelling was reported near the border [1].", "llama-3-8b-ollama"),
     )
@@ -120,11 +118,9 @@ def test_report_serves_an_ollama_only_deployment(monkeypatch):
 
 
 def test_report_422s_when_the_narrative_lacks_citations(monkeypatch):
-    from pipeline import llm_verifier
-
     _patch_llm_only(monkeypatch)
     monkeypatch.setattr(
-        llm_verifier, "call_ollama_raw",
+        "pipeline.llm_providers.call_ollama_raw",
         lambda prompt, endpoint="http://localhost:11434", timeout=None:
         ("The situation is calm.", "llama-3-8b-ollama"),
     )

@@ -58,8 +58,9 @@ def test_call_nim_api_retries_on_429_then_returns_json(monkeypatch: pytest.Monke
         ]
     }
     post_mock = mock.Mock(side_effect=[too_many, ok])
-    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
-    monkeypatch.setattr("pipeline.llm_verifier.time.sleep", mock.Mock())
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "nim")
+    monkeypatch.setattr("pipeline.llm_providers.requests.post", post_mock)
+    monkeypatch.setattr("pipeline.llm_providers.time.sleep", mock.Mock())
 
     result, model_used = llm_verifier.call_nim_api(
         prompt="test",
@@ -68,7 +69,7 @@ def test_call_nim_api_retries_on_429_then_returns_json(monkeypatch: pytest.Monke
         model="meta/llama-3.1-70b-instruct",
     )
     assert result["conflict_detected"] is False
-    assert model_used == "meta/llama-3.1-70b-instruct"
+    assert model_used == "nim:meta/llama-3.1-70b-instruct"
     assert post_mock.call_count == 2
 
 
@@ -96,8 +97,9 @@ def test_ollama_fallback_triggered_on_429_exhaustion(monkeypatch: pytest.MonkeyP
         raise requests.HTTPError(response=too_many)
 
     post_mock = mock.Mock(side_effect=post_side_effect)
-    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
-    monkeypatch.setattr("pipeline.llm_verifier.time.sleep", mock.Mock())
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "nim,ollama")
+    monkeypatch.setattr("pipeline.llm_providers.requests.post", post_mock)
+    monkeypatch.setattr("pipeline.llm_providers.time.sleep", mock.Mock())
 
     result, model_used = llm_verifier.call_nim_api(
         prompt="test",
@@ -115,7 +117,7 @@ def test_ollama_fallback_triggered_on_429_exhaustion(monkeypatch: pytest.MonkeyP
 
 def test_call_ollama_fallback_mocked() -> None:
     """call_ollama_fallback sends correct payload to Ollama endpoint."""
-    with mock.patch("pipeline.llm_verifier.requests.post") as post_mock:
+    with mock.patch("pipeline.llm_providers.requests.post") as post_mock:
         ollama_response = mock.Mock()
         ollama_response.raise_for_status.return_value = None
         ollama_response.json.return_value = {
@@ -288,7 +290,7 @@ def test_call_ollama_fallback_returns_validated_dict(monkeypatch: pytest.MonkeyP
         )
     }
     monkeypatch.setattr(
-        "pipeline.llm_verifier.requests.post",
+        "pipeline.llm_providers.requests.post",
         mock.Mock(return_value=ollama_response),
     )
 
@@ -318,7 +320,8 @@ def test_call_nim_api_returns_validated_dict(monkeypatch: pytest.MonkeyPatch) ->
             }
         ]
     }
-    monkeypatch.setattr("pipeline.llm_verifier.requests.post", mock.Mock(return_value=ok))
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "nim")
+    monkeypatch.setattr("pipeline.llm_providers.requests.post", mock.Mock(return_value=ok))
 
     result, model_used = llm_verifier.call_nim_api(
         prompt="test",
@@ -326,7 +329,7 @@ def test_call_nim_api_returns_validated_dict(monkeypatch: pytest.MonkeyPatch) ->
         api_key="secret",
         model="meta/llama-3.1-70b-instruct",
     )
-    assert model_used == "meta/llama-3.1-70b-instruct"
+    assert model_used == "nim:meta/llama-3.1-70b-instruct"
     assert result["conflict_detail"] == ""       # default filled by model
     assert result["sources_cited"] == ["1"]       # coerced to str
 
@@ -349,7 +352,8 @@ def test_call_nim_api_parses_markdown_fenced_json(monkeypatch: pytest.MonkeyPatc
             }
         ]
     }
-    monkeypatch.setattr("pipeline.llm_verifier.requests.post", mock.Mock(return_value=ok))
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "nim")
+    monkeypatch.setattr("pipeline.llm_providers.requests.post", mock.Mock(return_value=ok))
 
     result, model_used = llm_verifier.call_nim_api(
         prompt="test",
@@ -372,7 +376,8 @@ def test_call_nim_api_uses_env_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
         ]
     }
     post_mock = mock.Mock(return_value=ok)
-    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "nim")
+    monkeypatch.setattr("pipeline.llm_providers.requests.post", post_mock)
 
     llm_verifier.call_nim_api(
         prompt="test",
@@ -448,13 +453,14 @@ def test_call_llm_raw_retries_on_500_then_succeeds(monkeypatch: pytest.MonkeyPat
     ok.raise_for_status.return_value = None
     ok.json.return_value = {"choices": [{"message": {"content": "hello"}}]}
     post_mock = mock.Mock(side_effect=[err, ok])
-    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
-    monkeypatch.setattr("pipeline.llm_verifier.time.sleep", mock.Mock())
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "nim")
+    monkeypatch.setattr("pipeline.llm_providers.requests.post", post_mock)
+    monkeypatch.setattr("pipeline.llm_providers.time.sleep", mock.Mock())
 
     content, model_used = llm_verifier.call_llm_raw(
         "p", endpoint="https://nim.example.com/v1/chat", api_key="k", model="m",
     )
-    assert content == "hello" and model_used == "m"
+    assert content == "hello" and model_used == "nim:m"
     assert post_mock.call_count == 2
 
 
@@ -472,8 +478,9 @@ def test_call_llm_raw_500_exhaustion_falls_back_to_ollama(monkeypatch: pytest.Mo
         raise requests.HTTPError(response=err)
 
     post_mock = mock.Mock(side_effect=post_side_effect)
-    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
-    monkeypatch.setattr("pipeline.llm_verifier.time.sleep", mock.Mock())
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "nim,ollama")
+    monkeypatch.setattr("pipeline.llm_providers.requests.post", post_mock)
+    monkeypatch.setattr("pipeline.llm_providers.time.sleep", mock.Mock())
 
     content, model_used = llm_verifier.call_llm_raw(
         "p", endpoint="https://nim.example.com/v1/chat", api_key="k", model="m",
@@ -489,12 +496,12 @@ def test_call_llm_raw_skips_nim_when_endpoint_empty(monkeypatch: pytest.MonkeyPa
     # would raise MissingSchema, which is neither Timeout nor HTTPError, so the
     # fallback was unreachable and every report 503'd with Ollama healthy.
     post_mock = mock.Mock()
-    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
+    monkeypatch.setattr("pipeline.llm_providers.requests.post", post_mock)
 
     def fake_ollama(prompt, endpoint="http://localhost:11434", timeout=None):
         return "ollama text", "llama-3-8b-ollama"
 
-    monkeypatch.setattr(llm_verifier, "call_ollama_raw", fake_ollama)
+    monkeypatch.setattr("pipeline.llm_providers.call_ollama_raw", fake_ollama)
     content, model_used = llm_verifier.call_llm_raw(
         "p", endpoint="", api_key="k", model="m", ollama_endpoint="http://localhost:11434",
     )
@@ -509,7 +516,7 @@ def test_ollama_model_env_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
     ok.raise_for_status.return_value = None
     ok.json.return_value = {"response": "hi"}
     post_mock = mock.Mock(return_value=ok)
-    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
+    monkeypatch.setattr("pipeline.llm_providers.requests.post", post_mock)
 
     content, model_used = llm_verifier.call_ollama_raw("p")
     assert content == "hi"
@@ -535,8 +542,9 @@ def test_429_backoff_outlasts_the_5xx_schedule(monkeypatch: pytest.MonkeyPatch) 
     ok.json.return_value = {"choices": [{"message": {"content": "hello"}}]}
     post_mock = mock.Mock(side_effect=[_rate_limited(), _rate_limited(), ok])
     sleeps: list[float] = []
-    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
-    monkeypatch.setattr("pipeline.llm_verifier.time.sleep", lambda s: sleeps.append(s))
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "nim")
+    monkeypatch.setattr("pipeline.llm_providers.requests.post", post_mock)
+    monkeypatch.setattr("pipeline.llm_providers.time.sleep", lambda s: sleeps.append(s))
     monkeypatch.delenv("SENTINEL_LLM_RATELIMIT_BACKOFF_S", raising=False)
 
     content, _model = llm_verifier.call_llm_raw(
@@ -558,8 +566,9 @@ def test_5xx_keeps_the_short_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     ok.json.return_value = {"choices": [{"message": {"content": "hello"}}]}
     post_mock = mock.Mock(side_effect=[err, err, ok])
     sleeps: list[float] = []
-    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
-    monkeypatch.setattr("pipeline.llm_verifier.time.sleep", lambda s: sleeps.append(s))
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "nim")
+    monkeypatch.setattr("pipeline.llm_providers.requests.post", post_mock)
+    monkeypatch.setattr("pipeline.llm_providers.time.sleep", lambda s: sleeps.append(s))
 
     content, _model = llm_verifier.call_llm_raw(
         "p", endpoint="https://nim.example.com/v1/chat", api_key="k", model="m",
@@ -575,8 +584,9 @@ def test_429_honours_retry_after_header(monkeypatch: pytest.MonkeyPatch) -> None
     ok.json.return_value = {"choices": [{"message": {"content": "hello"}}]}
     post_mock = mock.Mock(side_effect=[_rate_limited("7"), ok])
     sleeps: list[float] = []
-    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
-    monkeypatch.setattr("pipeline.llm_verifier.time.sleep", lambda s: sleeps.append(s))
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "nim")
+    monkeypatch.setattr("pipeline.llm_providers.requests.post", post_mock)
+    monkeypatch.setattr("pipeline.llm_providers.time.sleep", lambda s: sleeps.append(s))
 
     content, _model = llm_verifier.call_llm_raw(
         "p", endpoint="https://nim.example.com/v1/chat", api_key="k", model="m",
@@ -598,9 +608,10 @@ def test_429_retry_after_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
         raise requests.HTTPError(response=_rate_limited("3600"))
 
     sleeps: list[float] = []
-    monkeypatch.setattr("pipeline.llm_verifier.requests.post",
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "nim,ollama")
+    monkeypatch.setattr("pipeline.llm_providers.requests.post",
                         mock.Mock(side_effect=post_side_effect))
-    monkeypatch.setattr("pipeline.llm_verifier.time.sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr("pipeline.llm_providers.time.sleep", lambda s: sleeps.append(s))
     monkeypatch.setenv("SENTINEL_LLM_RATELIMIT_MAX_WAIT_S", "60")
 
     content, model_used = llm_verifier.call_llm_raw(
@@ -619,8 +630,9 @@ def test_429_ignores_unparseable_retry_after(monkeypatch: pytest.MonkeyPatch) ->
     ok.json.return_value = {"choices": [{"message": {"content": "hello"}}]}
     post_mock = mock.Mock(side_effect=[_rate_limited("Wed, 21 Oct 2026 07:28:00 GMT"), ok])
     sleeps: list[float] = []
-    monkeypatch.setattr("pipeline.llm_verifier.requests.post", post_mock)
-    monkeypatch.setattr("pipeline.llm_verifier.time.sleep", lambda s: sleeps.append(s))
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "nim")
+    monkeypatch.setattr("pipeline.llm_providers.requests.post", post_mock)
+    monkeypatch.setattr("pipeline.llm_providers.time.sleep", lambda s: sleeps.append(s))
     monkeypatch.delenv("SENTINEL_LLM_RATELIMIT_BACKOFF_S", raising=False)
 
     content, _model = llm_verifier.call_llm_raw(
@@ -637,11 +649,12 @@ def test_429_recovery_is_logged(monkeypatch: pytest.MonkeyPatch,
     ok = mock.Mock()
     ok.raise_for_status.return_value = None
     ok.json.return_value = {"choices": [{"message": {"content": "hello"}}]}
-    monkeypatch.setattr("pipeline.llm_verifier.requests.post",
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "nim")
+    monkeypatch.setattr("pipeline.llm_providers.requests.post",
                         mock.Mock(side_effect=[_rate_limited("5"), _rate_limited("5"), ok]))
-    monkeypatch.setattr("pipeline.llm_verifier.time.sleep", mock.Mock())
+    monkeypatch.setattr("pipeline.llm_providers.time.sleep", mock.Mock())
 
-    with caplog.at_level("INFO", logger="sentinel.llm_verifier"):
+    with caplog.at_level("INFO", logger="sentinel.llm_providers"):
         content, _model = llm_verifier.call_llm_raw(
             "p", endpoint="https://nim.example.com/v1/chat", api_key="k", model="m",
         )
@@ -659,9 +672,10 @@ def test_no_recovery_log_when_no_ratelimit(monkeypatch: pytest.MonkeyPatch,
     ok = mock.Mock()
     ok.raise_for_status.return_value = None
     ok.json.return_value = {"choices": [{"message": {"content": "hello"}}]}
-    monkeypatch.setattr("pipeline.llm_verifier.requests.post", mock.Mock(return_value=ok))
+    monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "nim")
+    monkeypatch.setattr("pipeline.llm_providers.requests.post", mock.Mock(return_value=ok))
 
-    with caplog.at_level("INFO", logger="sentinel.llm_verifier"):
+    with caplog.at_level("INFO", logger="sentinel.llm_providers"):
         llm_verifier.call_llm_raw(
             "p", endpoint="https://nim.example.com/v1/chat", api_key="k", model="m",
         )
@@ -765,3 +779,34 @@ def test_citation_repair_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> Non
     with pytest.raises(ValidationError):
         llm_verifier.call_nim_api("p", endpoint="https://nim/x", api_key="k", model="m")
     assert len(prompts) == 1
+
+
+def test_call_llm_raw_delegates_to_the_chain(monkeypatch):
+    from unittest.mock import Mock
+
+    import pipeline.llm_verifier as lv
+
+    chain = Mock(return_value=("text", "deepseek:m"))
+    monkeypatch.setattr("pipeline.llm_verifier.call_llm", chain)
+    out = lv.call_llm_raw("p", endpoint="", api_key="", model="")
+    assert out == ("text", "deepseek:m")
+    assert chain.call_count == 1
+
+
+def test_call_llm_raw_passes_explicit_nim_config_through_as_overrides(monkeypatch):
+    import os
+
+    import pipeline.llm_verifier as lv
+
+    captured = {}
+
+    def _chain(prompt, **kwargs):
+        captured["nim_endpoint"] = os.environ.get("NVIDIA_NIM_ENDPOINT")
+        captured["nim_model"] = os.environ.get("NVIDIA_NIM_MODEL")
+        return "t", "nim:m"
+
+    monkeypatch.setattr("pipeline.llm_verifier.call_llm", _chain)
+    lv.call_llm_raw("p", endpoint="https://nim.example/v1/chat/completions",
+                    api_key="k", model="some-model")
+    assert captured["nim_endpoint"] == "https://nim.example/v1/chat/completions"
+    assert captured["nim_model"] == "some-model"

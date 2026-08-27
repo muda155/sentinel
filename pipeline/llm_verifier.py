@@ -5,10 +5,8 @@ import json
 import logging
 import os
 import re
-import time
 from urllib.parse import urlparse
 
-import requests
 from pydantic import BaseModel, ValidationError, field_validator
 
 from pipeline.citations import collapse_duplicate_urls
@@ -18,6 +16,7 @@ from pipeline.llm_providers import (  # noqa: F401 — transport moved here (FR-
     _ratelimit_backoff,
     _ratelimit_max_wait,
     _retry_after_seconds,
+    call_llm,
     call_ollama_raw,
 )
 
@@ -210,80 +209,32 @@ def call_llm_raw(
     retries: int = 3,
     timeout: int | None = None,
     ollama_endpoint: str = "http://localhost:11434",
+    conf_score: float | None = None,
 ) -> tuple[str, str]:
-    """NIM chat call with 429 backoff and Ollama fallback; returns (content, model_used)."""
-    timeout = _llm_timeout(timeout)
-    # A missing NIM endpoint means the fallback is the only path. Posting to ""
-    # raises MissingSchema (neither Timeout nor HTTPError), which would escape
-    # the retry loop below and make an Ollama-only host fail 100% of the time.
-    if not endpoint:
-        return call_ollama_raw(prompt, ollama_endpoint, timeout)
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": float(os.getenv("SENTINEL_LLM_TEMPERATURE", "0")),
-        "max_tokens": int(os.getenv("SENTINEL_LLM_MAX_TOKENS", "500")),
-    }
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    last_error: Exception | None = None
-    # A retry that succeeds is otherwise silent, so only the 429s that exhausted
-    # anyway reach the log and the backoff cannot be told apart from a no-op.
-    ratelimit_waits: list[float] = []
-    for attempt in range(1, retries + 1):
-        try:
-            response = requests.post(endpoint, headers=headers, json=payload, timeout=timeout)
-            response.raise_for_status()
-            if ratelimit_waits:
-                logger.info(
-                    "NIM 429 cleared after %d retr%s (%.0fs waited)",
-                    len(ratelimit_waits),
-                    "y" if len(ratelimit_waits) == 1 else "ies",
-                    sum(ratelimit_waits),
-                )
-            return response.json()["choices"][0]["message"]["content"], model
-        except requests.Timeout:
-            logger.warning("NIM API timed out after %ds, falling back to Ollama", timeout)
-            return call_ollama_raw(prompt, ollama_endpoint, timeout)
-        except requests.HTTPError as error:
-            status = error.response.status_code if error.response is not None else None
-            last_error = error
-            if status == 429:
-                if attempt >= retries:
-                    logger.warning(
-                        "NIM rate limit (429) still set after %d attempts "
-                        "(%.0fs waited), falling back to Ollama",
-                        retries, sum(ratelimit_waits),
-                    )
-                    return call_ollama_raw(prompt, ollama_endpoint, timeout)
-                stated = _retry_after_seconds(error.response)
-                wait = stated if stated is not None else _ratelimit_backoff(attempt)
-                cap = _ratelimit_max_wait()
-                if wait > cap:
-                    # The worker is single-threaded: parking it past the cap
-                    # stalls every other hotspot behind this one.
-                    logger.warning(
-                        "NIM rate limit clears in %.0fs (cap %.0fs), "
-                        "falling back to Ollama", wait, cap,
-                    )
-                    return call_ollama_raw(prompt, ollama_endpoint, timeout)
-                time.sleep(wait)
-                ratelimit_waits.append(wait)
-                continue
-            # NIM 500s are routinely transient, and the Ollama fallback may not
-            # exist on the host, so they are retried rather than dumped on it.
-            if status is not None and status >= 500:
-                if attempt < retries:
-                    time.sleep(2**attempt)
-                    continue
-                logger.warning(
-                    "NIM API exhausted (%s) after %d retries, falling back to Ollama",
-                    status, retries,
-                )
-                return call_ollama_raw(prompt, ollama_endpoint, timeout)
-            raise
-    if last_error is not None:
-        raise last_error
-    raise RuntimeError("NIM call failed without explicit error")
+    """Back-compat shim over the FR-31 provider chain.
+
+    The endpoint/api_key/model arguments predate the chain and named NIM
+    specifically; they are now applied as environment overrides for the `nim`
+    and `ollama` providers so existing callers keep working unchanged."""
+    overrides = {}
+    if endpoint:
+        overrides["NVIDIA_NIM_ENDPOINT"] = endpoint
+    if api_key:
+        overrides["NVIDIA_NIM_API_KEY"] = api_key
+    if model:
+        overrides["NVIDIA_NIM_MODEL"] = model
+    if ollama_endpoint:
+        overrides["OLLAMA_ENDPOINT"] = ollama_endpoint
+    previous = {k: os.environ.get(k) for k in overrides}
+    os.environ.update(overrides)
+    try:
+        return call_llm(prompt, conf_score=conf_score, retries=retries, timeout=timeout)
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def call_ollama_fallback(
