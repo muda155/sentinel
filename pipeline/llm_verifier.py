@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import re
+import threading
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ValidationError, field_validator
@@ -88,7 +89,7 @@ def generate_sitrep(
     endpoint: str,
     api_key: str,
     model: str,
-    ollama_endpoint: str = "http://localhost:11434",
+    ollama_endpoint: str | None = None,
     engine=None,
     llm_call=None,
 ) -> tuple[int | None, str | None]:
@@ -213,6 +214,12 @@ class LLMSummary(BaseModel):
         return value
 
 
+# The shim applies its arguments by mutating os.environ for the duration of
+# the call. The /report handler runs under a threadpool, so the mutation must
+# be serialized or two concurrent reports could read each other's overrides.
+_ENV_OVERRIDE_LOCK = threading.Lock()
+
+
 def call_llm_raw(
     prompt: str,
     *,
@@ -221,14 +228,17 @@ def call_llm_raw(
     model: str,
     retries: int = 3,
     timeout: int | None = None,
-    ollama_endpoint: str = "http://localhost:11434",
+    ollama_endpoint: str | None = None,
     conf_score: float | None = None,
 ) -> tuple[str, str]:
     """Back-compat shim over the FR-31 provider chain.
 
     The endpoint/api_key/model arguments predate the chain and named NIM
     specifically; they are now applied as environment overrides for the `nim`
-    and `ollama` providers so existing callers keep working unchanged."""
+    and `ollama` providers so existing callers keep working unchanged.
+    ollama_endpoint None leaves a configured OLLAMA_ENDPOINT alone; the old
+    truthy localhost default used to clobber it whenever a caller omitted the
+    argument."""
     overrides = {}
     if endpoint:
         overrides["NVIDIA_NIM_ENDPOINT"] = endpoint
@@ -239,15 +249,16 @@ def call_llm_raw(
     if ollama_endpoint:
         overrides["OLLAMA_ENDPOINT"] = ollama_endpoint
     previous = {k: os.environ.get(k) for k in overrides}
-    os.environ.update(overrides)
-    try:
-        return call_llm(prompt, conf_score=conf_score, retries=retries, timeout=timeout)
-    finally:
-        for key, value in previous.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
+    with _ENV_OVERRIDE_LOCK:
+        os.environ.update(overrides)
+        try:
+            return call_llm(prompt, conf_score=conf_score, retries=retries, timeout=timeout)
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 def call_ollama_fallback(
@@ -298,7 +309,7 @@ def call_nim_api(
     model: str,
     retries: int = 3,
     timeout: int | None = None,
-    ollama_endpoint: str = "http://localhost:11434",
+    ollama_endpoint: str | None = None,
     conf_score: float | None = None,
 ) -> tuple[dict, str]:
     content, model_used = call_llm_raw(
@@ -415,15 +426,22 @@ def verify_hotspots_with_llm(
     api_key: str,
     model: str,
     threshold: float = 40,
-    ollama_endpoint: str = "http://localhost:11434",
+    ollama_endpoint: str | None = None,
 ) -> dict[str, int]:
     hotspot_ids = LLMRepository(conn).candidate_hotspots(threshold)
     processed = 0
     for hotspot_id in hotspot_ids:
-        summary_id, _model_used = generate_sitrep(
-            conn, hotspot_id, endpoint=endpoint, api_key=api_key, model=model,
-            ollama_endpoint=ollama_endpoint,
-        )
+        try:
+            summary_id, _model_used = generate_sitrep(
+                conn, hotspot_id, endpoint=endpoint, api_key=api_key, model=model,
+                ollama_endpoint=ollama_endpoint,
+            )
+        except Exception as error:
+            # One bad hotspot (every provider failing on it, a malformed
+            # answer) must not end the run for all the rest — the LLM worker
+            # isolates per hotspot already; the monolith/CLI must too.
+            logger.warning("hotspot %s failed LLM verification: %s", hotspot_id, error)
+            continue
         if summary_id is not None:
             processed += 1
     return {"candidates": len(hotspot_ids), "processed": processed}

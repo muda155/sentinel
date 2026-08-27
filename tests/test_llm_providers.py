@@ -120,16 +120,18 @@ def test_auth_failures_are_not_retried(monkeypatch):
         assert post.call_count == 1, f"status {status} was retried"
 
 
-def test_a_400_raises_and_is_not_a_provider_failure(monkeypatch):
-    # A malformed request is our bug; every provider rejects it identically.
-    # ProviderFailed would send it down the chain and end at Ollama, which
-    # would answer a prompt the paid providers refused — a successful-looking
-    # run built on a request we know is wrong.
+def test_a_400_is_a_provider_failure_and_falls_through(monkeypatch,
+                                                       caplog: pytest.LogCaptureFixture):
+    # Some 4xx are our bug, but some are provider-scoped (a temperature
+    # constraint, a retired model id) and must not take down every hotspot
+    # with no fallback. The WARNING keeps the rejection observable.
     post = Mock(return_value=_err(400))
     monkeypatch.setattr("pipeline.llm_providers.requests.post", post)
-    with pytest.raises(requests.HTTPError):
-        call_openai_compatible("p", provider=PROVIDERS["deepseek"], retries=3)
+    with caplog.at_level("WARNING", logger="sentinel.llm_providers"):
+        with pytest.raises(ProviderFailed):
+            call_openai_compatible("p", provider=PROVIDERS["deepseek"], retries=3)
     assert post.call_count == 1
+    assert any("rejected the request" in r.getMessage() for r in caplog.records)
 
 
 def test_5xx_is_retried_then_reported_as_a_provider_failure(monkeypatch):
@@ -180,7 +182,10 @@ def test_the_chain_tries_the_next_provider_after_a_failure(monkeypatch):
     assert (text, used) == ("from kimi", "kimi:x")
 
 
-def test_a_400_stops_the_chain_dead(monkeypatch):
+def test_a_400_does_not_stop_the_chain(monkeypatch):
+    # A provider-scoped 400 (temperature constraint, retired model id) must
+    # fall through like any ProviderFailed — one provider's rejection must
+    # not end the run for every hotspot behind it.
     monkeypatch.setenv("SENTINEL_LLM_PROVIDERS", "deepseek,kimi")
     monkeypatch.setenv("DEEPSEEK_API_KEY", "d")
     monkeypatch.setenv("MOONSHOT_API_KEY", "m")
@@ -188,12 +193,14 @@ def test_a_400_stops_the_chain_dead(monkeypatch):
 
     def _fake(prompt, *, provider, retries=3, timeout=None):
         calls.append(provider.name)
-        raise requests.HTTPError("bad request")
+        if provider.name == "deepseek":
+            raise ProviderFailed("deepseek rejected the request (400)")
+        return "from kimi", f"{provider.name}:x"
 
     monkeypatch.setattr("pipeline.llm_providers.call_openai_compatible", _fake)
-    with pytest.raises(requests.HTTPError):
-        call_llm("p")
-    assert calls == ["deepseek"], "a malformed request must not reach the next provider"
+    text, used = call_llm("p")
+    assert calls == ["deepseek", "kimi"], "a 400 must fall through to the next provider"
+    assert (text, used) == ("from kimi", "kimi:x")
 
 
 def test_the_paid_gate_keeps_a_low_score_off_the_paid_providers(monkeypatch):
@@ -289,3 +296,15 @@ def test_malformed_2xx_body_is_a_provider_failure_not_a_keyerror(monkeypatch):
     with pytest.raises(ProviderFailed):
         call_openai_compatible("p", provider=PROVIDERS["deepseek"], retries=3)
     assert post.call_count == 1
+
+
+def test_default_max_tokens_budget_covers_reasoning(monkeypatch):
+    # Reasoning stays ON; the default budget must exceed the measured
+    # reasoning output (~6k deepseek, ~9k kimi completion tokens) or every
+    # paid call returns empty content and silently downgrades to Ollama.
+    monkeypatch.delenv("SENTINEL_LLM_MAX_TOKENS", raising=False)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "d")
+    post = Mock(return_value=_ok())
+    monkeypatch.setattr("pipeline.llm_providers.requests.post", post)
+    call_openai_compatible("p", provider=PROVIDERS["deepseek"])
+    assert post.call_args.kwargs["json"]["max_tokens"] == 20000

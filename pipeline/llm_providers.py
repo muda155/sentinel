@@ -156,7 +156,7 @@ def call_openai_compatible(
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": float(os.getenv("SENTINEL_LLM_TEMPERATURE", "0")),
-        "max_tokens": int(os.getenv("SENTINEL_LLM_MAX_TOKENS", "500")),
+        "max_tokens": int(os.getenv("SENTINEL_LLM_MAX_TOKENS", "20000")),
     }
     if provider.name == "kimi":
         # kimi-k2.6 validates temperature only when thinking is on (the
@@ -220,9 +220,14 @@ def call_openai_compatible(
                     time.sleep(2 ** attempt)
                     continue
                 raise ProviderFailed(f"{provider.name} server error {status}") from error
-            # 4xx that is not auth, quota or rate limiting: our request is
-            # wrong and every provider will say so. Let it escape.
-            raise
+            # Remaining client 4xx (400/404/405/422...): some are our bug, some
+            # are provider-scoped (a temperature constraint, a retired model
+            # id). Both must fall through with a log — a provider-scoped
+            # rejection must not take down every hotspot with no fallback.
+            logger.warning(
+                "%s rejected the request (%s) — falling through", provider.name, status,
+            )
+            raise ProviderFailed(f"{provider.name} rejected the request ({status})") from error
         except requests.RequestException as error:
             raise ProviderFailed(f"{provider.name} unreachable: {error}") from error
     raise ProviderFailed(f"{provider.name} exhausted {retries} attempts")
@@ -244,7 +249,7 @@ def call_ollama_raw(
         "stream": False,
         "options": {
             "temperature": float(os.getenv("SENTINEL_LLM_TEMPERATURE", "0")),
-            "num_predict": int(os.getenv("SENTINEL_LLM_MAX_TOKENS", "500")),
+            "num_predict": int(os.getenv("SENTINEL_LLM_MAX_TOKENS", "20000")),
         },
     }
     try:

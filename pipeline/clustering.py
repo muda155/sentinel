@@ -12,6 +12,7 @@ from psycopg2.extras import execute_values
 from sklearn.cluster import DBSCAN
 
 from pipeline.db import get_pooled_connection
+from pipeline.llm_providers import NoProviderConfigured, resolve_chain
 from pipeline.llm_verifier import verify_hotspots_with_llm
 from pipeline.naming import name_hotspot
 from pipeline.scoring import ScoringRepository
@@ -968,16 +969,17 @@ def main() -> int:
         if args.run_scoring:
             scored = len(ScoringRepository(conn).score_all_hotspots())
         if args.run_llm:
-            endpoint = os.getenv("NVIDIA_NIM_ENDPOINT", "")
-            api_key = os.getenv("NVIDIA_NIM_API_KEY", "")
-            model = os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct")
-            if not endpoint or not api_key:
-                raise RuntimeError("NVIDIA_NIM_ENDPOINT and NVIDIA_NIM_API_KEY are required")
+            try:
+                resolve_chain()
+            except NoProviderConfigured as error:
+                raise RuntimeError(
+                    "no LLM provider configured; check SENTINEL_LLM_PROVIDERS"
+                ) from error
             llm_result = verify_hotspots_with_llm(
                 conn=conn,
-                endpoint=endpoint,
-                api_key=api_key,
-                model=model,
+                endpoint=os.getenv("NVIDIA_NIM_ENDPOINT", ""),
+                api_key=os.getenv("NVIDIA_NIM_API_KEY", ""),
+                model=os.getenv("NVIDIA_NIM_MODEL", "meta/llama-3.3-70b-instruct"),
                 threshold=args.llm_threshold,
             )
             llm_processed = llm_result["processed"]

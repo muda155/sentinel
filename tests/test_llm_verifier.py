@@ -895,3 +895,51 @@ def test_main_requires_a_configured_provider(monkeypatch):
     )
     with pytest.raises(RuntimeError, match="no LLM provider configured"):
         llm_verifier.main()
+
+
+def test_verify_hotspots_continues_after_a_failing_hotspot(monkeypatch):
+    # One bad hotspot (every provider failing on it) must not end the run
+    # for all the rest — the monolith/CLI loop isolates per hotspot like the
+    # worker does.
+    from unittest.mock import Mock
+
+    import pipeline.llm_verifier as lv
+
+    attempted = []
+
+    def _sitrep(conn, hid, **kwargs):
+        attempted.append(hid)
+        if hid == 1:
+            raise RuntimeError("every provider in the chain failed")
+        return 99, "deepseek:m"
+
+    monkeypatch.setattr(lv, "generate_sitrep", _sitrep)
+    monkeypatch.setattr(lv.LLMRepository, "candidate_hotspots",
+                        lambda self, threshold: [1, 2])
+    monkeypatch.setattr(lv.LLMRepository, "fetch_hotspot_articles",
+                        lambda self, hid: [{"title": "t", "url": "https://e.com/1", "domain": "e.com"}])
+
+    result = lv.verify_hotspots_with_llm(
+        Mock(), endpoint="", api_key="", model="", threshold=40,
+    )
+    assert attempted == [1, 2], "the loop must continue past a failing hotspot"
+    assert result == {"candidates": 2, "processed": 1}
+
+
+def test_shim_leaves_configured_ollama_endpoint_alone(monkeypatch):
+    # The old truthy localhost default clobbered a configured OLLAMA_ENDPOINT
+    # whenever a caller omitted the argument; None now means "leave it alone".
+    import os
+
+    import pipeline.llm_verifier as lv
+
+    monkeypatch.setenv("OLLAMA_ENDPOINT", "http://host.docker.internal:11434")
+    seen = {}
+
+    def _chain(prompt, **kwargs):
+        seen["ollama_env"] = os.environ.get("OLLAMA_ENDPOINT")
+        return "t", "m"
+
+    monkeypatch.setattr(lv, "call_llm", _chain)
+    lv.call_llm_raw("p", endpoint="", api_key="", model="")
+    assert seen["ollama_env"] == "http://host.docker.internal:11434"

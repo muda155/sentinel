@@ -165,9 +165,9 @@ def build_claims_prompt(evidence: list[dict]) -> str:
 def _default_llm(prompt: str) -> tuple[str, str]:
     # Unbound default for direct callers (the `python -m pipeline.consistency`
     # CLI). A manual invocation must not silently spend on a paid provider;
-    # generate_sitrep passes a bound callable that can.
-    from pipeline.llm_providers import call_llm, resolve_chain
-    resolve_chain(paid_allowed=False)
+    # generate_sitrep passes a bound callable that can. conf_score=0.0
+    # resolves the same local-only chain once, inside call_llm.
+    from pipeline.llm_providers import call_llm
     return call_llm(prompt, conf_score=0.0)
 
 

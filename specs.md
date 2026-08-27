@@ -936,7 +936,7 @@ SENTINEL_LLM_THRESHOLD=40
 SENTINEL_GRID_SIZE_DEG=1.0
 SENTINEL_MIN_GEO_PRECISION=2
 SENTINEL_ACLED_POLL_HOURS=24
-SENTINEL_LLM_MAX_TOKENS=500
+SENTINEL_LLM_MAX_TOKENS=20000
 SENTINEL_LLM_TEMPERATURE=0.0
 SENTINEL_LLM_TIMEOUT_S=180
 SENTINEL_POLL_INTERVAL_S=900
@@ -969,7 +969,7 @@ All parameters are read from environment variables (prefixed `SENTINEL_`) with d
 | `SENTINEL_GRID_SIZE_DEG` | 1.0 | FR-WM | Grid-cell size in degrees |
 | `SENTINEL_MIN_GEO_PRECISION` | 2 | FR-5 | Minimum geo_precision for DBSCAN input (1=country centroid excluded; NULL fails open) |
 | `SENTINEL_ACLED_POLL_HOURS` | 24 | FR-1b | ACLED fetch interval (hours) |
-| `SENTINEL_LLM_MAX_TOKENS` | 500 | FR-12 | Max tokens in NIM response |
+| `SENTINEL_LLM_MAX_TOKENS` | 20000 | FR-12 | Max tokens in the LLM response — must exceed the reasoning output of deepseek-v4-flash/kimi-k2.6 (~6k/~9k completion tokens measured on an extraction prompt); a 500 ceiling makes every paid call return empty content |
 | `SENTINEL_LLM_TEMPERATURE` | 0.0 | FR-12 | LLM sampling temperature |
 | `SENTINEL_LLM_TIMEOUT_S` | 60 | FR-12 | NIM/Ollama request timeout (seconds); env sets 180 for 70B NIM |
 | `SENTINEL_POLL_INTERVAL_S` | 900 | FR-0 | Pipeline schedule interval (seconds) |
