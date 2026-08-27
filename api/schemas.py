@@ -121,3 +121,16 @@ class Claim(BaseModel):
 class HotspotClaims(BaseModel):
     claims: list[Claim]
     insufficient_sources: bool
+
+
+class TranslatedClaim(BaseModel):
+    claim_id: int
+    text: str
+
+
+class Translation(BaseModel):
+    lang: str
+    summary: str
+    summary_translated: bool
+    claims: list[TranslatedClaim]
+    cached: bool
