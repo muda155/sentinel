@@ -38,7 +38,10 @@ def build_prompt(hotspot_data: dict) -> str:
         "Output JSON only, no prose outside it: "
         "{conflict_detected: bool, conflict_detail: str, summary: str, sources_cited: [str]}",
         "",
-        f"Hotspot ID: {hotspot_data.get('hotspot_id')}",
+        # The internal hotspot id is deliberately absent. It told the model
+        # nothing it needed and read as narratable context: a live SITREP came
+        # back as "A court in Hotspot ID 12750 dismissed a request ..."
+        # (2026-08-27). hotspot_data still carries it for the caller.
         "Sources:",
     ]
     for idx, article in enumerate(hotspot_data.get("articles", []), start=1):
@@ -65,7 +68,9 @@ def build_claims_sitrep_prompt(hotspot_id: int, result) -> str:
         "{conflict_detected: bool, conflict_detail: str, summary: str, sources_cited: [str]}",
         "Set conflict_detected=true if any claim below is DISPUTED.",
         "",
-        f"Hotspot ID: {hotspot_id}",
+        # See build_prompt: the internal id is kept out of the prompt because
+        # the model narrates it as if it were context. hotspot_id stays in the
+        # signature for the caller and for future prompt-scoped use.
         "Verified claims:",
     ]
     status_names = {"corroborated": "CORROBORATED", "uncorroborated": "SINGLE-SOURCE",

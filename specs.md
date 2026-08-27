@@ -596,7 +596,7 @@ Source trust tier mapping (applied via `sources.trust_tier` column with generate
 - `score_hotspot(hotspot_id, db)` → updates `hotspots.conf_score` using `(W_density × source_density + W_diversity × diversity) × 100` (defaults 0.7/0.3).
 
 #### 6.1.4 LLM Verifier (`llm_verifier.py`)
-- `build_prompt(hotspot_data: dict)` → str. Formats numbered headline list with source attribution instruction.
+- `build_prompt(hotspot_data: dict)` → str. Formats numbered headline list with source attribution instruction. The internal `hotspot_id` is never written into the prompt — the model narrates any line it is given.
 - `validate_citations(summary: str)` → raises `ValueError` listing uncited sentences (regex: `r'.+\[\d+\][.!?]\s*$'` per sentence, after normalising a trailing `.[N]` into `[N].`).
 - `call_nim_api(prompt: str)` → dict (parsed JSON). Uses `requests.post` with retry logic; on failure (429 exhausted, timeout > SENTINEL_LLM_TIMEOUT_S, 5xx), calls `call_ollama_fallback(prompt)`.
 - `call_ollama_fallback(prompt: str)` → dict. Posts to `http://localhost:11434/api/generate`.

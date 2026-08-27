@@ -76,7 +76,7 @@ def hotspot_report(hotspot_id: int,
     except NoProviderConfigured:
         raise HTTPException(status_code=503, detail="report generation unavailable")
 
-    prompt = build_window_report_prompt(name or f"Hotspot #{hotspot_id}", rows,
+    prompt = build_window_report_prompt(name, rows,
                                         start.isoformat(), end.isoformat())
 
     try:

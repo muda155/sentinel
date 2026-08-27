@@ -1064,3 +1064,34 @@ def test_uncited_boilerplate_is_still_rejected():
     from pipeline.llm_verifier import validate_citations
     with pytest.raises(ValueError, match="No factual conflicts detected"):
         validate_citations("No factual conflicts detected regarding the provided information")
+
+
+# The internal hotspot id must never reach the model as narratable context: a
+# live SITREP on 2026-08-27 came back as "A court in Hotspot ID 12750 dismissed
+# a request to revoke a compensation award.[2]".
+def test_headline_prompt_omits_the_internal_hotspot_id():
+    from pipeline.llm_verifier import build_prompt
+    prompt = build_prompt({
+        "hotspot_id": 12750,
+        "articles": [{"title": "Court ruling", "url": "https://e.com/1", "domain": "e.com"}],
+    })
+    assert "12750" not in prompt
+    assert "Hotspot ID" not in prompt
+
+
+def test_claims_prompt_omits_the_internal_hotspot_id():
+    from pipeline.consistency import ClaimVerdict, EngineResult, EvidenceJudgment
+    from pipeline.llm_verifier import build_claims_sitrep_prompt
+
+    result = EngineResult(
+        verdicts=[
+            ClaimVerdict(text="Army advanced north.", status="corroborated",
+                         support=1.5, dispute=0.0, weight=1.5,
+                         evidence=[EvidenceJudgment(1, 1, "a.com", "supports", 0.9)]),
+        ],
+        score=80.0,
+        insufficient_sources=False,
+    )
+    prompt = build_claims_sitrep_prompt(12750, result)
+    assert "12750" not in prompt
+    assert "Hotspot ID" not in prompt

@@ -169,3 +169,26 @@ def test_report_is_503_when_no_provider_is_configured(monkeypatch):
     r = client.get("/hotspots/1/report?from=2026-08-05T00:00:00Z&to=2026-08-06T00:00:00Z",
                    headers=_auth_headers())
     assert r.status_code == 503
+
+
+def test_window_report_prompt_states_no_location_when_unnamed():
+    # The route used to pass "Hotspot #<id>" when a hotspot had no name, which
+    # told the model an internal id was the place being reported on.
+    prompt = build_window_report_prompt(
+        None,
+        [{"event_id": 1, "title": "Clashes reported", "url": "https://e.com/1",
+          "domain": "e.com", "event_date": "2026-08-27"}],
+        "2026-08-20", "2026-08-27",
+    )
+    assert "Location:" not in prompt
+    assert "Hotspot #" not in prompt
+
+
+def test_window_report_prompt_keeps_a_real_location_name():
+    prompt = build_window_report_prompt(
+        "Khartoum Region",
+        [{"event_id": 1, "title": "Clashes reported", "url": "https://e.com/1",
+          "domain": "e.com", "event_date": "2026-08-27"}],
+        "2026-08-20", "2026-08-27",
+    )
+    assert "Location: Khartoum Region." in prompt

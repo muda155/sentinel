@@ -26,11 +26,19 @@ def window_citations(events: list[dict]) -> list[dict]:
     ]
 
 
-def build_window_report_prompt(name: str, events: list[dict], start: str, end: str) -> str:
+def build_window_report_prompt(name: str | None, events: list[dict],
+                               start: str, end: str) -> str:
     citations = window_citations(events)
     lines = [
         "Act as an intelligence analyst writing a situation report.",
-        f"Location: {name}.",
+    ]
+    # An unnamed hotspot gets no Location line at all. The caller used to
+    # synthesise "Hotspot #12750", which stated an internal id as the place
+    # the report is about — the same leak that put "A court in Hotspot ID
+    # 12750" into a live SITREP (2026-08-27).
+    if name:
+        lines.append(f"Location: {name}.")
+    lines += [
         f"Reporting window: {start} to {end}. Describe ONLY what the evidence "
         "below reports within that window.",
         "",
