@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -10,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from api import queries
 from api.auth import get_current_user
+from api.cache import cache_get_json, cache_setex_json
 from api.ratelimit import limit_report
 from pipeline.db import get_pooled_connection
 from pipeline.llm_verifier import call_llm_raw, validate_citations
@@ -19,31 +19,6 @@ logger = logging.getLogger("sentinel.api.report")
 router = APIRouter()
 
 CACHE_TTL_S = 86400
-
-_redis_client = None
-
-
-def _redis():
-    global _redis_client
-    if _redis_client is not None:
-        return _redis_client
-    try:
-        import redis as redis_lib
-    except ImportError:
-        return None
-    try:
-        # One shared client (and pool), not a fresh pool per request. The short
-        # connect timeout stops an unreachable REDIS_URL from pinning a
-        # threadpool worker for the OS default (potentially minutes).
-        client = redis_lib.from_url(
-            os.getenv("REDIS_URL", "redis://localhost:6379"),
-            socket_connect_timeout=1, socket_timeout=1,
-        )
-        client.ping()
-    except Exception:
-        return None
-    _redis_client = client
-    return _redis_client
 
 
 def _cache_key(hotspot_id: int, start: str, end: str, rows: list[dict]) -> str:
@@ -91,14 +66,9 @@ def hotspot_report(hotspot_id: int,
 
     citations = window_citations(rows)
     key = _cache_key(hotspot_id, start.isoformat(), end.isoformat(), rows)
-    cache = _redis()
-    if cache is not None:
-        try:
-            hit = cache.get(key)
-            if hit:
-                return {**json.loads(hit), "cached": True}
-        except Exception:
-            logger.warning("report cache read failed", exc_info=True)
+    hit = cache_get_json(key)
+    if hit:
+        return {**hit, "cached": True}
 
     endpoint = os.getenv("NVIDIA_NIM_ENDPOINT", "")
     ollama = os.getenv("OLLAMA_ENDPOINT", "")
@@ -135,9 +105,5 @@ def hotspot_report(hotspot_id: int,
     narrative = content
 
     payload = {"narrative": narrative, "citations": citations, "model": model_used}
-    if cache is not None:
-        try:
-            cache.setex(key, CACHE_TTL_S, json.dumps(payload))
-        except Exception:
-            logger.warning("report cache write failed", exc_info=True)
+    cache_setex_json(key, CACHE_TTL_S, payload)
     return {**payload, "cached": False}
