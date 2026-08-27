@@ -478,3 +478,244 @@ def test_augment_records_appends_geo_precision(synthetic_gdelt_df):
     # geo_precision is at index 12 (0-based), after grid_cell_id and before enrichment fields
     assert augmented[0][12] == 1
     assert augmented[1][12] == 4
+
+
+def test_acled_static_access_token_skips_oauth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pre-issued ACLED_ACCESS_TOKEN is used verbatim, with no token request."""
+    from unittest.mock import MagicMock
+
+    from pipeline.ingestion import ACLEDIngestor
+
+    monkeypatch.setattr("pipeline.ingestion.REDIS_AVAILABLE", False)
+    post_mock = MagicMock()
+    monkeypatch.setattr("pipeline.ingestion.requests.post", post_mock)
+    monkeypatch.setenv("ACLED_ACCESS_TOKEN", "pasted-token")
+    monkeypatch.delenv("ACLED_REFRESH_TOKEN", raising=False)
+    monkeypatch.delenv("ACLED_EMAIL", raising=False)
+    monkeypatch.delenv("ACLED_PASSWORD", raising=False)
+
+    ingestor = ACLEDIngestor()
+
+    assert ingestor._get_access_token() == "pasted-token"
+    assert post_mock.call_count == 0
+
+
+def test_acled_static_token_expiry_read_from_jwt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An expired pasted JWT is not served from the in-memory slot."""
+    import base64
+    import json
+    import time
+    from unittest.mock import MagicMock
+
+    from pipeline.ingestion import ACLEDIngestor
+
+    monkeypatch.setattr("pipeline.ingestion.REDIS_AVAILABLE", False)
+
+    def _seg(payload: dict) -> str:
+        raw = json.dumps(payload).encode()
+        return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+    expired = f"h.{_seg({'exp': time.time() - 10})}.sig"
+    monkeypatch.setenv("ACLED_ACCESS_TOKEN", expired)
+    monkeypatch.delenv("ACLED_REFRESH_TOKEN", raising=False)
+
+    token_response = MagicMock()
+    token_response.status_code = 200
+    token_response.json.return_value = {
+        "access_token": "fresh",
+        "expires_in": 86400,
+    }
+    monkeypatch.setattr(
+        "pipeline.ingestion.requests.post", MagicMock(return_value=token_response)
+    )
+
+    ingestor = ACLEDIngestor(username="user@test.com", password="pw")
+
+    assert ingestor._get_access_token() == "fresh"
+
+
+def test_acled_refresh_grant_preferred_over_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With a refresh token configured, re-auth uses grant_type=refresh_token."""
+    from unittest.mock import MagicMock
+
+    from pipeline.ingestion import ACLEDIngestor
+
+    monkeypatch.setattr("pipeline.ingestion.REDIS_AVAILABLE", False)
+
+    token_response = MagicMock()
+    token_response.status_code = 200
+    token_response.json.return_value = {
+        "access_token": "tok-refreshed",
+        "refresh_token": "ref-rotated",
+        "expires_in": 86400,
+    }
+    post_mock = MagicMock(return_value=token_response)
+    monkeypatch.setattr("pipeline.ingestion.requests.post", post_mock)
+    monkeypatch.delenv("ACLED_ACCESS_TOKEN", raising=False)
+    monkeypatch.setenv("ACLED_REFRESH_TOKEN", "ref-original")
+
+    ingestor = ACLEDIngestor(username="user@test.com", password="pw")
+
+    assert ingestor._get_access_token() == "tok-refreshed"
+    assert post_mock.call_args.kwargs["data"] == {
+        "grant_type": "refresh_token",
+        "client_id": "acled",
+        "refresh_token": "ref-original",
+    }
+    # ACLED rotates the refresh token on every use; the old one is now dead.
+    assert ingestor.refresh_token == "ref-rotated"
+
+
+def test_acled_refresh_failure_falls_back_to_password_grant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rejected refresh token does not strand an account with a password."""
+    from unittest.mock import MagicMock
+
+    from pipeline.ingestion import ACLEDIngestor
+
+    monkeypatch.setattr("pipeline.ingestion.REDIS_AVAILABLE", False)
+
+    refused = MagicMock()
+    refused.status_code = 401
+    refused.raise_for_status.side_effect = requests.HTTPError("401")
+    granted = MagicMock()
+    granted.status_code = 200
+    granted.json.return_value = {"access_token": "tok-pw", "expires_in": 86400}
+    post_mock = MagicMock(side_effect=[refused, granted])
+    monkeypatch.setattr("pipeline.ingestion.requests.post", post_mock)
+    monkeypatch.delenv("ACLED_ACCESS_TOKEN", raising=False)
+    monkeypatch.setenv("ACLED_REFRESH_TOKEN", "ref-dead")
+
+    ingestor = ACLEDIngestor(username="user@test.com", password="pw")
+
+    assert ingestor._get_access_token() == "tok-pw"
+    assert post_mock.call_count == 2
+    assert post_mock.call_args.kwargs["data"]["grant_type"] == "password"
+
+
+def test_acled_token_only_config_raises_on_reauth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Token-only setups cannot re-auth — say so instead of posting empty creds."""
+    from unittest.mock import MagicMock
+
+    from pipeline.ingestion import ACLEDIngestor
+
+    monkeypatch.setattr("pipeline.ingestion.REDIS_AVAILABLE", False)
+    post_mock = MagicMock()
+    monkeypatch.setattr("pipeline.ingestion.requests.post", post_mock)
+    monkeypatch.setenv("ACLED_ACCESS_TOKEN", "pasted-token")
+    monkeypatch.delenv("ACLED_REFRESH_TOKEN", raising=False)
+    monkeypatch.delenv("ACLED_EMAIL", raising=False)
+    monkeypatch.delenv("ACLED_PASSWORD", raising=False)
+
+    ingestor = ACLEDIngestor()
+
+    with pytest.raises(requests.RequestException):
+        ingestor._get_access_token(force_refresh=True)
+    assert post_mock.call_count == 0
+
+
+def test_acled_credentials_configured_accepts_token_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ingestion is enabled by a pasted token, a refresh token, or email+password."""
+    from pipeline.ingestion import acled_credentials_configured
+
+    for var in (
+        "ACLED_ACCESS_TOKEN",
+        "ACLED_REFRESH_TOKEN",
+        "ACLED_EMAIL",
+        "ACLED_PASSWORD",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    assert acled_credentials_configured() is False
+
+    monkeypatch.setenv("ACLED_ACCESS_TOKEN", "pasted-token")
+    assert acled_credentials_configured() is True
+
+    monkeypatch.delenv("ACLED_ACCESS_TOKEN")
+    monkeypatch.setenv("ACLED_REFRESH_TOKEN", "ref")
+    assert acled_credentials_configured() is True
+
+    monkeypatch.delenv("ACLED_REFRESH_TOKEN")
+    monkeypatch.setenv("ACLED_EMAIL", "user@test.com")
+    assert acled_credentials_configured() is False
+    monkeypatch.setenv("ACLED_PASSWORD", "pw")
+    assert acled_credentials_configured() is True
+
+
+def test_acled_403_stops_immediately(monkeypatch: pytest.MonkeyPatch) -> None:
+    """403 is an account entitlement problem — retrying it just burns the tick."""
+    from unittest.mock import MagicMock
+
+    from pipeline.ingestion import ACLEDIngestor
+
+    monkeypatch.setattr("pipeline.ingestion.REDIS_AVAILABLE", False)
+
+    denied = MagicMock()
+    denied.status_code = 403
+    denied.text = '{"message":"Access denied"}'
+    get_mock = MagicMock(return_value=denied)
+    monkeypatch.setattr("pipeline.ingestion.requests.get", get_mock)
+    sleep_mock = MagicMock()
+    monkeypatch.setattr("pipeline.ingestion.time.sleep", sleep_mock)
+
+    ingestor = ACLEDIngestor(username="user@test.com", password="pw")
+    monkeypatch.setattr(
+        ingestor, "_get_access_token", lambda force_refresh=False: "tok123"
+    )
+
+    assert ingestor._fetch_page_with_retry({"limit": 1}) is None
+    assert get_mock.call_count == 1
+    assert sleep_mock.call_count == 0
+
+
+def test_acled_logs_embargo_when_window_is_out_of_reach(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An empty window inside ACLED's recency embargo must say so, not just return 0."""
+    from unittest.mock import MagicMock
+
+    from pipeline.ingestion import ACLEDIngestor
+
+    monkeypatch.setattr("pipeline.ingestion.REDIS_AVAILABLE", False)
+
+    api_response = MagicMock()
+    api_response.status_code = 200
+    api_response.json.return_value = {
+        "data": [],
+        "data_query_restrictions": {
+            "countries": [],
+            "event_types": [],
+            "date_recency": {
+                "quantity": 12,
+                "unit": "Months",
+                "description": "12 Months old",
+                "date": "2025-08-22",
+            },
+        },
+    }
+    monkeypatch.setattr(
+        "pipeline.ingestion.requests.get", MagicMock(return_value=api_response)
+    )
+
+    ingestor = ACLEDIngestor(username="user@test.com", password="pw")
+    monkeypatch.setattr(
+        ingestor, "_get_access_token", lambda force_refresh=False: "tok123"
+    )
+
+    with caplog.at_level("WARNING"):
+        df = ingestor._fetch_from_api(days=7)
+
+    assert df.empty
+    assert ingestor.data_query_restrictions["date_recency"]["date"] == "2025-08-22"
+    assert "12 Months old" in caplog.text
+    assert "2025-08-22" in caplog.text

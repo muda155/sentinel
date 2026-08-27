@@ -126,6 +126,7 @@ All config is env-driven via `sentinel.env` (copy from `sentinel.env.example`). 
 - `NVIDIA_NIM_ENDPOINT`, `NVIDIA_NIM_API_KEY`, `NVIDIA_NIM_MODEL` — LLM SITREP step
   (skipped if absent; falls back to `OLLAMA_ENDPOINT`).
 - `ACLED_EMAIL` / `ACLED_PASSWORD` — myACLED OAuth credentials; enable ACLED ingestion (GDELT-only without them).
+- `ACLED_ACCESS_TOKEN` / `ACLED_REFRESH_TOKEN` — alternatives to the password: a token pasted from myACLED (24h) or a refresh token. Any one of the three enables step 2. A `403 Access denied` from the read endpoint means the account itself lacks API data access.
 
 Frontend build args (compose): `NEXT_PUBLIC_API_BASE` (default `http://localhost:8000`),
 `NEXT_PUBLIC_MAP_STYLE`. Changing these requires rebuilding `frontend-next`.

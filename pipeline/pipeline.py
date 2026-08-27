@@ -65,7 +65,9 @@ def run_pipeline() -> None:
     # Step 2: ACLED Ingestion (FR-1b) — failure must not abort the cycle
     try:
         step_start = time.monotonic()
-        if not (os.getenv("ACLED_EMAIL") and os.getenv("ACLED_PASSWORD")):
+        from pipeline.ingestion import acled_credentials_configured
+
+        if not acled_credentials_configured():
             logger.info("Step 2: ACLED ingestion skipped (no ACLED OAuth credentials)", extra={
                 "step": "acled_ingestion", "duration_s": 0,
             })
