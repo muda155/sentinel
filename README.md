@@ -203,4 +203,4 @@ cd frontend-next && npm test               # frontend (vitest)
 `specs.md` is the authoritative design doc. Key invariants:
 **FR-WM-CONVERGENCE** (cells fire on 2+ distinct event types),
 **FR-7/8/9** (`conf_score = 0.6·source_density + 0.4·geopolitical_diversity`),
-**FR-11/12** (LLM citations validated — every sentence ends with `[N]`).
+**FR-11/12** (LLM citations validated — every sentence ends with `[N]`, on either side of the full stop).

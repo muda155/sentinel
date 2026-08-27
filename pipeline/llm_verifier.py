@@ -155,20 +155,35 @@ def _extract_json(text: str) -> dict:
         raise ValueError(f"LLM response is not valid JSON: {text[:200]}") from None
 
 
+# FR-11's canonical order is "[N]." — citation, then the full stop. Models
+# routinely emit the mirror image ("...injuries.[3]"), which carries the same
+# claim and the same citation, so it is normalised to the canonical order
+# before anything else looks at the text. Doing it here rather than in the
+# pattern also repairs the sentence split: "escorts.[2] US Democrats..." has no
+# whitespace directly after the period, so the splitter never saw a boundary
+# and the whole summary collapsed into one uncited "sentence".
+# Only the first two indices move, so three or more stay invalid per FR-23.
+_TRAILING_CITATION = re.compile(r'([.!?])(\[\d+\](?:\[\d+\])?)')
+
+
 def validate_citations(summary: str) -> None:
     r"""Validate that every sentence ends with a numeric citation (FR-11).
 
     Splits the summary into sentences and requires each to match
     the citation pattern. FR-23 dispute sentences may end with exactly
-    two indices ``[i][j]``; three or more stay invalid.
+    two indices ``[i][j]``; three or more stay invalid. A sentence may
+    place its citation on either side of the terminal punctuation
+    (``claim [1].`` or ``claim.[1]``) — the two are equivalent here, and
+    the caller's text is never rewritten.
     """
+    text = _TRAILING_CITATION.sub(r'\2\1', (summary or "").strip())
     # Abbreviations ("U.S.", "St.", "Gen.") must not split mid-sentence: legit
     # boundaries always look like "[N]." per FR-11, never end in an abbreviation.
     abbrevs = ["St", "Mt", "Dr", "Mr", "Mrs", "Ms", "Gen", "Lt", "Col", "Sgt", "Jr", "Sr"]
     guards = r'(?<![A-Z]\.)' + "".join(rf'(?<!\b{a}\.)' for a in abbrevs)
     sentences = [
         s.strip()
-        for s in re.split(guards + r'(?<=[.!?])\s+', (summary or "").strip())
+        for s in re.split(guards + r'(?<=[.!?])\s+', text)
         if s.strip()
     ]
     if not sentences:

@@ -50,7 +50,7 @@ Remove stale or contradictory text immediately.
 - `specs.md` is the authoritative design doc (v1.15.0 — verify against its Document Version header) — check it before implementing new features
 - FR-WM-CONVERGENCE: a grid cell becomes an active Convergence Zone on **`convergence_score ≥ 1`** (≥1 classified event); 2+ distinct types raise the alert level but are not required to activate (single-type GDELT-only cells must still produce hotspots). GDELT classification reads the **2-digit CAMEO root** of the 3–4 digit `EventCode`. This is grid-cell binning, not DBSCAN density alone.
 - FR-7/FR-8/FR-9: `conf_score` formula must match exactly: `0.7 × source_density + 0.3 × geopolitical_diversity`, where `source_density = tanh(Σ trust over unique domains / 3)` (env-configurable via `SENTINEL_CONF_W_DENSITY`, `SENTINEL_CONF_W_DIVERSITY`, `SENTINEL_CONF_DENSITY_DIVISOR`)
-- FR-11/FR-12: LLM citations must be validated with `validate_citations()` — every sentence must end with `[N]` (FR-23 adds one relaxation: dispute sentences may end with exactly two indices `[i][j]`)
+- FR-11/FR-12: LLM citations must be validated with `validate_citations()` — every sentence must end with `[N]`, on **either side of the terminal punctuation** (`claim [1].` or `claim.[1]`; the validator normalises the trailing form internally and never rewrites stored text). FR-23 adds one relaxation: dispute sentences may end with exactly two indices `[i][j]`, in either order; three or more stay invalid
 - FR-21..FR-24 (M6 Consistency Engine, specs §4.8): implemented — engine in `pipeline/consistency.py` + `pipeline/nli.py`, claims API, Evidence panel; `conf_score` untouched; migration 020
 
 ### Code Quality

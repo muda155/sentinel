@@ -1002,3 +1002,65 @@ def test_verify_hotspots_survives_a_failing_rollback(monkeypatch):
     )
     assert attempted == [1, 2]
     assert result == {"candidates": 2, "processed": 0}
+
+
+# FR-11 accepts the citation on either side of the terminal punctuation. Every
+# case below is a real llm-worker rejection from 2026-08-27, where a fully
+# cited SITREP was discarded purely for putting "[N]" after the full stop.
+def test_validate_citations_accepts_citation_after_the_full_stop():
+    from pipeline.llm_verifier import validate_citations
+    validate_citations(
+        "Verified claims indicate a significant flash flood event in Nepal "
+        "with multiple fatalities and injuries.[3]"
+    )
+
+
+def test_validate_citations_accepts_trailing_dispute_pair():
+    from pipeline.llm_verifier import validate_citations
+    validate_citations(
+        "Verified claims indicate escalating trade tensions between the US "
+        "and Canada.[2][3]"
+    )
+
+
+def test_trailing_citation_still_splits_multiple_sentences():
+    # "escorts.[2] US Democrats..." has no whitespace directly after the
+    # period, so the pre-fix splitter saw one sentence, not two, and the whole
+    # summary failed as a single uncited unit.
+    from pipeline.llm_verifier import validate_citations
+    validate_citations(
+        "Israeli forces stormed a site with military escorts.[2] "
+        "US Democrats called on Netanyahu to stop West Bank settler violence.[1]"
+    )
+
+
+def test_trailing_citation_does_not_excuse_an_uncited_neighbour():
+    from pipeline.llm_verifier import validate_citations
+    with pytest.raises(ValueError, match="Artillery deployed"):
+        validate_citations(
+            "Forces advanced 5km.[1] Artillery deployed."
+        )
+
+
+def test_trailing_triple_index_stays_invalid():
+    # Only the first two indices are canonicalised, so FR-23's "exactly two"
+    # rule survives in the trailing form as well.
+    from pipeline.llm_verifier import validate_citations
+    with pytest.raises(ValueError):
+        validate_citations("Sources disagree.[1][2][3]")
+
+
+def test_both_citation_orders_may_be_mixed_in_one_summary():
+    from pipeline.llm_verifier import validate_citations
+    validate_citations(
+        "Forces advanced 5km [1]. Artillery deployed.[2] "
+        "Sources disagree on casualties [3][4]."
+    )
+
+
+def test_uncited_boilerplate_is_still_rejected():
+    # The other live failure shape: the model had nothing to report and
+    # emitted a bare sentence with no citation at all. Still invalid.
+    from pipeline.llm_verifier import validate_citations
+    with pytest.raises(ValueError, match="No factual conflicts detected"):
+        validate_citations("No factual conflicts detected regarding the provided information")
