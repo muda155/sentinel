@@ -7,10 +7,19 @@ keep their Python types (lists/numbers) across the wire.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any
 
 import redis
+
+from api.metrics import METRICS
+
+logger = logging.getLogger("sentinel.streams")
+
+
+class UndecodableMessage(ValueError):
+    """A stream entry whose body is not the JSON `data` shape this bus writes."""
 
 
 class StreamBus:
@@ -34,7 +43,35 @@ class StreamBus:
         raw = fields.get(b"data") or fields.get("data")
         if isinstance(raw, bytes):
             raw = raw.decode()
-        return json.loads(raw)
+        if not isinstance(raw, str):
+            raise UndecodableMessage("entry has no 'data' field")
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError) as error:
+            raise UndecodableMessage(f"'data' is not valid JSON: {error}") from error
+
+    def _decode_entries(self, entries, stream: str, group: str) -> list[tuple[str, dict]]:
+        """Decode raw (id, fields) pairs, dropping any entry that cannot be read.
+
+        Decoding happens here, before the worker loop reaches per-message
+        handling, so an undecodable entry used to raise straight out of read()
+        and kill the process — and kill it again on every restart, because the
+        entry stayed in the stream. It is acked rather than left pending:
+        a message that cannot be parsed can never be processed, and leaving it
+        would only have claim_stale rediscover it forever. Losing one message
+        beats an unattended crashloop that names no id.
+        """
+        out: list[tuple[str, dict]] = []
+        for mid, fields in entries:
+            mid = mid.decode() if isinstance(mid, bytes) else mid
+            try:
+                out.append((mid, self._decode(fields)))
+            except UndecodableMessage as error:
+                METRICS.inc("stream_undecodable_total")
+                logger.error("dropping undecodable message %s on %s: %s",
+                             mid, stream, error)
+                self.ack(stream, group, mid)
+        return out
 
     def ensure_group(self, stream: str, group: str) -> None:
         try:
@@ -56,7 +93,7 @@ class StreamBus:
             )
         except redis.exceptions.TimeoutError:
             return []
-        return self._flatten(resp)
+        return self._decode_entries(self._entries(resp), stream, group)
 
     def claim_stale(self, stream: str, group: str, consumer: str, *, min_idle_ms: int | None = None) -> list[tuple[str, dict]]:
         idle = min_idle_ms if min_idle_ms is not None else int(os.getenv("SENTINEL_STALE_MS", "7200000"))
@@ -64,11 +101,7 @@ class StreamBus:
         _cursor, msgs, _deleted = self._r.xautoclaim(
             stream, group, consumer, min_idle_time=idle, start_id="0-0", count=self._batch
         )
-        out: list[tuple[str, dict]] = []
-        for mid, fields in msgs:
-            mid = mid.decode() if isinstance(mid, bytes) else mid
-            out.append((mid, self._decode(fields)))
-        return out
+        return self._decode_entries(msgs, stream, group)
 
     def ack(self, stream: str, group: str, msg_id: str) -> None:
         self._r.xack(stream, group, msg_id)
@@ -78,10 +111,7 @@ class StreamBus:
         return int(info["pending"]) if isinstance(info, dict) else int(info[0])
 
     @staticmethod
-    def _flatten(resp) -> list[tuple[str, dict]]:
-        out: list[tuple[str, dict]] = []
+    def _entries(resp):
+        """Flatten xreadgroup's [(stream, [(id, fields), ...]), ...] response."""
         for _stream, entries in resp or []:
-            for mid, fields in entries:
-                mid = mid.decode() if isinstance(mid, bytes) else mid
-                out.append((mid, StreamBus._decode(fields)))
-        return out
+            yield from entries
