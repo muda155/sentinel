@@ -158,6 +158,12 @@ def call_openai_compatible(
         "temperature": float(os.getenv("SENTINEL_LLM_TEMPERATURE", "0")),
         "max_tokens": int(os.getenv("SENTINEL_LLM_MAX_TOKENS", "500")),
     }
+    if provider.name == "deepseek":
+        # deepseek-v4-flash reasons by default: on real prompts the reasoning
+        # eats the whole max_tokens budget and the response comes back with
+        # empty content (measured 8-16k reasoning tokens on an extraction
+        # prompt). Disabling thinking is what makes the model answer at all.
+        payload["thinking"] = {"type": "disabled"}
     headers = {
         "Authorization": f"Bearer {api_key_of(provider)}",
         "Content-Type": "application/json",

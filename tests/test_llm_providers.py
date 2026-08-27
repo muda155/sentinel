@@ -235,3 +235,19 @@ def test_ollama_keeps_its_fr12_audit_tag(monkeypatch):
     monkeypatch.setattr("pipeline.llm_providers.requests.post", Mock(return_value=r))
     from pipeline.llm_providers import call_ollama_raw
     assert call_ollama_raw("p")[1] == "llama-3-8b-ollama"
+
+
+def test_deepseek_disables_thinking_other_providers_do_not(monkeypatch):
+    # deepseek-v4-flash reasons by default and returns empty content on real
+    # prompts once the reasoning eats max_tokens; the adapter turns thinking
+    # off for it only — NIM/Kimi must not receive a param they may reject.
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "d")
+    monkeypatch.setenv("NVIDIA_NIM_API_KEY", "n")
+    post = Mock(return_value=_ok())
+    monkeypatch.setattr("pipeline.llm_providers.requests.post", post)
+
+    call_openai_compatible("p", provider=PROVIDERS["deepseek"])
+    assert post.call_args.kwargs["json"]["thinking"] == {"type": "disabled"}
+
+    call_openai_compatible("p", provider=PROVIDERS["nim"])
+    assert "thinking" not in post.call_args.kwargs["json"]
