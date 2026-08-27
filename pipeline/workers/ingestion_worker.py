@@ -11,7 +11,11 @@ import uuid
 from datetime import datetime, timezone
 
 from pipeline.db import get_pooled_connection
-from pipeline.ingestion import ACLEDIngestor, GDELT2Ingestor
+from pipeline.ingestion import (
+    ACLEDIngestor,
+    GDELT2Ingestor,
+    acled_credentials_configured,
+)
 from pipeline.retention import ensure_partitions
 from pipeline.streams import StreamBus
 
@@ -48,7 +52,7 @@ class IngestionWorker:
             inserted += len(event_ids)
 
             # Step 2: ACLED (non-fatal — per monolith pipeline.py Step 2)
-            if os.getenv("ACLED_EMAIL") and os.getenv("ACLED_PASSWORD"):
+            if acled_credentials_configured():
                 try:
                     acled_days = int(os.getenv("SENTINEL_ACLED_FETCH_DAYS", "7"))
                     acled = ACLEDIngestor()

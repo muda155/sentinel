@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import io
+import json
 import logging
 import os
 import re
@@ -675,6 +677,36 @@ def _register_acled_source(cursor, domain: str) -> int | None:
     return result[0] if result else None
 
 
+def acled_credentials_configured() -> bool:
+    """True when ACLED ingestion has some way to authenticate.
+
+    Either a pasted ``ACLED_ACCESS_TOKEN``/``ACLED_REFRESH_TOKEN`` or the
+    ``ACLED_EMAIL``/``ACLED_PASSWORD`` pair the password grant needs.
+    """
+    if os.getenv("ACLED_ACCESS_TOKEN") or os.getenv("ACLED_REFRESH_TOKEN"):
+        return True
+    return bool(os.getenv("ACLED_EMAIL") and os.getenv("ACLED_PASSWORD"))
+
+
+def _jwt_expiry(token: str) -> float | None:
+    """Return a JWT's ``exp`` as a POSIX timestamp, or None if unreadable."""
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    payload_segment = parts[1]
+    try:
+        decoded = base64.urlsafe_b64decode(
+            payload_segment + "=" * (-len(payload_segment) % 4)
+        )
+        exp = json.loads(decoded).get("exp")
+    except Exception:
+        return None
+    try:
+        return float(exp)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
 # ---------------------------------------------------------------------------
 # ACLED Ingestor (FR-1b)
 # ---------------------------------------------------------------------------
@@ -703,9 +735,12 @@ class ACLEDIngestor:
         username: str | None = None,
         password: str | None = None,
         cache_ttl: int | None = None,
+        access_token: str | None = None,
+        refresh_token: str | None = None,
     ):
         self.username = username or os.getenv("ACLED_EMAIL", "")
         self.password = password or os.getenv("ACLED_PASSWORD", "")
+        self.refresh_token = refresh_token or os.getenv("ACLED_REFRESH_TOKEN", "")
         poll_hours = int(os.getenv("SENTINEL_ACLED_POLL_HOURS", "24"))
         self.cache_ttl = (
             cache_ttl if cache_ttl is not None else poll_hours * 3600
@@ -717,6 +752,18 @@ class ACLEDIngestor:
         self.max_retries = 3
         self._access_token: str | None = None
         self._token_expires_at: float = 0.0
+        # Populated from the API envelope: what this account is allowed to see.
+        self.data_query_restrictions: dict = {}
+
+        # A token pasted from myACLED is used as-is until its own `exp`; an
+        # opaque one is assumed to have ACLED's documented 24h validity.
+        configured_token = access_token or os.getenv("ACLED_ACCESS_TOKEN", "")
+        if configured_token:
+            expiry = _jwt_expiry(configured_token)
+            self._access_token = configured_token
+            self._token_expires_at = (
+                expiry - 60 if expiry is not None else time.time() + 86340
+            )
 
         # Redis cache (graceful fallback if unavailable)
         self._redis = None
@@ -913,11 +960,32 @@ class ACLEDIngestor:
     # ------------------------------------------------------------------
 
     def _request_token(self) -> tuple[str, int]:
-        """Request a new access token via OAuth password grant.
+        """Request a new access token, preferring the refresh grant.
+
+        A refresh token avoids replaying the account password every 24h.
+        ACLED rotates it on each use, so the new one replaces the old.
 
         Returns:
             Tuple of (access_token, expires_in_seconds).
         """
+        if self.refresh_token:
+            try:
+                return self._request_token_via_refresh()
+            except requests.RequestException as exc:
+                if not (self.username and self.password):
+                    raise
+                logging.warning(
+                    "ACLED refresh grant failed (%s) — falling back to "
+                    "password grant",
+                    exc,
+                )
+
+        if not (self.username and self.password):
+            raise requests.RequestException(
+                "ACLED re-authentication requires ACLED_REFRESH_TOKEN or "
+                "ACLED_EMAIL/ACLED_PASSWORD; only ACLED_ACCESS_TOKEN is set"
+            )
+
         response = requests.post(
             self.TOKEN_URL,
             data={
@@ -931,6 +999,22 @@ class ACLEDIngestor:
         )
         response.raise_for_status()
         payload = response.json()
+        return payload["access_token"], int(payload.get("expires_in", 86400))
+
+    def _request_token_via_refresh(self) -> tuple[str, int]:
+        """Exchange the refresh token for a new access token."""
+        response = requests.post(
+            self.TOKEN_URL,
+            data={
+                "grant_type": "refresh_token",
+                "client_id": "acled",
+                "refresh_token": self.refresh_token,
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        self.refresh_token = payload.get("refresh_token") or self.refresh_token
         return payload["access_token"], int(payload.get("expires_in", 86400))
 
     def _get_access_token(self, force_refresh: bool = False) -> str:
@@ -1003,6 +1087,8 @@ class ACLEDIngestor:
 
             if isinstance(data, dict):
                 events_on_page = data.get("data", [])
+                if page == 1:
+                    self._note_query_restrictions(data, start_date)
             else:
                 events_on_page = data
             if not events_on_page:
@@ -1041,11 +1127,49 @@ class ACLEDIngestor:
         df = pd.DataFrame(all_events)
         return self._normalize_acled_columns(df)
 
+    def _note_query_restrictions(
+        self, payload: dict, window_start: datetime
+    ) -> None:
+        """Record and log what the account's access level withholds.
+
+        ACLED returns ``data_query_restrictions`` on every read. The research
+        tier carries a rolling recency embargo, so a live window authenticates,
+        succeeds, and comes back empty — this turns that silent zero into a
+        stated reason.
+        """
+        restrictions = payload.get("data_query_restrictions")
+        if not isinstance(restrictions, dict):
+            return
+        self.data_query_restrictions = restrictions
+
+        recency = restrictions.get("date_recency")
+        if not isinstance(recency, dict):
+            return
+        cutoff = recency.get("date")
+        logging.info(
+            "ACLED access level withholds data newer than %s (%s)",
+            cutoff,
+            recency.get("description", "recency embargo"),
+        )
+        try:
+            cutoff_date = datetime.strptime(str(cutoff), "%Y-%m-%d")
+        except (TypeError, ValueError):
+            return
+        if window_start > cutoff_date:
+            logging.warning(
+                "ACLED window starts %s but the account's %s embargo only "
+                "serves data through %s — this fetch returns no rows",
+                window_start.strftime("%Y-%m-%d"),
+                recency.get("description", "recency"),
+                cutoff,
+            )
+
     def _fetch_page_with_retry(self, params: dict) -> dict | None:
         """Fetch a single ACLED API page with exponential backoff retry.
 
-        On HTTP 401 the cached token is discarded and a fresh password
-        grant is performed before the next attempt.
+        On HTTP 401 the cached token is discarded and a fresh grant is
+        performed before the next attempt. HTTP 403 returns immediately —
+        it means the account lacks API access, not a transient fault.
 
         Returns parsed JSON dict on success, ``None`` after exhausting retries.
         """
@@ -1054,7 +1178,8 @@ class ACLEDIngestor:
                 token = self._get_access_token()
             except requests.RequestException as exc:
                 logging.error(
-                    "ACLED token acquisition failed — check ACLED_EMAIL/"
+                    "ACLED token acquisition failed — check "
+                    "ACLED_ACCESS_TOKEN/ACLED_REFRESH_TOKEN or ACLED_EMAIL/"
                     "ACLED_PASSWORD: %s",
                     exc,
                 )
@@ -1077,6 +1202,16 @@ class ACLEDIngestor:
                         self.max_retries,
                     )
                     self._get_access_token(force_refresh=True)
+                elif response.status_code == 403:
+                    # The token authenticated (401 is what a bad one gets);
+                    # the myACLED account has no API data access. Retrying
+                    # cannot change that.
+                    logging.error(
+                        "ACLED API returned 403 Access denied — the account "
+                        "authenticates but has no API data access; check the "
+                        "access tier / data licence in myACLED"
+                    )
+                    return None
                 elif response.status_code == 429:
                     backoff = 2 ** attempt
                     logging.warning(
@@ -1177,16 +1312,15 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def main_acled(args: argparse.Namespace) -> int:
     """Run ACLED ingestion (FR-1b)."""
-    username = os.getenv("ACLED_EMAIL", "")
-    password = os.getenv("ACLED_PASSWORD", "")
-    if not username or not password:
+    if not acled_credentials_configured():
         print(
-            "Warning: ACLED_EMAIL or ACLED_PASSWORD not set. "
+            "Warning: no ACLED credentials set (ACLED_ACCESS_TOKEN, "
+            "ACLED_REFRESH_TOKEN, or ACLED_EMAIL + ACLED_PASSWORD). "
             "Skipping ACLED fetch."
         )
         return 0
 
-    ingestor = ACLEDIngestor(username=username, password=password)
+    ingestor = ACLEDIngestor()
     print(f"Fetching ACLED events for last {args.acled_days} days...")
     df = ingestor.fetch_events(days=args.acled_days)
     print(f"Fetched {len(df)} ACLED events")

@@ -8,15 +8,46 @@ from urllib.parse import urlparse
 from pipeline.citations import collapse_duplicate_urls
 
 
+def _alert_level_sql(alias: str) -> str:
+    """FR-13 alert level, derived from the cell — mirrors clustering.classify_alert_level.
+
+    Neither alert_level column is ever written (NULL on all 1321 hotspots and all
+    2632 grid cells, 2026-08-20), so the hotspot queries' COALESCE to 'Medium'
+    labelled every hotspot Medium, and — the user-visible half — the filter
+    compared against the raw column, so ?alert_level=<any value> matched zero
+    rows, including the 'Medium' the same endpoint reported for every hotspot.
+
+    The thresholds are FR-WM-CONVERGENCE's and must stay identical to
+    pipeline/clustering.py:classify_alert_level, the authoritative statement of
+    them: **2+ distinct event types are required to raise the level at all**.
+    A single-type cell activates as a Convergence Zone but has no elevated
+    alert, however high its score — omitting that check promotes every
+    single-type cell at score 50 to 'High', which on the current corpus is every
+    cell there is (one type caps the score at 25 + 25).
+
+    classify_alert_level returns None below Medium; SQL floors to 'Medium'
+    instead, preserving this layer's existing non-null contract with
+    schemas.Hotspot rather than widening the field to nullable here.
+
+    `alias` is a caller-supplied table alias, never user input.
+    """
+    return f"""
+        CASE
+          WHEN {alias}.event_type_count >= 4 AND {alias}.convergence_score >= 80
+            THEN 'Critical'
+          WHEN {alias}.event_type_count >= 3 AND {alias}.convergence_score >= 70
+            THEN 'Critical'
+          WHEN {alias}.event_type_count >= 2 AND {alias}.convergence_score >= 50
+            THEN 'High'
+          ELSE 'Medium'
+        END"""
+
+
 def fetch_grid_cells(conn, *, min_convergence=1.0, max_age_hours=720) -> list[dict]:
-    q = """
+    q = f"""
         SELECT cell_id, ST_Y(ST_Centroid(cell_geom)) lat, ST_X(ST_Centroid(cell_geom)) lon,
                COALESCE(convergence_score,0) convergence_score,
-               CASE
-                 WHEN event_type_count >= 3 AND convergence_score >= 70 THEN 'Critical'
-                 WHEN convergence_score >= 50 THEN 'High'
-                 ELSE 'Medium'
-               END AS alert_level,
+               {_alert_level_sql("grid_cells")} AS alert_level,
                COALESCE(total_events,0) total_events
         FROM grid_cells
         WHERE COALESCE(convergence_score,0) >= %s
@@ -33,7 +64,7 @@ def fetch_grid_cells(conn, *, min_convergence=1.0, max_age_hours=720) -> list[di
 def fetch_hotspots(conn, *, limit=50, min_conf=0.0, min_convergence=0.0,
                    alert_level=None, max_age_hours=720) -> list[dict[str, Any]]:
     limit = max(1, min(int(limit), 200))   # spec: max 200
-    q = """
+    q = f"""
         SELECT h.hotspot_id, ST_Y(h.centroid_geom) lat, ST_X(h.centroid_geom) lon,
                h.name, h.start_window, h.end_window, h.created_at,
                COALESCE(h.conf_score,0) conf_score, h.event_count,
@@ -44,11 +75,11 @@ def fetch_hotspots(conn, *, limit=50, min_conf=0.0, min_convergence=0.0,
                CASE WHEN g.convergence_score IS NOT NULL THEN g.total_events
                     ELSE h.event_count END AS convergence_events,
                COALESCE(g.convergence_score,h.convergence_score) convergence_score,
-               COALESCE(h.alert_level,'Medium') alert_level
+               {_alert_level_sql("g")} AS alert_level
         FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
         WHERE COALESCE(h.conf_score,0) >= %s
           AND COALESCE(g.convergence_score,h.convergence_score,0) >= %s
-          AND (%s IS NULL OR h.alert_level = %s)
+          AND (%s IS NULL OR {_alert_level_sql("g")} = %s)
           AND (%s IS NULL OR h.end_window >= now() - make_interval(hours => %s))
         ORDER BY h.conf_score DESC NULLS LAST, h.hotspot_id DESC
         LIMIT %s
@@ -81,7 +112,7 @@ def fetch_hotspot_summary(conn, hotspot_id: int) -> dict | None:
 
 def fetch_hotspot_by_id(conn, hotspot_id: int) -> dict | None:
     """Fetch a single hotspot by ID with full enrichment (lat, lon, conf, convergence, alert)."""
-    q = """
+    q = f"""
         SELECT h.hotspot_id, ST_Y(h.centroid_geom) lat, ST_X(h.centroid_geom) lon,
                h.name, h.start_window, h.end_window, h.created_at,
                COALESCE(h.conf_score,0) conf_score, h.event_count,
@@ -92,7 +123,7 @@ def fetch_hotspot_by_id(conn, hotspot_id: int) -> dict | None:
                CASE WHEN g.convergence_score IS NOT NULL THEN g.total_events
                     ELSE h.event_count END AS convergence_events,
                COALESCE(g.convergence_score,h.convergence_score) convergence_score,
-               COALESCE(h.alert_level,'Medium') alert_level
+               {_alert_level_sql("g")} AS alert_level
         FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
         WHERE h.hotspot_id = %s
     """
@@ -135,7 +166,7 @@ def fetch_events_bbox(conn, *, sw_lat, sw_lon, ne_lat, ne_lon, start, end,
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
-_HOTSPOT_SELECT = """
+_HOTSPOT_SELECT = f"""
     SELECT h.hotspot_id, h.name, h.start_window,
            ST_Y(h.centroid_geom) lat, ST_X(h.centroid_geom) lon,
            h.end_window, h.created_at,
@@ -147,7 +178,7 @@ _HOTSPOT_SELECT = """
            CASE WHEN g.convergence_score IS NOT NULL THEN g.total_events
                 ELSE h.event_count END AS convergence_events,
            COALESCE(g.convergence_score,h.convergence_score) convergence_score,
-           COALESCE(h.alert_level,'Medium') alert_level
+           {_alert_level_sql("g")} AS alert_level
     FROM hotspots h LEFT JOIN grid_cells g ON h.cell_id = g.cell_id
 """
 
@@ -175,7 +206,7 @@ def fetch_search(conn, q: str) -> dict[str, list]:
         hotspots = _rows_to_dicts(cur)
 
         cur.execute(
-            """
+            f"""
             SELECT * FROM (
                 SELECT e.event_id, e.title, e.url, e.event_date,
                        h.hotspot_id, h.name, h.start_window h_start_window,
@@ -185,7 +216,7 @@ def fetch_search(conn, q: str) -> dict[str, list]:
                        ST_X(h.centroid_geom) h_lon, COALESCE(h.conf_score,0) h_conf,
                        h.event_count h_event_count,
                        COALESCE(g.convergence_score,h.convergence_score) h_convergence,
-                       COALESCE(h.alert_level,'Medium') h_alert,
+                       {_alert_level_sql("g")} AS h_alert,
                        count(*) OVER (
                            PARTITION BY COALESCE(NULLIF(e.url, ''), 'evt:' || e.event_id),
                                         h.hotspot_id

@@ -1,0 +1,278 @@
+{
+  "_comment": "Cross-language parity fixture for FR-22(d) claim value. Generated from pipeline/consistency.py:claim_value by tests/test_consistency_parity.py (run it with --regenerate). Read by BOTH tests/test_consistency_parity.py and frontend-next/__tests__/window-consistency.test.ts, so the Python engine and its TypeScript port cannot drift apart silently.",
+  "cases": [
+    {
+      "status": "corroborated",
+      "support": 0.0,
+      "dispute": 0.0,
+      "weight": 0.1,
+      "value": 1.0
+    },
+    {
+      "status": "corroborated",
+      "support": 3.0,
+      "dispute": 0.0,
+      "weight": 3.0,
+      "value": 1.0
+    },
+    {
+      "status": "corroborated",
+      "support": 0.4,
+      "dispute": 0.0,
+      "weight": 0.4,
+      "value": 1.0
+    },
+    {
+      "status": "corroborated",
+      "support": 0.0,
+      "dispute": 0.4,
+      "weight": 0.4,
+      "value": 0.0
+    },
+    {
+      "status": "corroborated",
+      "support": 0.0,
+      "dispute": 3.5,
+      "weight": 3.5,
+      "value": 0.0
+    },
+    {
+      "status": "corroborated",
+      "support": 2.0,
+      "dispute": 0.5,
+      "weight": 2.5,
+      "value": 0.8
+    },
+    {
+      "status": "corroborated",
+      "support": 1.575,
+      "dispute": 0.399,
+      "weight": 1.974,
+      "value": 0.7978723404255319
+    },
+    {
+      "status": "corroborated",
+      "support": 5.55,
+      "dispute": 0.798,
+      "weight": 6.348,
+      "value": 0.8742911153119093
+    },
+    {
+      "status": "corroborated",
+      "support": 1.0,
+      "dispute": 1.0,
+      "weight": 2.0,
+      "value": 0.5
+    },
+    {
+      "status": "corroborated",
+      "support": 0.371,
+      "dispute": 3.523,
+      "weight": 3.894,
+      "value": 0.09527478171545967
+    },
+    {
+      "status": "corroborated",
+      "support": 12.0,
+      "dispute": 0.001,
+      "weight": 12.001,
+      "value": 0.9999166736105325
+    },
+    {
+      "status": "corroborated",
+      "support": 0.001,
+      "dispute": 12.0,
+      "weight": 12.001,
+      "value": 8.332638946750848e-05
+    },
+    {
+      "status": "corroborated",
+      "support": 0.1,
+      "dispute": 0.1,
+      "weight": 0.2,
+      "value": 0.5
+    },
+    {
+      "status": "uncorroborated",
+      "support": 0.0,
+      "dispute": 0.0,
+      "weight": 0.1,
+      "value": 0.5
+    },
+    {
+      "status": "uncorroborated",
+      "support": 3.0,
+      "dispute": 0.0,
+      "weight": 3.0,
+      "value": 0.5
+    },
+    {
+      "status": "uncorroborated",
+      "support": 0.4,
+      "dispute": 0.0,
+      "weight": 0.4,
+      "value": 0.5
+    },
+    {
+      "status": "uncorroborated",
+      "support": 0.0,
+      "dispute": 0.4,
+      "weight": 0.4,
+      "value": 0.0
+    },
+    {
+      "status": "uncorroborated",
+      "support": 0.0,
+      "dispute": 3.5,
+      "weight": 3.5,
+      "value": 0.0
+    },
+    {
+      "status": "uncorroborated",
+      "support": 2.0,
+      "dispute": 0.5,
+      "weight": 2.5,
+      "value": 0.4
+    },
+    {
+      "status": "uncorroborated",
+      "support": 1.575,
+      "dispute": 0.399,
+      "weight": 1.974,
+      "value": 0.39893617021276595
+    },
+    {
+      "status": "uncorroborated",
+      "support": 5.55,
+      "dispute": 0.798,
+      "weight": 6.348,
+      "value": 0.43714555765595464
+    },
+    {
+      "status": "uncorroborated",
+      "support": 1.0,
+      "dispute": 1.0,
+      "weight": 2.0,
+      "value": 0.25
+    },
+    {
+      "status": "uncorroborated",
+      "support": 0.371,
+      "dispute": 3.523,
+      "weight": 3.894,
+      "value": 0.04763739085772983
+    },
+    {
+      "status": "uncorroborated",
+      "support": 12.0,
+      "dispute": 0.001,
+      "weight": 12.001,
+      "value": 0.49995833680526625
+    },
+    {
+      "status": "uncorroborated",
+      "support": 0.001,
+      "dispute": 12.0,
+      "weight": 12.001,
+      "value": 4.166319473375424e-05
+    },
+    {
+      "status": "uncorroborated",
+      "support": 0.1,
+      "dispute": 0.1,
+      "weight": 0.2,
+      "value": 0.25
+    },
+    {
+      "status": "disputed",
+      "support": 0.0,
+      "dispute": 0.0,
+      "weight": 0.1,
+      "value": 0.0
+    },
+    {
+      "status": "disputed",
+      "support": 3.0,
+      "dispute": 0.0,
+      "weight": 3.0,
+      "value": 0.0
+    },
+    {
+      "status": "disputed",
+      "support": 0.4,
+      "dispute": 0.0,
+      "weight": 0.4,
+      "value": 0.0
+    },
+    {
+      "status": "disputed",
+      "support": 0.0,
+      "dispute": 0.4,
+      "weight": 0.4,
+      "value": 0.0
+    },
+    {
+      "status": "disputed",
+      "support": 0.0,
+      "dispute": 3.5,
+      "weight": 3.5,
+      "value": 0.0
+    },
+    {
+      "status": "disputed",
+      "support": 2.0,
+      "dispute": 0.5,
+      "weight": 2.5,
+      "value": 0.0
+    },
+    {
+      "status": "disputed",
+      "support": 1.575,
+      "dispute": 0.399,
+      "weight": 1.974,
+      "value": 0.0
+    },
+    {
+      "status": "disputed",
+      "support": 5.55,
+      "dispute": 0.798,
+      "weight": 6.348,
+      "value": 0.0
+    },
+    {
+      "status": "disputed",
+      "support": 1.0,
+      "dispute": 1.0,
+      "weight": 2.0,
+      "value": 0.0
+    },
+    {
+      "status": "disputed",
+      "support": 0.371,
+      "dispute": 3.523,
+      "weight": 3.894,
+      "value": 0.0
+    },
+    {
+      "status": "disputed",
+      "support": 12.0,
+      "dispute": 0.001,
+      "weight": 12.001,
+      "value": 0.0
+    },
+    {
+      "status": "disputed",
+      "support": 0.001,
+      "dispute": 12.0,
+      "weight": 12.001,
+      "value": 0.0
+    },
+    {
+      "status": "disputed",
+      "support": 0.1,
+      "dispute": 0.1,
+      "weight": 0.2,
+      "value": 0.0
+    }
+  ]
+}

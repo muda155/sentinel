@@ -6,6 +6,7 @@ from pipeline.consistency import (
     ClaimVerdict,
     ExtractedClaim,
     build_claims_prompt,
+    claim_value,
     consensus,
     extract_claims,
     hotspot_consistency_score,
@@ -158,6 +159,107 @@ def test_score_all_uncorroborated_is_50():
     verdicts = [ClaimVerdict(text="a", status="uncorroborated", support=0.0,
                              dispute=0.0, weight=0.1, evidence=[])]
     assert hotspot_consistency_score(verdicts) == 50.0
+
+
+# --- FR-22(d) agreement-scaled claim value (changed 2026-08-20) -------------
+#
+# v_c = V[status] * support/(support+dispute). Weight stays support+dispute.
+# The defect this replaced: a dispute vote raised only the WEIGHT, so a claim
+# carrying a contradiction contributed more to the score than a clean claim of
+# equal support whenever the contradiction failed to flip the status.
+
+
+def _v(status, support, dispute):
+    return ClaimVerdict(text="c", status=status, support=support, dispute=dispute,
+                        weight=max(support + dispute, 0.1), evidence=[])
+
+
+@pytest.mark.parametrize("status,expected", [
+    ("corroborated", 1.0), ("uncorroborated", 0.5), ("disputed", 0.0),
+])
+def test_clean_claim_value_is_unchanged_from_the_status_constant(status, expected):
+    """THE load-bearing invariant: with dispute == 0 the agreement ratio is 1,
+    so every claim that carries no contradiction scores exactly what it scored
+    before. This is why the change does not move the reported figures."""
+    assert claim_value(_v(status, support=3.0, dispute=0.0)) == pytest.approx(expected)
+
+
+@pytest.mark.parametrize("status", ["corroborated", "uncorroborated", "disputed"])
+@pytest.mark.parametrize("support", [0.4, 1.0, 3.7, 12.0])
+def test_clean_claims_score_identically_under_old_and_new_formulas(status, support):
+    verdicts = [_v(status, support, 0.0), _v("uncorroborated", 0.0, 0.0)]
+    legacy_value = {"corroborated": 1.0, "uncorroborated": 0.5, "disputed": 0.0}
+    total = sum(v.weight for v in verdicts)
+    legacy = 100.0 * sum(v.weight * legacy_value[v.status] for v in verdicts) / total
+    assert hotspot_consistency_score(verdicts) == pytest.approx(legacy)
+
+
+def test_zero_evidence_claim_keeps_its_status_value():
+    """support == dispute == 0 must not divide by zero and must not be read as
+    total disagreement. 448 of 597 claims on the 2026-08-20 snapshot are here."""
+    assert claim_value(_v("uncorroborated", 0.0, 0.0)) == pytest.approx(0.5)
+    assert claim_value(_v("corroborated", 0.0, 0.0)) == pytest.approx(1.0)
+    assert claim_value(_v("disputed", 0.0, 0.0)) == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("status", ["corroborated", "uncorroborated", "disputed"])
+def test_claim_value_never_rises_with_dispute(status):
+    values = [claim_value(_v(status, support=2.0, dispute=d))
+              for d in (0.0, 0.1, 0.5, 1.0, 2.0, 5.0, 50.0)]
+    assert values == sorted(values, reverse=True)
+    assert all(0.0 <= v <= 1.0 for v in values)
+
+
+# The admissibility criterion is w'(d) <= 0 AND v'(d) <= 0, which makes the
+# hotspot score non-increasing in dispute for EVERY sibling set. Testing one
+# sibling configuration would not distinguish that from a formula that merely
+# happens to work against the siblings chosen.
+@pytest.mark.parametrize("siblings", [
+    [],
+    [_v("corroborated", 5.0, 0.0)],
+    [_v("disputed", 0.0, 4.0)],
+    [_v("uncorroborated", 0.0, 0.0)],
+    [_v("uncorroborated", 0.0, 0.0)] * 7,
+    [_v("corroborated", 9.0, 0.0), _v("disputed", 0.1, 3.0),
+     _v("uncorroborated", 0.6, 0.0)],
+    [_v("corroborated", 0.4, 0.0)] * 3 + [_v("disputed", 0.0, 0.4)] * 2,
+], ids=["alone", "strong-clean", "heavily-disputed", "empty", "many-empty",
+        "mixed", "many-small"])
+@pytest.mark.parametrize("status", ["corroborated", "uncorroborated", "disputed"])
+def test_hotspot_score_never_rises_when_one_claim_gains_dispute(siblings, status):
+    scores = [
+        hotspot_consistency_score([_v(status, support=2.0, dispute=d), *siblings])
+        for d in (0.0, 0.25, 0.5, 1.0, 2.0, 4.0, 16.0)
+    ]
+    assert scores == sorted(scores, reverse=True), (
+        f"{status} with siblings {siblings!r} produced a rising score: {scores}")
+
+
+def test_contested_claim_now_contributes_less_than_a_clean_twin():
+    """The exact defect, as a regression test. Two corroborated claims of equal
+    support; only one carries a contradiction. It must not score higher."""
+    clean = [_v("corroborated", 3.0, 0.0), _v("uncorroborated", 0.0, 0.0)]
+    contested = [_v("corroborated", 3.0, 1.0), _v("uncorroborated", 0.0, 0.0)]
+    assert hotspot_consistency_score(contested) < hotspot_consistency_score(clean)
+
+
+def test_dispute_does_not_inflate_the_weight_side_of_the_ratio():
+    """`weight` deliberately still includes dispute — total evidence mass is
+    how confident the verdict is. Only `value` was changed. Guards against a
+    future 'fix' that also drops dispute from the weight, which would MUTE a
+    disputed claim (weight -> support) instead of penalising it."""
+    verdict = _v("disputed", support=0.0, dispute=4.0)
+    assert verdict.weight == pytest.approx(4.0)
+    loud = hotspot_consistency_score([verdict, _v("corroborated", 3.0, 0.0)])
+    muted = hotspot_consistency_score([_v("disputed", 0.0, 0.1),
+                                       _v("corroborated", 3.0, 0.0)])
+    assert loud < muted
+
+
+def test_score_stays_within_bounds_on_extreme_dispute():
+    for d in (0.0, 1e-9, 7.0, 1e6):
+        score = hotspot_consistency_score([_v("corroborated", 1.0, d)])
+        assert 0.0 <= score <= 100.0
 
 
 def test_extract_claims_drops_bare_entity_fragments():
@@ -347,3 +449,66 @@ def test_vacuity_no_claims_is_a_noop():
 
     kept, kept_sim, dropped = filter_vacuous_claims([], np.zeros((0, 3)), homogeneity=0.2)
     assert kept == [] and dropped == 0 and kept_sim.shape == (0, 3)
+
+
+def _verdict(status, support, dispute):
+    """A verdict with the weight consensus() would have assigned it."""
+    return ClaimVerdict(text="c", status=status, support=support, dispute=dispute,
+                        weight=max(support + dispute, 0.1), evidence=[])
+
+
+def test_a_claim_with_no_dispute_scores_at_its_status_ceiling():
+    """The invariant that keeps the agreement discount from moving clean data.
+
+    Every corroborated/uncorroborated claim nobody contradicted must land on
+    exactly 100/50 -- support/(support+dispute) is 1 when dispute is 0, so the
+    discount is inert on the overwhelming majority of the corpus."""
+    assert hotspot_consistency_score([_verdict("corroborated", 3.0, 0.0)]) == 100.0
+    assert hotspot_consistency_score([_verdict("uncorroborated", 2.0, 0.0)]) == 50.0
+    assert hotspot_consistency_score([_verdict("disputed", 0.0, 1.4)]) == 0.0
+
+
+def test_dispute_lowers_a_claims_contribution_rather_than_raising_it():
+    """The defect this formula replaced, stated as an assertion.
+
+    Two corroborated claims with equal support: the one carrying contradictions
+    must score lower. Under `weight = support + dispute` with a flat status
+    value it scored HIGHER, because the dispute mass entered the numerator."""
+    clean = hotspot_consistency_score([_verdict("corroborated", 4.0, 0.0)])
+    contested = hotspot_consistency_score([_verdict("corroborated", 4.0, 1.0)])
+    assert contested < clean
+    assert contested == pytest.approx(80.0)  # 100 * (5 * 1.0 * 4/5) / 5
+
+
+@pytest.mark.parametrize("sibling", [
+    _verdict("corroborated", 5.0, 0.0),   # sibling above the claim
+    _verdict("uncorroborated", 0.0, 0.0),  # sibling at the midpoint
+    _verdict("disputed", 0.0, 3.0),        # sibling below the claim
+    None,                                  # claim alone
+])
+def test_score_never_rises_as_dispute_grows(sibling):
+    """Monotonicity has to hold for EVERY sibling set, not just a lucky one.
+
+    A claim's contribution is (M + w*v)/(W + w), so whether extra mass pulls the
+    score up or down depends on the siblings it is averaged against. The
+    admissibility criterion (w' <= 0 and v' <= 0) is what makes the direction
+    independent of them, and this sweeps the sibling term to prove it."""
+    scores = []
+    for dispute in (0.0, 0.5, 1.0, 2.0, 4.0, 8.0):
+        verdicts = [_verdict("corroborated", 4.0, dispute)]
+        if sibling is not None:
+            verdicts.append(sibling)
+        scores.append(hotspot_consistency_score(verdicts))
+    assert scores == sorted(scores, reverse=True)
+    assert scores[-1] < scores[0]
+
+
+def test_a_claim_with_no_usable_evidence_keeps_its_status_value():
+    """support == dispute == 0 is the modal claim, not an edge case.
+
+    Every NLI pair gated by FR-26 or below SENTINEL_NLI_MIN_PROB leaves both
+    sums at zero. There is no agreement ratio to compute, so the status value
+    stands: reading 0/0 as 0 would mark three quarters of the corpus
+    contradicted, reading it as 1 would corroborate it for free."""
+    assert hotspot_consistency_score([_verdict("uncorroborated", 0.0, 0.0)]) == 50.0
+    assert hotspot_consistency_score([_verdict("corroborated", 0.0, 0.0)]) == 100.0

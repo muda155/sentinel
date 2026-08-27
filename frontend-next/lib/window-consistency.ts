@@ -9,11 +9,36 @@ export const NLI_MIN_PROB = 0.6;
 export const DISPUTE_RATIO = 0.5;
 // pipeline/consistency.py uses .get(domain, 0.4) for a domain with no trust row.
 const DEFAULT_TRUST = 0.4;
+// Unchanged by the claim_value switch. The tolerance absorbs the SERVER-SIDE
+// ENV VARS this file cannot read (NLI_MIN_PROB, DISPUTE_RATIO), whose effect is
+// a discrete reclassification worth whole points — not float drift. support and
+// dispute are recomputed from the same probabilities and trust_scores the API
+// returns, so making value a continuous function of them adds no new error
+// term; raising the tolerance would only hide a genuine threshold mismatch.
 const RECONSTRUCT_TOLERANCE = 0.51;
 
 const STATUS_VALUE: Record<ClaimStatus, number> = {
   corroborated: 1.0, uncorroborated: 0.5, disputed: 0.0,
 };
+
+// MIRROR OF pipeline/consistency.py:claim_value — change both or neither.
+// The two copies are checked against each other by consistencyTrusted(), so a
+// one-sided edit does not throw: it silently fails every reconstruction and
+// drops CompareDialog to countsOnly forever.
+//
+// k is pinned at 1 there (not an env var) and pinned here for the same reason:
+// k >= 1 is needed for the numerator V*(support + (1-k)*dispute) to stop
+// rising with dispute, k <= 1 is needed for the penalty factor to stay
+// non-negative. Only 1 satisfies both.
+export function claimValue(o: ClaimOutcome): number {
+  const base = STATUS_VALUE[o.status as ClaimStatus];
+  const total = o.support + o.dispute;
+  // support == dispute == 0 (every pair gated or below NLI_MIN_PROB) is the
+  // modal claim, not an edge case — there is no agreement ratio to compute, so
+  // the status value stands and an uncorroborated claim keeps its 0.5.
+  if (total <= 0) return base;
+  return base * (o.support / total);
+}
 
 export type ClaimOutcome = {
   claim_id: number;
@@ -103,7 +128,7 @@ export function windowConsistency(claims: Claim[], events: HotspotEvent[], w: Wi
   }
 
   const totalWeight = scorable.reduce((s, o) => s + o.weight, 0);
-  const weighted = scorable.reduce((s, o) => s + o.weight * STATUS_VALUE[o.status as ClaimStatus], 0);
+  const weighted = scorable.reduce((s, o) => s + o.weight * claimValue(o), 0);
   return { mode: "score", score: (100 * weighted) / totalWeight, outcomes };
 }
 

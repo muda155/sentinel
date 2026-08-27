@@ -85,6 +85,14 @@ consistency_score = 100 × Σ_c w_c · v_c / Σ_c w_c
   w_c = support(c) + dispute(c)   (trust mass of the claim's evidence; floor 0.1)
 ```
 
+> **SUPERSEDED 2026-08-20 — `v_c` only.** This is the M6 design as shipped; it is
+> kept as a record of what was decided then, not as current behaviour. `v_c` is
+> now `V[status] × support/(support + dispute)` (and `V[status]` unmodified when
+> both are zero); `w_c` is unchanged. Rationale and the rejected alternatives are
+> in specs.md FR-22(d) and `pipeline/AGENTS.md`. As written above, a dispute vote
+> raised `w_c` while leaving `v_c` alone, so a contested claim outweighed a clean
+> claim of equal support whenever the contradiction did not flip the status.
+
 Env weights mirror the conf_score pattern (`SENTINEL_CONSISTENCY_*`). Single-source hotspots produce all-`uncorroborated` claims → score ~50 with an `insufficient_sources` marker (see API) — honest "unverifiable", never faked confidence.
 
 ### Component 3 — Data model

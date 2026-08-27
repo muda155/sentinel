@@ -383,13 +383,50 @@ def consensus(claims, evidence, judgments) -> list[ClaimVerdict]:
 
 _STATUS_VALUE = {"corroborated": 1.0, "uncorroborated": 0.5, "disputed": 0.0}
 
+# The agreement penalty is pinned at 1, deliberately NOT an env var. Two
+# inequalities close on it from opposite sides, so 1 is the only admissible
+# value and a knob could therefore only ever be turned wrong:
+#   * k >= 1 is required for the numerator w*v = V*(support + (1-k)*dispute) to
+#     stop rising with dispute. At k < 1 a contested claim still outweighs a
+#     clean one of equal support, which is the defect this replaced.
+#   * k <= 1 is required for the factor (1 - k*(1 - agreement)) to stay
+#     non-negative; above 1 a heavily disputed claim earns negative value and
+#     drags the hotspot below 0.
+# SENTINEL_CONSISTENCY_DISPUTE_RATIO remains configurable because it tunes the
+# CLASSIFICATION; this tunes the arithmetic and has one correct setting.
+_DISPUTE_PENALTY_K = 1.0
+
+
+def claim_value(verdict: ClaimVerdict) -> float:
+    """v_c: the status ceiling scaled by how much of the evidence agrees.
+
+    Splits the two things the old formula conflated. `weight` answers "how much
+    evidence bears on this claim" and stays `support + dispute`; `value`
+    answers "how much of it agrees" and is now `support / (support + dispute)`.
+    Previously a dispute vote raised only the weight, so a claim carrying
+    contradictions contributed MORE to the score than a clean claim of equal
+    support whenever the contradiction failed to flip the status.
+
+    support == dispute == 0 is the modal case, not an edge case (448 of 597
+    claims on the 2026-08-20 snapshot): every NLI pair was gated by FR-26 or
+    fell below SENTINEL_NLI_MIN_PROB. There is no agreement ratio to compute,
+    so the status value stands unmodified -- an uncorroborated claim keeps 0.5.
+    Reading 0/0 as 0 would accuse three quarters of all claims of being
+    contradicted; reading it as 1 would corroborate them for free."""
+    base = _STATUS_VALUE[verdict.status]
+    total = verdict.support + verdict.dispute
+    if total <= 0.0:
+        return base
+    agreement = verdict.support / total
+    return base * (1.0 - _DISPUTE_PENALTY_K * (1.0 - agreement))
+
 
 def hotspot_consistency_score(verdicts: list[ClaimVerdict]) -> float | None:
     """consistency_score = 100 * sum(w*v) / sum(w); None when no claims."""
     if not verdicts:
         return None
     total_weight = sum(v.weight for v in verdicts)
-    weighted = sum(v.weight * _STATUS_VALUE[v.status] for v in verdicts)
+    weighted = sum(v.weight * claim_value(v) for v in verdicts)
     return 100.0 * weighted / total_weight
 
 
