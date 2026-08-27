@@ -192,12 +192,17 @@ looks successful.
 single-threaded: parking it past the cap stalls every other hotspot behind the
 one being rate-limited. That reasoning is unaffected by the number of providers.
 
-`model_used` becomes `"<provider>:<model>"` (e.g. `deepseek:deepseek-v4-flash`).
-This keeps `llm_worker`'s existing `"ollama" in model_used.lower()` fallback check
-working — `ollama:llama3.2:3b` still matches — and makes
-`llm_summaries.llm_model_version` record which vendor wrote each SITREP, which is
-what makes the confound in *Risks* auditable after the fact rather than merely
-acknowledged.
+`model_used` becomes `"<provider>:<model>"` (e.g. `deepseek:deepseek-v4-flash`)
+**for the OpenAI-compatible providers only**. `call_ollama_raw` keeps its existing
+tag untouched (`llama-3-8b-ollama` for the default model, `<model>-ollama`
+otherwise): that string is the historical audit tag named in FR-12's acceptance
+criteria, and reformatting it would silently invalidate every stored row that
+carries it. Both forms satisfy `llm_worker`'s existing
+`"ollama" in model_used.lower()` fallback check.
+
+The effect either way is that `llm_summaries.llm_model_version` records which
+vendor wrote each SITREP, which is what makes the confound in *Risks* auditable
+after the fact rather than merely acknowledged.
 
 ## 4. The paid-tier gate
 
