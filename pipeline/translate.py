@@ -11,6 +11,8 @@ import html
 import os
 import re
 
+import requests
+
 _MARKER = re.compile(r"\[\d+\]")
 _WRAPPED = re.compile(r'<span[^>]*>\s*(\[\d+\])\s*</span>')
 _ANY_SPAN = re.compile(r"</?span[^>]*>")
@@ -52,3 +54,37 @@ def translate_max_chars() -> int:
 
 def translate_ttl() -> int:
     return int(os.getenv("SENTINEL_TRANSLATE_TTL_S", "86400"))
+
+
+GOOGLE_ENDPOINT = "https://translation.googleapis.com/language/translate/v2"
+
+
+class TranslationUnavailable(RuntimeError):
+    """Google Translate could not be reached or answered unusably."""
+
+
+def translate_batch(strings: list[str], *, api_key: str, target: str = "vi",
+                    source: str = "en", timeout: int | None = None) -> list[str]:
+    """Translate strings in one call, preserving input order.
+
+    Raises TranslationUnavailable rather than returning partial output: a short
+    or reordered response would misalign claims against their claim_ids."""
+    if not strings:
+        return []
+    response = requests.post(
+        GOOGLE_ENDPOINT,
+        params={"key": api_key},
+        json={"q": list(strings), "source": source, "target": target, "format": "html"},
+        timeout=timeout or translate_timeout(),
+    )
+    if response.status_code != 200:
+        raise TranslationUnavailable(f"google translate returned {response.status_code}")
+    try:
+        items = response.json()["data"]["translations"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise TranslationUnavailable(f"unparseable translate response: {exc}") from exc
+    if len(items) != len(strings):
+        raise TranslationUnavailable(
+            f"expected {len(strings)} translations, got {len(items)}"
+        )
+    return [item.get("translatedText", "") for item in items]

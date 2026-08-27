@@ -1,8 +1,12 @@
 """FR-30: citation-safe helpers for Google Translate (no network)."""
+import pytest
+
 from pipeline.translate import (
+    TranslationUnavailable,
     citation_markers,
     protect_citations,
     restore_citations,
+    translate_batch,
     translate_enabled,
     translate_max_chars,
     translate_timeout,
@@ -62,3 +66,67 @@ def test_config_defaults(monkeypatch):
     assert translate_timeout() == 10
     assert translate_max_chars() == 5000
     assert translate_ttl() == 86400
+
+
+def test_translate_batch_posts_html_format_and_returns_in_order(monkeypatch):
+    captured = {}
+
+    class _Resp:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"data": {"translations": [
+                {"translatedText": "Mot"}, {"translatedText": "Hai"},
+            ]}}
+
+    def _fake_post(url, params=None, json=None, timeout=None):
+        captured["url"] = url
+        captured["params"] = params
+        captured["json"] = json
+        return _Resp()
+
+    monkeypatch.setattr("pipeline.translate.requests.post", _fake_post)
+    out = translate_batch(["One", "Two"], api_key="k")
+    assert out == ["Mot", "Hai"]
+    assert captured["json"]["format"] == "html"
+    assert captured["json"]["target"] == "vi"
+    assert captured["json"]["q"] == ["One", "Two"]
+    assert captured["params"] == {"key": "k"}
+
+
+def test_translate_batch_short_circuits_on_empty_input(monkeypatch):
+    def _explode(*a, **k):
+        raise AssertionError("must not call Google for an empty batch")
+
+    monkeypatch.setattr("pipeline.translate.requests.post", _explode)
+    assert translate_batch([], api_key="k") == []
+
+
+def test_translate_batch_raises_on_a_non_200(monkeypatch):
+    class _Resp:
+        status_code = 403
+
+        @staticmethod
+        def json():
+            return {}
+
+    monkeypatch.setattr("pipeline.translate.requests.post",
+                        lambda *a, **k: _Resp())
+    with pytest.raises(TranslationUnavailable):
+        translate_batch(["One"], api_key="k")
+
+
+def test_translate_batch_raises_when_the_count_does_not_match(monkeypatch):
+    # A short response would silently shift every claim onto the wrong row.
+    class _Resp:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"data": {"translations": [{"translatedText": "Mot"}]}}
+
+    monkeypatch.setattr("pipeline.translate.requests.post",
+                        lambda *a, **k: _Resp())
+    with pytest.raises(TranslationUnavailable):
+        translate_batch(["One", "Two"], api_key="k")
